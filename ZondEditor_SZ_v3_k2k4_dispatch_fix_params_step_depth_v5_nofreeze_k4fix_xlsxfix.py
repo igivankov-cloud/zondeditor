@@ -819,105 +819,21 @@ def parse_gxl_file(path: Path):
 
 
 # --- K4 GEO parser (Geotest K4) ---
-K4_SIG = b"\x01\x02\x03\xFF\xFF"
-
-def _k4_bcd_to_int(x: int) -> int:
-    return (x >> 4) * 10 + (x & 0x0F)
-
-def _k4_looks_like_start(buf: bytes, p: int) -> bool:
-    if p + 80 > len(buf):
-        return False
-    if buf[p:p+2] != b"\xFF\xFF":
-        return False
-    exp = struct.unpack_from("<H", buf, p+2)[0]
-    if exp == 0 or exp == 0xFFFF or exp > 5000:
-        return False
-    step_mm = buf[p+5]
-    if not (1 <= step_mm <= 200):
-        return False
-    minute = _k4_bcd_to_int(buf[p+8]); hour = _k4_bcd_to_int(buf[p+9])
-    day = _k4_bcd_to_int(buf[p+10]); month = _k4_bcd_to_int(buf[p+11]); year2 = _k4_bcd_to_int(buf[p+12])
-    if not (0 <= minute <= 59 and 0 <= hour <= 23 and 1 <= day <= 31 and 1 <= month <= 12 and 0 <= year2 <= 99):
-        return False
-    return (K4_SIG in buf[p:p+80])
-
-def _k4_find_starts(buf: bytes) -> list[int]:
-    # Find candidates of FF FF and filter
-    starts = []
-    i = 0
-    L = len(buf)
-    while True:
-        j = buf.find(b"\xFF\xFF", i)
-        if j < 0 or j >= L:
-            break
-        if _k4_looks_like_start(buf, j):
-            starts.append(j)
-        i = j + 2
-    return sorted(starts)
-
-def parse_k4_geo_strict(data: bytes) -> list[TestData]:
-    """
-    Parse K4 GEO (9 bytes/point) into TestData list.
-    Third column (t.incl) uses U-channel (usually zeros), as 'inclinometer' display.
-    """
-    starts = _k4_find_starts(data)
-    tests: list[TestData] = []
-    for idx, p in enumerate(starts):
-        end = starts[idx+1] if idx+1 < len(starts) else len(data)
-        block = data[p:end]
-        try:
-            exp = struct.unpack_from("<H", block, 2)[0]
-        except Exception:
-            continue
-        # Skip service/internal records (matches GeoExplorer behavior)
-        if exp > 300:
-            continue
-        marker = block[4:8]
-        start_m = marker[0] / 100.0
-        step_m = marker[1] / 1000.0
-
-        try:
-            minute = _k4_bcd_to_int(block[8]); hour = _k4_bcd_to_int(block[9])
-            day = _k4_bcd_to_int(block[10]); month = _k4_bcd_to_int(block[11]); year = 2000 + _k4_bcd_to_int(block[12])
-            ts = datetime.datetime(year, month, day, hour, minute).strftime("%d.%m.%Y %H:%M")
-        except Exception:
-            ts = ""
-
-        k = block.find(K4_SIG)
-        if k < 0:
-            # header exists, no data
-            t = TestData(tid=int(exp), dt=ts, depth=[], qc=[], fs=[], marker=marker.hex(" "), header_pos=str(p))
-            t.incl = []
-            tests.append(t)
-            continue
-
-        payload = block[k+len(K4_SIG):]
-        n = len(payload)//9
-        qc=[]; fs=[]; U=[]
-        for i in range(n):
-            b = payload[i*9:(i+1)*9]
-            qc.append(str(b[0]*100 + b[1]))
-            fs.append(str(b[4]*100 + b[5]))
-            U.append(str(b[6] + 256*b[7]))
-        depth=[f"{(start_m + i*step_m):.2f}".replace(".", ",") for i in range(n)]
-
-        t = TestData(tid=int(exp), dt=ts, depth=depth, qc=qc, fs=fs, marker=marker.hex(" "), header_pos=str(p))
-        t.incl = U
-        tests.append(t)
-
-    # sort by time then tid
-    try:
-        tests.sort(key=lambda t: (t.dt, t.tid))
-    except Exception:
-        pass
-    return tests
+# Delegated to src/zondeditor/io/k4_reader.py to start modularization.
+from src.zondeditor.io.k4_reader import (
+    K4_SIG,
+    detect_geo_kind as _detect_geo_kind_mod,
+    parse_k4_geo_strict as _parse_k4_mod,
+)
 
 def detect_geo_kind(data: bytes) -> str:
-    # K4 has explicit signature before data blocks
-    if K4_SIG in data:
-        return "K4"
-    # fallback: K2 pattern is already handled by parse_geo_with_blocks
-    return "K2"
+    return _detect_geo_kind_mod(data)
+
+def parse_k4_geo_strict(data: bytes) -> list[TestData]:
+    # Keep original return type (list[TestData])
+    return _parse_k4_mod(data, TestData)
+
+
 
 def parse_geo_with_blocks(data: bytes) -> tuple[list[TestData], list[dict]]:
     """Parse geo and return tests + meta rows with block infos for save-back."""
