@@ -133,6 +133,9 @@ import getpass
 import logging
 from logging.handlers import RotatingFileHandler
 from src.zondeditor.io.geo_writer import build_k2_geo_from_template
+from src.zondeditor.export.excel_export import export_excel
+from src.zondeditor.export.credo_zip import export_credo_zip
+from src.zondeditor.export.gxl_export import export_gxl_generated
 
 # --- Win11 look + icon helpers (added) ---
 APP_NAME = "ZondEditor"
@@ -6003,7 +6006,7 @@ class GeoCanvasEditor(tk.Tk):
                 orig_tests = getattr(self, 'tests', None)
                 try:
                     self.tests = list(tests_exp)
-                    self.save_gxl_generated(str(gxl_path))
+                    self.export_gxl_generated(str(gxl_path))
                 finally:
                     if orig_tests is not None:
                         self.tests = orig_tests
@@ -6290,7 +6293,7 @@ class GeoCanvasEditor(tk.Tk):
                 return
             ext = os.path.splitext(out_file)[1].lower()
             if ext == ".gxl":
-                return self.save_gxl_generated(out_file)
+                return self.export_gxl_generated(out_file)
             else:
                 # save back to GEO via template
                 self._save_geo_path_override = out_file
@@ -6419,7 +6422,7 @@ class GeoCanvasEditor(tk.Tk):
             messagebox.showerror("Ошибка сохранения GXL", traceback.format_exc())
 
 
-def save_gxl_generated(self, out_file: str):
+def export_gxl_generated(self, out_file: str):
     """Сформировать GXL максимально идентичный экспорту GeoExplorer.
 
     См. описание внутри функции.
