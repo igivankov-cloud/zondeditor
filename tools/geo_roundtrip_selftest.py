@@ -6,7 +6,12 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+# ensure project root is on sys.path so "src.*" imports work
+PROJ_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJ_ROOT))
 
 from src.zondeditor.io.k2_reader import parse_geo_with_blocks
 from src.zondeditor.io.geo_writer import save_k2_geo
@@ -39,7 +44,6 @@ def main() -> None:
     tests2, meta2 = parse_geo_with_blocks(data2, TestData, GeoBlockInfo)
     if len(tests2) != len(tests1):
         fail(f"test count mismatch: {len(tests2)} != {len(tests1)}")
-    # compare points count by tid
     m1 = {t.tid: len(t.qc) for t in tests1}
     m2 = {t.tid: len(t.qc) for t in tests2}
     if m1 != m2:
