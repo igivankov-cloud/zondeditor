@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.spec
+*.log
+*.xlsx
+*.zip
+*.exe
+*.dll
+*.pyd
+.DS_Store
+Thumbs.db
