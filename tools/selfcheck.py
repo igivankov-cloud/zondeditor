@@ -1,22 +1,11 @@
 # tools/selfcheck.py
-# Автопроверка проекта (без GUI).
-#
-# Запуск из корня проекта:
-#   py tools\selfcheck.py
-#
-# Проверяет:
-# - компиляцию всех .py (compileall)
-# - импорт ключевых модулей src/zondeditor
-# - наличие монолита и launcher'а
-# - smoke-парсинг эталонных файлов в fixtures/ (K2 и K4)
-# - экспорт Excel и CREDO ZIP на основе fixtures + базовые проверки пересчёта qc/fs
-
 from __future__ import annotations
 
 import compileall
 import importlib
 import sys
 import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 MONOLITH = "ZondEditor_SZ_v3_k2k4_dispatch_fix_params_step_depth_v5_nofreeze_k4fix_xlsxfix.py"
@@ -30,6 +19,7 @@ MODULES_TO_IMPORT = [
     "src.zondeditor.processing.calibration",
     "src.zondeditor.export.excel_export",
     "src.zondeditor.export.credo_zip",
+    "src.zondeditor.export.gxl_export",
 ]
 
 FIXTURES = [
@@ -37,7 +27,6 @@ FIXTURES = [
     ("K4", "fixtures/К4_260218O1.GEO"),
 ]
 
-# значения по умолчанию как в монолите (GeoExplorer-like)
 SCALE_DIV = 250
 FCONE_KN = 30.0
 FSLEEVE_KN = 10.0
@@ -56,16 +45,15 @@ def _smoke_parse_and_export(root: Path) -> None:
     from src.zondeditor.processing.calibration import calc_qc_fs_from_del
     from src.zondeditor.export.excel_export import export_excel
     from src.zondeditor.export.credo_zip import export_credo_zip
+    from src.zondeditor.export.gxl_export import export_gxl_generated
 
     out_dir = root / "tools" / "_selfcheck_out"
-    if out_dir.exists():
-        # чистим старое
-        for p in out_dir.glob("*"):
-            try:
-                p.unlink()
-            except Exception:
-                pass
     out_dir.mkdir(parents=True, exist_ok=True)
+    for p in out_dir.glob("*"):
+        try:
+            p.unlink()
+        except Exception:
+            pass
 
     for kind, rel in FIXTURES:
         p = root / rel
@@ -90,23 +78,27 @@ def _smoke_parse_and_export(root: Path) -> None:
             if len(t0.depth) != len(incl):
                 fail(f"{rel}: depth и incl разной длины ({len(t0.depth)} != {len(incl)})")
 
-            # export tests
             xlsx = out_dir / "K4_test.xlsx"
             zpath = out_dir / "K4_credo.zip"
+            gxl = out_dir / "K4_generated.gxl"
             export_excel(tests, geo_kind="K4", out_path=xlsx, scale_div=SCALE_DIV, fcone_kn=FCONE_KN, fsleeve_kn=FSLEEVE_KN)
             export_credo_zip(tests, out_zip_path=zpath, scale_div=SCALE_DIV, fcone_kn=FCONE_KN, fsleeve_kn=FSLEEVE_KN)
+            export_gxl_generated(tests, out_path=gxl, object_code="SELFTEST_K4")
 
             if not xlsx.exists() or xlsx.stat().st_size < 1000:
                 fail(f"{rel}: Excel не создан/слишком мал")
             if not zpath.exists() or zpath.stat().st_size < 100:
                 fail(f"{rel}: ZIP не создан/слишком мал")
+            if not gxl.exists() or gxl.stat().st_size < 200:
+                fail(f"{rel}: GXL не создан/слишком мал")
 
-            # basic unit check from first row
-            def _int(s):
-                try: return int(str(s).strip())
-                except: return 0
-            q0 = _int((t0.qc[0] if t0.qc else 0))
-            f0 = _int((t0.fs[0] if t0.fs else 0))
+            try:
+                ET.fromstring(gxl.read_bytes())
+            except Exception as e:
+                fail(f"{rel}: GXL не парсится как XML: {e}")
+
+            q0 = int(float(str((t0.qc[0] if t0.qc else 0)).replace(",", ".")))
+            f0 = int(float(str((t0.fs[0] if t0.fs else 0)).replace(",", ".")))
             qc_mpa, fs_kpa = calc_qc_fs_from_del(q0, f0, scale_div=SCALE_DIV, fcone_kn=FCONE_KN, fsleeve_kn=FSLEEVE_KN)
             if qc_mpa < 0 or fs_kpa < 0:
                 fail(f"{rel}: пересчёт дал отрицательные значения")
@@ -123,18 +115,27 @@ def _smoke_parse_and_export(root: Path) -> None:
 
             xlsx = out_dir / "K2_test.xlsx"
             zpath = out_dir / "K2_credo.zip"
+            gxl = out_dir / "K2_generated.gxl"
             export_excel(tests, geo_kind="K2", out_path=xlsx, scale_div=SCALE_DIV, fcone_kn=FCONE_KN, fsleeve_kn=FSLEEVE_KN)
             export_credo_zip(tests, out_zip_path=zpath, scale_div=SCALE_DIV, fcone_kn=FCONE_KN, fsleeve_kn=FSLEEVE_KN)
+            export_gxl_generated(tests, out_path=gxl, object_code="SELFTEST_K2")
 
             if not xlsx.exists() or xlsx.stat().st_size < 1000:
                 fail(f"{rel}: Excel не создан/слишком мал")
             if not zpath.exists() or zpath.stat().st_size < 100:
                 fail(f"{rel}: ZIP не создан/слишком мал")
+            if not gxl.exists() or gxl.stat().st_size < 200:
+                fail(f"{rel}: GXL не создан/слишком мал")
 
             with zipfile.ZipFile(zpath, "r") as z:
                 names = z.namelist()
                 if not any(n.endswith("лоб.csv") for n in names) or not any(n.endswith("бок.csv") for n in names):
                     fail(f"{rel}: в ZIP нет ожидаемых CSV (лоб/бок)")
+
+            try:
+                ET.fromstring(gxl.read_bytes())
+            except Exception as e:
+                fail(f"{rel}: GXL не парсится как XML: {e}")
 
             ok(f"{rel}: K2 parse+export OK (tests={len(tests)}, meta_rows={len(meta_rows)})")
 
