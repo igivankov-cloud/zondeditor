@@ -24,6 +24,7 @@ MODULES_TO_IMPORT = [
     "src.zondeditor.app",
     "src.zondeditor.io.k4_reader",
     "src.zondeditor.io.k2_reader",
+    "src.zondeditor.domain.models",
 ]
 
 FIXTURES = [
@@ -38,30 +39,10 @@ def fail(msg: str, code: int = 1) -> None:
 def ok(msg: str) -> None:
     print(f"[ OK ] {msg}")
 
-# Минимальные классы для парсеров.
-# Важно: K2-парсер может создавать GeoBlockInfo с разными полями (order_index и т.п.),
-# поэтому делаем "гибкие" классы, принимающие **kwargs.
-
-class _TestData:
-    def __init__(self, tid, dt, depth, qc, fs, marker, header_pos, **kwargs):
-        self.tid = tid
-        self.dt = dt
-        self.depth = depth
-        self.qc = qc
-        self.fs = fs
-        self.marker = marker
-        self.header_pos = header_pos
-        for k, v in kwargs.items():
-            setattr(self, k, v)
-
-class _GeoBlockInfo:
-    def __init__(self, **kwargs):
-        for k, v in kwargs.items():
-            setattr(self, k, v)
-
 def _smoke_parse_fixtures(root: Path) -> None:
     from src.zondeditor.io.k4_reader import detect_geo_kind, parse_k4_geo_strict
     from src.zondeditor.io.k2_reader import parse_geo_with_blocks as parse_k2
+    from src.zondeditor.domain.models import TestData, GeoBlockInfo
 
     for kind, rel in FIXTURES:
         p = root / rel
@@ -76,7 +57,7 @@ def _smoke_parse_fixtures(root: Path) -> None:
         if kind == "K4":
             if detected != "K4":
                 fail(f"{rel}: ожидали K4, получили {detected}")
-            tests = parse_k4_geo_strict(data, _TestData)
+            tests = parse_k4_geo_strict(data, TestData)
             if not tests:
                 fail(f"{rel}: K4 парсер вернул 0 опытов")
             t0 = tests[0]
@@ -89,7 +70,7 @@ def _smoke_parse_fixtures(root: Path) -> None:
         else:
             if detected != "K2":
                 fail(f"{rel}: ожидали K2, получили {detected}")
-            tests, meta_rows = parse_k2(data, _TestData, _GeoBlockInfo)
+            tests, meta_rows = parse_k2(data, TestData, GeoBlockInfo)
             if not tests:
                 fail(f"{rel}: K2 парсер вернул 0 опытов")
             t0 = tests[0]
