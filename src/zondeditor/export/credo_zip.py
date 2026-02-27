@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Iterable, Any, Optional
 import zipfile
 
-from src.zondeditor.processing.calibration import calc_qc_fs_from_del
+from src.zondeditor.processing.calibration import calc_qc_fs, Calibration, K2_DEFAULT, K4_DEFAULT
 
 def _parse_depth_float(s: Any) -> Optional[float]:
     try:
@@ -33,12 +33,19 @@ def export_credo_zip(
     tests: Iterable[Any],
     *,
     out_zip_path: Path,
-    scale_div: int = 250,
-    fcone_kn: float = 30.0,
-    fsleeve_kn: float = 10.0,
+    geo_kind: str = "K2",
+    cal: Calibration | None = None,
     include_only_export_on: bool = True,
 ) -> None:
-    """Экспорт ZIP для CREDO: две CSV на опыт (лоб/бок), как в текущей логике."""
+    """Экспорт ZIP для CREDO: две CSV на опыт (лоб/бок).
+
+    По умолчанию:
+      K2 -> K2_DEFAULT, K4 -> K4_DEFAULT (можно переопределить через cal)
+    """
+    g = (geo_kind or "K2").upper()
+    if cal is None:
+        cal = K4_DEFAULT if g == "K4" else K2_DEFAULT
+
     tests_list = []
     for t in tests:
         if include_only_export_on and not bool(getattr(t, "export_on", True)):
@@ -63,7 +70,7 @@ def export_credo_zip(
                 fv = _parse_cell_int(fs_arr[i]) if i < len(fs_arr) else 0
                 qv = 0 if qv is None else int(qv)
                 fv = 0 if fv is None else int(fv)
-                qc_mpa, fs_kpa = calc_qc_fs_from_del(qv, fv, scale_div=scale_div, fcone_kn=fcone_kn, fsleeve_kn=fsleeve_kn)
+                qc_mpa, fs_kpa = calc_qc_fs(qv, fv, geo_kind=g, cal=cal)
                 qc_lines.append(f"{_fmt_depth(d)};{_fmt_comma(qc_mpa, 2)}")
                 fs_lines.append(f"{_fmt_depth(d)};{int(round(fs_kpa))}")
 
