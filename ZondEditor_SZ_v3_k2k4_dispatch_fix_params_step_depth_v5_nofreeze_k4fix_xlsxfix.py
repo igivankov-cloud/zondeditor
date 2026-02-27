@@ -132,6 +132,7 @@ import platform
 import getpass
 import logging
 from logging.handlers import RotatingFileHandler
+from src.zondeditor.io.geo_writer import build_k2_geo_from_template
 
 # --- Win11 look + icon helpers (added) ---
 APP_NAME = "ZondEditor"
@@ -6074,7 +6075,7 @@ class GeoCanvasEditor(tk.Tk):
                             if not blocks_info:
                                 raise RuntimeError('Не удалось найти блоки опытов в исходном файле.')
 
-                            geo_bytes = _rebuild_geo_from_template(self.original_bytes, blocks_info, prepared)
+                            geo_bytes = build_k2_geo_from_template(self.original_bytes, blocks_info, prepared)
                             geo_path.write_bytes(geo_bytes)
 
                         # DEBUG: сверка количества/номеров блоков в собранном GEO (ловим "воскресший первый опыт")
