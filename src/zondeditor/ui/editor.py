@@ -44,55 +44,6 @@ from src.zondeditor.ui.widgets import ToolTip, CalendarDialog
 
 _rebuild_geo_from_template = build_k2_geo_from_template
 
-
-def _validate_int_0_300_key(P: str) -> bool:
-    """Key validator for integer values in range 0..300.
-
-    Used by tk.Entry validatecommand with %P (proposed value).
-    Allows empty string while editing.
-    """
-    if P is None:
-        return True
-    if P == "":
-        return True
-    if not P.isdigit():
-        return False
-    try:
-        v = int(P)
-    except Exception:
-        return False
-    return 0 <= v <= 300
-
-
-
-def _sanitize_int_0_300(val) -> str:
-    """Sanitize integer-like value for qc/fs cells (0..300), returning a string.
-
-    Editor logic expects a *string* (it calls .strip()).
-    Empty string means "clear" (may trigger edge-delete rules).
-    """
-    if val is None:
-        return ""
-    s = str(val).strip()
-    if s == "":
-        return ""
-    # keep digits only if user pasted something odd
-    # (keyboard input is already validated via _validate_int_0_300_key)
-    if not s.isdigit():
-        s2 = "".join(ch for ch in s if ch.isdigit())
-        s = s2
-    if s == "":
-        return ""
-    try:
-        v = int(s)
-    except Exception:
-        return ""
-    if v < 0:
-        v = 0
-    if v > 300:
-        v = 300
-    return str(v)
-
 class GeoCanvasEditor(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -264,6 +215,7 @@ class GeoCanvasEditor(tk.Tk):
                 "depth": list(t.depth),
                 "qc": list(t.qc),
                 "fs": list(t.fs),
+                "incl": (None if getattr(t, "incl", None) is None else list(getattr(t, "incl", []) or [])),
                 "marker": t.marker,
                 "header_pos": t.header_pos,
                 "orig_id": t.orig_id,
@@ -292,7 +244,7 @@ class GeoCanvasEditor(tk.Tk):
                 }
         except Exception:
             flags_snap = {}
-        return {"tests": tests_snap, "flags": flags_snap, "step_m": float(getattr(self, "step_m", 0.05) or 0.05)}
+        return {"tests": tests_snap, "flags": flags_snap, "step_m": float(getattr(self, "step_m", 0.05) or 0.05), "depth0_by_tid": dict(getattr(self, "depth0_by_tid", {}) or {})}
 
     def _restore(self, snap: dict):
         self.tests = []
@@ -303,6 +255,12 @@ class GeoCanvasEditor(tk.Tk):
             self.step_m = float(snap.get("step_m", getattr(self, "step_m", 0.05) or 0.05) or 0.05)
         except Exception:
             pass
+
+        # restore per-test start depths (tid -> h0)
+        try:
+            self.depth0_by_tid = dict((snap.get("depth0_by_tid") or {}))
+        except Exception:
+            self.depth0_by_tid = {}
 
         for d in snap.get("tests", []):
             blk = None
@@ -324,6 +282,7 @@ class GeoCanvasEditor(tk.Tk):
                 depth=list(d["depth"]),
                 qc=list(d["qc"]),
                 fs=list(d["fs"]),
+                incl=(None if d.get("incl") is None else list(d.get("incl") or [])),
                 marker=d.get("marker",""),
                 header_pos=d.get("header_pos",""),
                 orig_id=d.get("orig_id", None),
@@ -1210,6 +1169,17 @@ class GeoCanvasEditor(tk.Tk):
         )
         common_ent.grid(row=r, column=1, sticky="w", pady=2)
 
+        def _on_common_focus_in(_ev=None):
+            try:
+                v = common_var.get()
+                if isinstance(v, str) and v.strip().startswith("("):
+                    common_var.set("")
+                    common_ent.after(1, lambda: common_ent.select_range(0, "end"))
+            except Exception:
+                pass
+
+        common_ent.bind("<FocusIn>", _on_common_focus_in)
+
         apply_all_chk = ttk.Checkbutton(frm, text="Применить ко всем", variable=apply_all_var)
         apply_all_chk.grid(row=r, column=2, columnspan=3, sticky="w", padx=(12, 0), pady=2)
         r += 1
@@ -1350,18 +1320,27 @@ class GeoCanvasEditor(tk.Tk):
                 msg_var.set("")
                 is_k4 = (getattr(self, 'geo_kind', 'K2') == 'K4')
 
-                # K4: если apply_all выключен и глубины разные — показываем '(разные)' в общей ячейке
-                if is_k4 and (not apply_all_var.get()):
+                # Если apply_all выключен и глубины разные — показываем '(разные)' в общей ячейке.
+                # Важно: не мешаем пользователю вводить число в общую ячейку — переписываем только если там пусто/скобки.
+                if (not apply_all_var.get()):
                     try:
-                        uniq_h0 = sorted({float(self.depth0_by_tid.get(int(tid), 0.0)) for (_t, tid, *_rest) in row_vars})
+                        vals = []
+                        for (_t, tid, h0_var, _ent, _dt_var, _dt_lbl) in row_vars:
+                            dv = _parse_depth_str(h0_var.get())
+                            if dv is None:
+                                dv = float(self.depth0_by_tid.get(int(tid), 0.0) or 0.0)
+                            vals.append(float(dv))
+                        uniq_h0 = sorted({round(float(v), 6) for v in vals})
                     except Exception:
                         uniq_h0 = []
+                    cur_txt = (common_var.get() or '').strip()
+                    cur_can_override = (cur_txt == '' or cur_txt.startswith('('))
                     if len(uniq_h0) > 1:
-                        if common_var.get().strip() != "(разные)":
+                        if cur_can_override and cur_txt != "(разные)":
                             common_var.set("(разные)")
                     elif len(uniq_h0) == 1:
-                        v0 = uniq_h0[0]
-                        if common_var.get().strip() != f"{v0:g}":
+                        v0 = float(uniq_h0[0])
+                        if cur_can_override and cur_txt != f"{v0:g}":
                             common_var.set(f"{v0:g}")
 
                 cd = _parse_depth_str(common_var.get())
@@ -1379,13 +1358,7 @@ class GeoCanvasEditor(tk.Tk):
                 else:
                     # индивидуальные значения (для K4 — из файла)
                     for (_t, tid, h0_var, ent, _dt_var, _dt_lbl) in row_vars:
-                        if is_k4:
-                            try:
-                                v = self.depth0_by_tid.get(int(tid), None)
-                                if v is not None:
-                                    h0_var.set(f"{float(v):g}")
-                            except Exception:
-                                pass
+                        # K4: не перезаписываем h0_var при apply_all=False (чтобы не ломать редактирование)
                         try:
                             ent.config(state="normal")
                         except Exception:
@@ -1393,10 +1366,8 @@ class GeoCanvasEditor(tk.Tk):
 
                 # управление общей ячейкой
                 try:
-                    if is_k4 and (not apply_all_var.get()):
-                        common_ent.config(state="disabled")
-                    else:
-                        common_ent.config(state="normal")
+                    # разрешаем редактировать общую ячейку и в K4 (при apply_all=False там может быть '(разные)')
+                    common_ent.config(state="normal")
                 except Exception:
                     pass
             finally:
@@ -1489,21 +1460,32 @@ class GeoCanvasEditor(tk.Tk):
                     msg_var.set("Выберите шаг 5 или 10 см.")
                     return
 
-            # общая глубина
-            cd = _parse_depth_str(common_var.get())
-            if cd is None:
-                msg_var.set("Некорректная начальная глубина. Пример: 1.2")
-                return
-            if not (0.0 <= cd <= 4.0):
-                msg_var.set("Начальная глубина должна быть в диапазоне 0..4 м.")
-                return
+            # общая глубина:
+            # - при apply_all=True: обязана быть числом 0..4
+            # - при apply_all=False: допускается '(разные)' / пусто, тогда валидируем только строки
+            common_txt = (common_var.get() or "").strip()
+            cd = _parse_depth_str(common_txt)
+            if apply_all_var.get():
+                if cd is None:
+                    msg_var.set("Некорректная начальная глубина. Пример: 1.2")
+                    return
+                if not (0.0 <= cd <= 4.0):
+                    msg_var.set("Начальная глубина должна быть в диапазоне 0..4 м.")
+                    return
+            else:
+                # когда глубины разные — common может быть '(разные)' и это ОК
+                if cd is not None and not (0.0 <= cd <= 4.0):
+                    msg_var.set("Начальная глубина должна быть в диапазоне 0..4 м.")
+                    return
 
             # объект
             self.object_code = (obj_var.get() or "").strip()
 
             # сохранить общие
-            self.depth_start = cd
+            # depth_start определим ниже: либо из общей ячейки (apply_all), либо из строк (если глубины разные)
             self._depth_confirmed = True
+            if apply_all_var.get() and cd is not None:
+                self.depth_start = float(cd)
 
             if need_step:
                 self.step_m = 0.05 if step_var.get().strip() == "5" else 0.10
@@ -1514,11 +1496,26 @@ class GeoCanvasEditor(tk.Tk):
             for (t, tid, h0_var, ent, dt_var, dt_lbl) in row_vars:
                 dv = _parse_depth_str(h0_var.get())
                 if dv is None:
-                    dv = cd
+                    if cd is not None:
+                        dv = cd
+                    else:
+                        try:
+                            dv = float(self.depth0_by_tid.get(int(tid), float(getattr(self, 'depth_start', 0.0) or 0.0)))
+                        except Exception:
+                            dv = 0.0
                 if not (0.0 <= dv <= 4.0):
                     msg_var.set(f"СЗ-{tid}: начальная глубина должна быть 0..4 м.")
                     return
                 self.depth0_by_tid[int(tid)] = float(dv)
+
+            # если глубины разные (apply_all=False) — depth_start берём как минимум из строк
+            try:
+                if (not apply_all_var.get()) and self.depth0_by_tid:
+                    self.depth_start = float(min(self.depth0_by_tid.values()))
+                elif (not apply_all_var.get()) and (cd is not None):
+                    self.depth_start = float(cd)
+            except Exception:
+                pass
 
             # обновить построение глубин здесь же (без перезагрузки)
             try:
@@ -4325,17 +4322,17 @@ class GeoCanvasEditor(tk.Tk):
                             for k in range(gap_len):
                                 tt = (k + 1) / (gap_len + 1)
                                 if (i + k, kind) not in _prev_user_cells and (i + k, kind) not in interp_cells and (i + k, kind) not in force_cells:
-                                    arr[i + k] = _interp_with_noise(a, b, tt)
+                                    arr[i + k] = int(round(_interp_with_noise(a, b, tt)))
                                 interp_cells.add((i + k, kind))
                         elif left >= 0 and arr[left] != 0:
                             a = arr[left]
                             for k in range(gap_len):
-                                arr[i + k] = _noise_around(a)
+                                arr[i + k] = int(round(_noise_around(a)))
                                 interp_cells.add((i + k, kind))
                         elif right < n and arr[right] != 0:
                             b = arr[right]
                             for k in range(gap_len):
-                                arr[i + k] = _noise_around(b)
+                                arr[i + k] = int(round(_noise_around(b)))
                                 interp_cells.add((i + k, kind))
                     i = j
 
@@ -4354,11 +4351,11 @@ class GeoCanvasEditor(tk.Tk):
                     while right < n and arr[right] == 0:
                         right += 1
                     if left >= 0 and right < n:
-                        arr[i] = _interp_with_noise(arr[left], arr[right], 0.5)
+                        arr[i] = int(round(_interp_with_noise(arr[left], arr[right], 0.5)))
                     elif left >= 0:
-                        arr[i] = _noise_around(arr[left])
+                        arr[i] = int(round(_noise_around(arr[left])))
                     elif right < n:
-                        arr[i] = _noise_around(arr[right])
+                        arr[i] = int(round(_noise_around(arr[right])))
                     else:
                         arr[i] = 1
                     interp_cells.add((i, kind))
@@ -4428,8 +4425,8 @@ class GeoCanvasEditor(tk.Tk):
                     t.depth[-1] = f"{dd:.2f}"
 # write back with markers (for user visibility)
             for i in range(n):
-                qv = max(1, qc[i])
-                fv = max(1, fs[i])
+                qv = int(max(1, round(qc[i])))
+                fv = int(max(1, round(fs[i])))
                 t.qc[i] = str(qv)
                 t.fs[i] = str(fv)
 
