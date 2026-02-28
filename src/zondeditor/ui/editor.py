@@ -19,9 +19,9 @@ from pathlib import Path
 
 # third-party (optional at runtime; keep imports guarded where needed)
 try:
-    import openpyxl  # type: ignore
+    pass
 except Exception:
-    openpyxl = None  # type: ignore
+    pass
 
 # project modules already extracted:
 from src.zondeditor.processing.fixes import fix_tests_by_algorithm
@@ -35,155 +35,16 @@ from src.zondeditor.io.geo_writer import save_k2_geo_from_template
 from src.zondeditor.domain.models import TestData, GeoBlockInfo, TestFlags
 
 
-
-def _apply_win11_style(root):
-    """Best-effort Win11-ish style. Uses sv_ttk if available, otherwise no-op."""
-    try:
-        import sv_ttk  # type: ignore
-        try:
-            sv_ttk.set_theme("light")
-        except Exception:
-            sv_ttk.set_theme("dark")
-    except Exception:
-        pass
-
-
-
-# ---- Constants (extracted / defaults) ----
-APP_TITLE = "ZondEditor SZ"
-APP_VERSION = "dev"
-DEFAULT_GEO_KIND = "K2"
 # -----------------------------------------
 
 
-
-def _check_license_or_exit(messagebox=None):
-    """License check (dev stub).
-
-    Production logic can be moved into src/zondeditor/licensing/ later.
-    Current behavior:
-    - if C:\\ProgramData\\ZondEditor\\license.dat exists -> OK
-    - else -> show message and raise SystemExit
-    """
-    lic = Path(r"C:\\ProgramData\\ZondEditor\\license.dat")
-    try:
-        if lic.exists():
-            return True
-    except Exception:
-        pass
-    msg = "Лицензия не найдена: C:\\\\ProgramData\\\\ZondEditor\\\\license.dat"
-    try:
-        if messagebox is not None:
-            messagebox.showerror("ZondEditor", msg)
-    except Exception:
-        pass
-    raise SystemExit(msg)
-
-
-
-def _setup_shared_logger():
-    """Minimal logger stub (dev)."""
-    import logging
-    logger = logging.getLogger("ZondEditor")
-    if not logger.handlers:
-        h = logging.StreamHandler()
-        fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-        h.setFormatter(fmt)
-        logger.addHandler(h)
-        logger.setLevel(logging.INFO)
-    return logger
-
-
-
-class ToolTip:
-    """Simple tooltip for tkinter widgets."""
-    def __init__(self, widget, text: str, delay_ms: int = 450):
-        self.widget = widget
-        self.text = text
-        self.delay_ms = delay_ms
-        self._after_id = None
-        self.tip = None
-        widget.bind("<Enter>", self._on_enter, add="+")
-        widget.bind("<Leave>", self._on_leave, add="+")
-        widget.bind("<ButtonPress>", self._on_leave, add="+")
-
-    def _on_enter(self, _evt=None):
-        self._schedule()
-
-    def _on_leave(self, _evt=None):
-        self._unschedule()
-        self._hide()
-
-    def _schedule(self):
-        self._unschedule()
-        try:
-            self._after_id = self.widget.after(self.delay_ms, self._show)
-        except Exception:
-            self._after_id = None
-
-    def _unschedule(self):
-        if self._after_id is not None:
-            try:
-                self.widget.after_cancel(self._after_id)
-            except Exception:
-                pass
-            self._after_id = None
-
-    def _show(self):
-        if self.tip or not self.text:
-            return
-        try:
-            x = self.widget.winfo_rootx() + 12
-            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
-            self.tip = tk.Toplevel(self.widget)
-            self.tip.wm_overrideredirect(True)
-            self.tip.wm_geometry(f"+{x}+{y}")
-            lbl = tk.Label(self.tip, text=self.text, justify="left",
-                           background="#ffffe0", relief="solid", borderwidth=1,
-                           font=("Segoe UI", 9))
-            lbl.pack(ipadx=6, ipady=3)
-        except Exception:
-            self.tip = None
-
-    def _hide(self):
-        if self.tip is not None:
-            try:
-                self.tip.destroy()
-            except Exception:
-                pass
-            self.tip = None
-
-
-
-
-def _validate_nonneg_float_key(P: str) -> bool:
-    """Tk validatecommand: allow empty or non-negative float (with dot/comma)."""
-    if P is None:
-        return True
-    s = str(P).strip()
-    if s == "":
-        return True
-    s2 = s.replace(",", ".")
-    # allow a single dot while typing
-    if s2 == ".":
-        return True
-    try:
-        v = float(s2)
-        return v >= 0.0
-    except Exception:
-        return False
-
-
-
-# ---- UI colors (defaults) ----
-GUI_RED = "#ff3b30"
-GUI_ORANGE = "#ff9500"
-GUI_YELLOW = "#ffd60a"
-GUI_BLUE = "#007aff"
-GUI_PURPLE = "#af52de"
-GUI_GREEN = "#34c759"
-GUI_GRAY = "#8e8e93"
 # ------------------------------
+
+# --- UPG UI imports (Step21 hotfix) ---
+from src.zondeditor.ui.consts import APP_TITLE, APP_VERSION, DEFAULT_GEO_KIND, GUI_RED, GUI_ORANGE, GUI_YELLOW, GUI_BLUE, GUI_PURPLE, GUI_GREEN, GUI_GRAY
+from src.zondeditor.ui.helpers import _apply_win11_style, _setup_shared_logger, _validate_nonneg_float_key, _check_license_or_exit
+from src.zondeditor.ui.widgets import ToolTip
+# --- end ---
 
 class GeoCanvasEditor(tk.Tk):
     def __init__(self):
