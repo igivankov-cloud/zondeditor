@@ -29,3 +29,19 @@ REPAIR_ALL_README.txt
 # backups
 *.bak_*
 *.bak_step*
+
+# accidental scratch files
+0.0
+bool
+cd
+from
+py
+*.GEO
+*.GXL
+*.TXT
+*.tmp
+*.temp
+*.out
+*.err
+*.pid
+logs/
