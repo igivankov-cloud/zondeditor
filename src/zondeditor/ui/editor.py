@@ -7,6 +7,8 @@ from tkinter import ttk, filedialog, messagebox
 import tkinter.font as tkfont
 
 # stdlib
+import random
+import re
 import os
 import sys
 import math
@@ -14,14 +16,9 @@ import csv
 import json
 import time
 import datetime
+import datetime as _dt
 import zipfile
 from pathlib import Path
-
-# third-party (optional at runtime; keep imports guarded where needed)
-try:
-    pass
-except Exception:
-    pass
 
 # project modules already extracted:
 from src.zondeditor.processing.fixes import fix_tests_by_algorithm
@@ -34,17 +31,9 @@ from src.zondeditor.io.k4_reader import parse_k4_geo_strict, detect_geo_kind
 from src.zondeditor.io.geo_writer import save_k2_geo_from_template
 from src.zondeditor.domain.models import TestData, GeoBlockInfo, TestFlags
 
-
-# -----------------------------------------
-
-
-# ------------------------------
-
-# --- UPG UI imports (Step21 hotfix) ---
-from src.zondeditor.ui.consts import APP_TITLE, APP_VERSION, DEFAULT_GEO_KIND, GUI_RED, GUI_ORANGE, GUI_YELLOW, GUI_BLUE, GUI_PURPLE, GUI_GREEN, GUI_GRAY
-from src.zondeditor.ui.helpers import _apply_win11_style, _setup_shared_logger, _validate_nonneg_float_key, _check_license_or_exit
-from src.zondeditor.ui.widgets import ToolTip
-# --- end ---
+from src.zondeditor.ui.consts import *
+from src.zondeditor.ui.helpers import _apply_win11_style, _setup_shared_logger, _validate_nonneg_float_key, _check_license_or_exit, _parse_depth_float, _try_parse_dt, _pick_icon_font, _validate_tid_key, _validate_depth_0_4_key, _format_date_ru, _format_time_ru, _canvas_view_bbox, _validate_hh_key, _validate_mm_key, _parse_cell_int, _max_zero_run, _noise_around, _interp_with_noise
+from src.zondeditor.ui.widgets import ToolTip, CalendarDialog
 
 class GeoCanvasEditor(tk.Tk):
     def __init__(self):
@@ -1637,7 +1626,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.is_gxl = False
                 self.geo_kind = detect_geo_kind(data)
                 self.original_bytes = data
-                tests_list, meta_rows = (parse_k4_geo_strict(data), []) if (detect_geo_kind(data)=="K4") else parse_geo_with_blocks(data)
+                tests_list, meta_rows = (parse_k4_geo_strict(data, TestData), []) if (detect_geo_kind(data)=="K4") else parse_geo_with_blocks(data, TestData, GeoBlockInfo)
                 # store template blocks (do not depend on current edited/deleted tests)
                 self._geo_template_blocks_info = [t.block for t in tests_list if getattr(t, 'block', None)]
                 self._geo_template_blocks_info_full = list(self._geo_template_blocks_info)
@@ -1726,7 +1715,7 @@ class GeoCanvasEditor(tk.Tk):
 
                 self.original_bytes = data
 
-                tests_list, meta_rows = parse_geo_with_blocks(data)
+                tests_list, meta_rows = parse_geo_with_blocks(data, TestData, GeoBlockInfo)
                 # store template blocks (do not depend on current edited/deleted tests)
                 self._geo_template_blocks_info = [t.block for t in tests_list if getattr(t, 'block', None)]
                 self._geo_template_blocks_info_full = list(self._geo_template_blocks_info)
@@ -5686,7 +5675,7 @@ def export_gxl_generated(self, out_file: str):
                 self.original_bytes = out_bytes
                 self.loaded_path = out_file
                 # перепарсим только что сохранённый GEO, чтобы получить новые block-метаданные
-                _tests2 = parse_geo_with_blocks(out_bytes)
+                _tests2 = parse_geo_with_blocks(out_bytes, TestData, GeoBlockInfo)
                 if _tests2 and len(_tests2) == len(self.tests):
                     for i in range(len(self.tests)):
                         try:

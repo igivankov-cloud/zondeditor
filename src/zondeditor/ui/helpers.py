@@ -354,3 +354,69 @@ def _validate_depth_0_4_key(P: str) -> bool:
 from src.zondeditor.licensing.check import check_license_or_exit as _check_license_or_exit
 
 # ================================================================
+
+def _parse_cell_int(v):
+    """Parse cell value to int; supports None/''/str/float. Returns None if not parseable."""
+    if v is None:
+        return None
+    try:
+        s = str(v).strip()
+    except Exception:
+        return None
+    if s == "":
+        return None
+    s = s.replace(",", ".")
+    try:
+        return int(float(s))
+    except Exception:
+        return None
+
+def _max_zero_run(seq) -> int:
+    """Return maximum length of consecutive zeros in a numeric sequence."""
+    best = 0
+    cur = 0
+    for v in seq or []:
+        try:
+            vv = int(v)
+        except Exception:
+            try:
+                vv = int(float(str(v).replace(',', '.')))
+            except Exception:
+                vv = 0
+        if vv == 0:
+            cur += 1
+            if cur > best:
+                best = cur
+        else:
+            cur = 0
+    return best
+
+def _noise_around(v, rel=0.05, abs_min=1):
+    """Return small random-ish perturbation around value v.
+    Used by fix_by_algorithm interpolation to avoid perfectly flat repeats.
+    rel: relative amplitude, abs_min: minimum amplitude in raw units.
+    """
+    try:
+        import random
+        x = float(v)
+    except Exception:
+        return v
+    amp = max(abs(x) * float(rel), float(abs_min))
+    return x + (random.random() * 2.0 - 1.0) * amp
+
+def _interp_with_noise(a, b, t=0.5, rel=0.02, abs_min=1):
+    """Linear interpolation between a and b at fraction t, with tiny noise.
+    Used by fix_by_algorithm to avoid identical flats.
+    """
+    try:
+        aa = float(a)
+        bb = float(b)
+        tt = float(t)
+        x = aa + (bb - aa) * tt
+    except Exception:
+        x = a
+    try:
+        return _noise_around(x, rel=rel, abs_min=abs_min)
+    except Exception:
+        return x
+
