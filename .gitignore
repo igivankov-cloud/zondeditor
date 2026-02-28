@@ -12,3 +12,20 @@ build/
 *.pyd
 .DS_Store
 Thumbs.db
+
+# build/test artifacts
+tools/_selfcheck_out/
+tools/_ui_extract/
+tools/_stubs/
+
+# local step/hotfix notes
+STEP*_README.txt
+STEP*_HOTFIX*.txt
+HOTFIX_*README*.txt
+README_FORCE_IMPORTS.txt
+REPAIR_ALL_README.txt
+.gitignore.add
+
+# backups
+*.bak_*
+*.bak_step*
