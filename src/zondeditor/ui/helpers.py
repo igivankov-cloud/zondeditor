@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
+import sys
 import re
+from pathlib import Path
 
 def _apply_win11_style(root):
     """Best-effort Win11-ish style. Uses sv_ttk if available, otherwise no-op."""
@@ -420,3 +423,21 @@ def _interp_with_noise(a, b, t=0.5, rel=0.02, abs_min=1):
     except Exception:
         return x
 
+
+def _resource_path(rel: str) -> str:
+    """Resolve resource path for both source checkout and bundled executable."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[3]))
+    return str(base / rel)
+
+
+def _open_logs_folder() -> None:
+    """Best-effort open of local logs directory."""
+    logs_dir = Path.cwd() / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        if os.name == "nt":
+            os.startfile(str(logs_dir))  # type: ignore[attr-defined]
+        else:
+            print(f"Logs folder: {logs_dir}")
+    except Exception:
+        print(f"Logs folder: {logs_dir}")

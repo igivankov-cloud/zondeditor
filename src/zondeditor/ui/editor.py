@@ -18,22 +18,31 @@ import time
 import datetime
 import datetime as _dt
 import zipfile
+import shutil
+import tempfile
+import traceback
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 # project modules already extracted:
 from src.zondeditor.processing.fixes import fix_tests_by_algorithm
 from src.zondeditor.processing.calibration import calc_qc_fs, calc_qc_fs_from_del
-from src.zondeditor.export.excel_export import export_excel
+try:
+    from src.zondeditor.export.excel_export import export_excel as export_excel_file
+except Exception:
+    export_excel_file = None
 from src.zondeditor.export.credo_zip import export_credo_zip
 from src.zondeditor.export.gxl_export import export_gxl_generated
 from src.zondeditor.io.k2_reader import parse_geo_with_blocks
 from src.zondeditor.io.k4_reader import parse_k4_geo_strict, detect_geo_kind
-from src.zondeditor.io.geo_writer import save_k2_geo_from_template
+from src.zondeditor.io.geo_writer import save_k2_geo_from_template, build_k2_geo_from_template
 from src.zondeditor.domain.models import TestData, GeoBlockInfo, TestFlags
 
 from src.zondeditor.ui.consts import *
-from src.zondeditor.ui.helpers import _apply_win11_style, _setup_shared_logger, _validate_nonneg_float_key, _check_license_or_exit, _parse_depth_float, _try_parse_dt, _pick_icon_font, _validate_tid_key, _validate_depth_0_4_key, _format_date_ru, _format_time_ru, _canvas_view_bbox, _validate_hh_key, _validate_mm_key, _parse_cell_int, _max_zero_run, _noise_around, _interp_with_noise
+from src.zondeditor.ui.helpers import _apply_win11_style, _setup_shared_logger, _validate_nonneg_float_key, _check_license_or_exit, _parse_depth_float, _try_parse_dt, _pick_icon_font, _validate_tid_key, _validate_depth_0_4_key, _format_date_ru, _format_time_ru, _canvas_view_bbox, _validate_hh_key, _validate_mm_key, _parse_cell_int, _max_zero_run, _noise_around, _interp_with_noise, _resource_path, _open_logs_folder
 from src.zondeditor.ui.widgets import ToolTip, CalendarDialog
+
+_rebuild_geo_from_template = build_k2_geo_from_template
 
 class GeoCanvasEditor(tk.Tk):
     def __init__(self):
@@ -4482,138 +4491,28 @@ class GeoCanvasEditor(tk.Tk):
             return
         if not self._validate_export_rows():
             return
-        params = self._read_calc_params()
-        if not params:
-            return
-        scale_div, fmax_cone_kn, fmax_sleeve_kn, area_cone_cm2, area_sleeve_cm2 = params
-        A_cone = _cm2_to_m2(area_cone_cm2)
-        A_sleeve = _cm2_to_m2(area_sleeve_cm2)
-
-        tests_exp = [t for t in (getattr(self, 'tests', []) or []) if bool(getattr(t, 'export_on', True))]
-        if not tests_exp:
-            messagebox.showwarning('Нет данных', 'Нет зондирований для экспорта (все исключены).')
+        if export_excel_file is None:
+            messagebox.showerror("Экспорт недоступен", "Для экспорта Excel установите зависимость openpyxl.")
             return
 
         out = filedialog.asksaveasfilename(
             title="Куда сохранить Excel",
             defaultextension=".xlsx",
-            filetypes=[("Excel", "*.xlsx")]
+            filetypes=[("Excel", "*.xlsx")],
         )
         if not out:
             return
-        out_path = Path(out)
 
-        wb = openpyxl.Workbook()
-        wb.remove(wb.active)
-        used_names = set()
-
-        for t in tests_exp:
-            tid = t.tid
-            base_name = self._safe_sheet_name(str(tid))
-            name = base_name
-            k = 1
-            while name in used_names:
-                suffix = f"_{k}"
-                name = self._safe_sheet_name(base_name[: (31 - len(suffix))] + suffix)
-                k += 1
-            used_names.add(name)
-
-            ws = wb.create_sheet(title=name)
-            if getattr(self, "geo_kind", "K2") == "K4":
-                ws.append(["Depth_m", "qc_del", "fs_del", "incl_raw", "qc_MPa", "fs_kPa"])
-            else:
-                ws.append(["Depth_m", "qc_del", "fs_del", "qc_MPa", "fs_kPa"])
-
-            fl = self.flags.get(tid, TestFlags(False, set(), set(), set(), set(), set()))
-            n = len(t.qc)
-
-            for idx in range(n):
-                depth_val = _parse_depth_float(t.depth[idx]) if idx < len(t.depth) else None
-                qc_del = _parse_cell_int(t.qc[idx])
-                fs_del = _parse_cell_int(t.fs[idx])
-
-                # skip fully empty rows (and deleted rows are removed anyway)
-                if depth_val is None and qc_del is None and fs_del is None:
-                    continue
-
-                qc_MPa = None
-                fs_kPa = None
-                if qc_del is not None and A_cone:
-                    F_cone_N = (qc_del / scale_div) * (fmax_cone_kn * 1000.0)
-                    qc_MPa = (F_cone_N / A_cone) / 1e6
-                if fs_del is not None and A_sleeve:
-                    F_sleeve_N = (fs_del / scale_div) * (fmax_sleeve_kn * 1000.0)
-                    fs_kPa = (F_sleeve_N / A_sleeve) / 1e3
-
-                ws.append([
-                    depth_val,
-                    qc_del, fs_del,
-                    None if qc_MPa is None else round(qc_MPa, 2),
-                    None if fs_kPa is None else int(round(fs_kPa, 0)),
-                ])
-
-                # color cells (B,C)
-                r = ws.max_row
-                if fl.invalid:
-                    ws[f"B{r}"].fill = FILL_RED
-                    ws[f"C{r}"].fill = FILL_RED
-                else:
-                    # original indices don't map after skips; keep only for non-skipped rows
-                    # best-effort: if idx within flags
-                    if (idx, "qc") in fl.interp_cells:
-                        ws[f"B{r}"].fill = FILL_YELLOW
-                    if (idx, "fs") in fl.interp_cells:
-                        ws[f"C{r}"].fill = FILL_YELLOW
-                    if (idx, "qc") in fl.force_cells:
-                        ws[f"B{r}"].fill = FILL_BLUE
-                    if (idx, "fs") in fl.force_cells:
-                        ws[f"C{r}"].fill = FILL_BLUE
-                    if (idx, "qc") in getattr(fl, 'user_cells', set()):
-                        ws[f"B{r}"].fill = FILL_PURPLE
-                    if (idx, "fs") in getattr(fl, 'user_cells', set()):
-                        ws[f"C{r}"].fill = FILL_PURPLE
-
-            ws.freeze_panes = "A2"
-
-        ws = wb.create_sheet(title="meta")
-        ws.append(["test_id", "datetime", "marker", "header_pos", "points"])
-        for t in tests_exp:
-            ws.append([t.tid, t.dt or "", t.marker or "", t.header_pos or "", len(t.qc)])
-
-        wb.save(out_path)
-
-    # ---------------- save GEO ----------------
-
-
-    def _has_issues_for_fix_prompt(self):
-        """Detect zeros / non-refusal (max<250) to suggest algorithmic fix before CREDO export."""
-        if not getattr(self, "tests", None):
-            return False, []
-        issues = []
-        for t in tests_exp:
-            tid = getattr(t, "tid", "?")
-            qc_vals = [v for v in (_parse_cell_int(x) for x in getattr(t, "qc", [])) if v is not None]
-            fs_vals = [v for v in (_parse_cell_int(x) for x in getattr(t, "fs", [])) if v is not None]
-            has_zero = any(v == 0 for v in qc_vals) or any(v == 0 for v in fs_vals)
-
-            mx_qc = max(qc_vals) if qc_vals else None
-            mx_fs = max(fs_vals) if fs_vals else None
-            not_refusal = False
-            if mx_qc is not None and mx_fs is not None:
-                not_refusal = (mx_qc < 250 and mx_fs < 250)
-            elif mx_qc is not None:
-                not_refusal = (mx_qc < 250)
-            elif mx_fs is not None:
-                not_refusal = (mx_fs < 250)
-
-            if has_zero or not_refusal:
-                tag = []
-                if has_zero:
-                    tag.append("нули")
-                if not_refusal:
-                    tag.append("не доведено до 250")
-                issues.append(f"{tid}: {', '.join(tag)}")
-        return (len(issues) > 0), issues
+        try:
+            export_excel_file(
+                self.tests,
+                geo_kind=getattr(self, "geo_kind", "K2"),
+                out_path=Path(out),
+                include_only_export_on=True,
+            )
+            messagebox.showinfo("Готово", f"Excel сохранён:\n{out}")
+        except Exception as e:
+            messagebox.showerror("Ошибка", str(e))
 
     def export_credo_zip(self):
         """Export each test into two CSV (depth;qc_MPa and depth;fs_kPa) without headers, pack into ZIP.
@@ -5058,42 +4957,14 @@ class GeoCanvasEditor(tk.Tk):
         path.write_text("\n".join(lines), encoding="utf-8")
     def _export_excel_silent(self, out_path: Path):
         """Тихий экспорт в Excel без диалогов (для экспорта-архива)."""
-        from openpyxl import Workbook
-        wb = Workbook()
-        ws_meta = wb.active
-        ws_meta.title = "meta"
-
-        def _get(v):
-            try:
-                return v.get().strip()
-            except Exception:
-                return str(v).strip()
-
-        ws_meta.append(["object", self._ensure_object_code()])
-        ws_meta.append(["source", getattr(self, "loaded_path", "")])
-        ws_meta.append(["scale", _get(self.scale_var) if hasattr(self, "scale_var") else ""])
-        ws_meta.append(["fcone_kN", _get(self.fcone_var) if hasattr(self, "fcone_var") else ""])
-        ws_meta.append(["fsleeve_kN", _get(self.fsleeve_var) if hasattr(self, "fsleeve_var") else ""])
-        ws_meta.append(["depth_start_m", getattr(self, "depth_start", "")])
-        ws_meta.append(["step_m", getattr(self, "step_m", "")])
-        tests_exp = [t for t in (getattr(self, "tests", []) or []) if bool(getattr(t, "export_on", True))]
-        ws_meta.append(["tests", len(tests_exp)])
-
-        for t in tests_exp:
-            ws = wb.create_sheet(f"Z{getattr(t, 'tid', '')}")
-            if getattr(self, "geo_kind", "K2") == "K4":
-                ws.append(["Depth_m", "qc_del", "fs_del", "incl_raw", "qc_MPa", "fs_kPa"])
-            else:
-                ws.append(["Depth_m", "qc_del", "fs_del", "qc_MPa", "fs_kPa"])
-            for d, qc, fs in zip(getattr(t, "depth", []) or [], getattr(t, "qc", []) or [], getattr(t, "fs", []) or []):
-                depth_val = _parse_depth_float(d)
-                qv = _parse_cell_int(qc)
-                fv = _parse_cell_int(fs)
-                if qv is None: qv = 0
-                if fv is None: fv = 0
-                qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(qv), int(fv))
-                ws.append([round(depth_val, 2) if depth_val is not None else None, qv, fv, round(qc_mpa, 2), int(round(fs_kpa, 0))])
-        wb.save(str(out_path))
+        if export_excel_file is None:
+            raise RuntimeError("openpyxl не установлен: экспорт Excel недоступен")
+        export_excel_file(
+            self.tests,
+            geo_kind=getattr(self, "geo_kind", "K2"),
+            out_path=out_path,
+            include_only_export_on=True,
+        )
 
     def _export_credo_silent(self, out_zip_path: Path):
         """Тихий экспорт ZIP для CREDO (две CSV на опыт) без диалогов (для экспорта-архива)."""

@@ -4,8 +4,6 @@ from __future__ import annotations
 import compileall
 import importlib
 import sys
-import zipfile
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 LAUNCHER = "run_zondeditor.py"
@@ -18,7 +16,6 @@ MODULES_TO_IMPORT = [
     "src.zondeditor.domain.models",
     "src.zondeditor.processing.calibration",
     "src.zondeditor.processing.fixes",
-    "src.zondeditor.export.excel_export",
     "src.zondeditor.export.credo_zip",
     "src.zondeditor.export.gxl_export",
     "src.zondeditor.ui.main_window",
@@ -36,16 +33,31 @@ def fail(msg: str, code: int = 1) -> None:
 def ok(msg: str) -> None:
     print(f"[ OK ] {msg}")
 
+
+
+def _has_openpyxl() -> bool:
+    try:
+        import openpyxl  # noqa: F401
+        return True
+    except Exception:
+        return False
+
 def _smoke_all(root: Path) -> None:
     from src.zondeditor.io.k4_reader import detect_geo_kind, parse_k4_geo_strict
     from src.zondeditor.io.k2_reader import parse_geo_with_blocks as parse_k2
     from src.zondeditor.domain.models import TestData, GeoBlockInfo, TestFlags
     from src.zondeditor.processing.calibration import calc_qc_fs
-    from src.zondeditor.export.excel_export import export_excel
     from src.zondeditor.export.credo_zip import export_credo_zip
     from src.zondeditor.export.gxl_export import export_gxl_generated
     from src.zondeditor.processing.fixes import fix_tests_by_algorithm
     from src.zondeditor.io.geo_writer import save_k2_geo
+
+    has_openpyxl = _has_openpyxl()
+    if has_openpyxl:
+        from src.zondeditor.export.excel_export import export_excel
+    else:
+        export_excel = None
+        ok("openpyxl не установлен: проверки Excel-экспорта будут пропущены")
 
     out_dir = root / "tools" / "_selfcheck_out"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -85,7 +97,8 @@ def _smoke_all(root: Path) -> None:
             if incl is None or len(t0.depth) != len(incl):
                 fail(f"{rel}: K4 incl invalid")
 
-            export_excel(tests, geo_kind="K4", out_path=out_dir / "K4_test.xlsx")
+            if export_excel is not None:
+                export_excel(tests, geo_kind="K4", out_path=out_dir / "K4_test.xlsx")
             export_credo_zip(tests, geo_kind="K4", out_zip_path=out_dir / "K4_credo.zip")
             export_gxl_generated(tests, out_path=out_dir / "K4_generated.gxl", object_code="SELFTEST_K4")
             ok(f"{rel}: K4 parse+export OK (tests={len(tests)})")
@@ -96,7 +109,8 @@ def _smoke_all(root: Path) -> None:
             if not tests:
                 fail(f"{rel}: K2 парсер вернул 0 опытов")
 
-            export_excel(tests, geo_kind="K2", out_path=out_dir / "K2_test.xlsx")
+            if export_excel is not None:
+                export_excel(tests, geo_kind="K2", out_path=out_dir / "K2_test.xlsx")
             export_credo_zip(tests, geo_kind="K2", out_zip_path=out_dir / "K2_credo.zip")
             export_gxl_generated(tests, out_path=out_dir / "K2_generated.gxl", object_code="SELFTEST_K2")
             ok(f"{rel}: K2 parse+export OK (tests={len(tests)})")
@@ -143,6 +157,15 @@ def main() -> None:
     ok("compileall: без ошибок")
 
     ok("Проверка импортов модулей ...")
+    ok("Проверка entrypoint модульного запуска ...")
+    app_mod = importlib.import_module("src.zondeditor.app")
+    if not callable(getattr(app_mod, "main", None)):
+        fail("src.zondeditor.app.main не найден или не callable")
+    ui_mod = importlib.import_module("src.zondeditor.ui.editor")
+    if getattr(ui_mod, "GeoCanvasEditor", None) is None:
+        fail("src.zondeditor.ui.editor.GeoCanvasEditor не найден")
+    ok("entrypoint и UI импортируются корректно")
+
     for m in MODULES_TO_IMPORT:
         try:
             importlib.import_module(m)
