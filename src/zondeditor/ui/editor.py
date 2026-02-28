@@ -3092,9 +3092,10 @@ class GeoCanvasEditor(tk.Tk):
 
             # checked = will be exported
             ex_on = bool(getattr(t, "export_on", True))
-            hdr_fill = GUI_HDR if ex_on else "#f2f2f2"
-            hdr_text = "#111" if ex_on else "#8a8a8a"
-            hdr_icon = "#444" if ex_on else "#8a8a8a"
+            # Визуал как в Win11: включённые (активные) опыты подсвечиваем мягким синим
+            hdr_fill = (GUI_HDR_ON if ex_on else GUI_HDR_OFF)
+            hdr_text = ("#111" if ex_on else "#8a8a8a")
+            hdr_icon = ("#1f2937" if ex_on else "#8a8a8a")
 
             # --- ШАПКА (hcanvas) ---
             self.hcanvas.create_rectangle(x0, y0, x1, y1, fill=hdr_fill, outline=GUI_GRID)
