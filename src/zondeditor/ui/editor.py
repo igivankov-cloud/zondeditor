@@ -44,6 +44,47 @@ from src.zondeditor.ui.widgets import ToolTip, CalendarDialog
 
 _rebuild_geo_from_template = build_k2_geo_from_template
 
+
+# --- Cell edit validators (auto-restored) ---
+import re as _re__cell
+
+def _validate_int_0_300_key(p: str) -> bool:
+    """Tk validatecommand: allow empty while typing; otherwise int in [0, 300]."""
+    if p is None:
+        return True
+    p = str(p)
+    if p == "":
+        return True
+    if not p.isdigit():
+        return False
+    try:
+        v = int(p)
+    except Exception:
+        return False
+    return 0 <= v <= 300
+
+
+def _sanitize_int_0_300(s: str) -> str:
+    """Normalize entry value to a safe int string in [0, 300]. Empty -> ''."""
+    if s is None:
+        return ""
+    s = str(s).strip()
+    if s == "":
+        return ""
+    if not s.isdigit():
+        m = _re__cell.search(r"(\d+)", s)
+        if not m:
+            return ""
+        s = m.group(1)
+    try:
+        v = int(s)
+    except Exception:
+        return ""
+    if v < 0:
+        v = 0
+    if v > 300:
+        v = 300
+    return str(v)
 class GeoCanvasEditor(tk.Tk):
     def __init__(self):
         super().__init__()
