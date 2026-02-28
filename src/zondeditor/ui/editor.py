@@ -44,6 +44,55 @@ from src.zondeditor.ui.widgets import ToolTip, CalendarDialog
 
 _rebuild_geo_from_template = build_k2_geo_from_template
 
+
+def _validate_int_0_300_key(P: str) -> bool:
+    """Key validator for integer values in range 0..300.
+
+    Used by tk.Entry validatecommand with %P (proposed value).
+    Allows empty string while editing.
+    """
+    if P is None:
+        return True
+    if P == "":
+        return True
+    if not P.isdigit():
+        return False
+    try:
+        v = int(P)
+    except Exception:
+        return False
+    return 0 <= v <= 300
+
+
+
+def _sanitize_int_0_300(val) -> str:
+    """Sanitize integer-like value for qc/fs cells (0..300), returning a string.
+
+    Editor logic expects a *string* (it calls .strip()).
+    Empty string means "clear" (may trigger edge-delete rules).
+    """
+    if val is None:
+        return ""
+    s = str(val).strip()
+    if s == "":
+        return ""
+    # keep digits only if user pasted something odd
+    # (keyboard input is already validated via _validate_int_0_300_key)
+    if not s.isdigit():
+        s2 = "".join(ch for ch in s if ch.isdigit())
+        s = s2
+    if s == "":
+        return ""
+    try:
+        v = int(s)
+    except Exception:
+        return ""
+    if v < 0:
+        v = 0
+    if v > 300:
+        v = 300
+    return str(v)
+
 class GeoCanvasEditor(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -3092,10 +3141,9 @@ class GeoCanvasEditor(tk.Tk):
 
             # checked = will be exported
             ex_on = bool(getattr(t, "export_on", True))
-            # Визуал как в Win11: включённые (активные) опыты подсвечиваем мягким синим
-            hdr_fill = (GUI_HDR_ON if ex_on else GUI_HDR_OFF)
-            hdr_text = ("#111" if ex_on else "#8a8a8a")
-            hdr_icon = ("#1f2937" if ex_on else "#8a8a8a")
+            hdr_fill = GUI_HDR if ex_on else "#f2f2f2"
+            hdr_text = "#111" if ex_on else "#8a8a8a"
+            hdr_icon = "#444" if ex_on else "#8a8a8a"
 
             # --- ШАПКА (hcanvas) ---
             self.hcanvas.create_rectangle(x0, y0, x1, y1, fill=hdr_fill, outline=GUI_GRID)
