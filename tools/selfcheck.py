@@ -8,7 +8,6 @@ import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-MONOLITH = "ZondEditor_SZ_v3_k2k4_dispatch_fix_params_step_depth_v5_nofreeze_k4fix_xlsxfix.py"
 LAUNCHER = "run_zondeditor.py"
 
 MODULES_TO_IMPORT = [
@@ -22,6 +21,7 @@ MODULES_TO_IMPORT = [
     "src.zondeditor.export.excel_export",
     "src.zondeditor.export.credo_zip",
     "src.zondeditor.export.gxl_export",
+    "src.zondeditor.ui.main_window",
 ]
 
 FIXTURES = [
@@ -126,13 +126,15 @@ def _smoke_all(root: Path) -> None:
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
 
-    if not (root / MONOLITH).exists():
-        fail(f"Не найден монолит: {MONOLITH}")
-    ok(f"Монолит найден: {MONOLITH}")
-
     if not (root / LAUNCHER).exists():
         fail(f"Не найден файл запуска: {LAUNCHER}")
     ok(f"Launcher найден: {LAUNCHER}")
+
+    legacy = root / "ZondEditor_SZ_v3_k2k4_dispatch_fix_params_step_depth_v5_nofreeze_k4fix_xlsxfix.py"
+    if legacy.exists():
+        ok(f"Legacy-монолит найден (опционально): {legacy.name}")
+    else:
+        ok("Legacy-монолит отсутствует (это допустимо для модульной версии)")
 
     ok("Компиляция .py (compileall) ...")
     success = compileall.compile_dir(str(root), quiet=1)
