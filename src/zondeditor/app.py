@@ -5,7 +5,16 @@ import sys
 
 
 def _show_blocking_message(title: str, text: str) -> None:
-    print(f"{title}: {text}", file=sys.stderr)
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(title, text)
+        root.destroy()
+    except Exception:
+        print(f"{title}: {text}", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> None:

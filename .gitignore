@@ -1,8 +1,6 @@
 __pycache__/
 *.pyc
 .venv/
-dist/
-build/
 *.spec
 *.log
 *.xlsx
@@ -29,6 +27,7 @@ REPAIR_ALL_README.txt
 # backups
 *.bak_*
 *.bak_step*
+*.bak
 
 # accidental scratch files
 0.0
@@ -45,5 +44,19 @@ py
 *.err
 *.pid
 logs/
-*.bak
-*.bak
+
+# packaging/build outputs
+dist/
+dist_installer/
+pyinstaller_build/
+build/.venv/
+build/.venv_build/
+build/__pycache__/
+
+# allow tracked scripts/docs under build/
+!build/
+!build/*.bat
+!build/*.txt
+!build/assets/
+!build/assets/*.ico
+!build/assets/*.txt
