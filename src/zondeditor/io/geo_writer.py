@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Any, Sequence, Optional
+from typing import Iterable, Any, Sequence
+
+from src.zondeditor.domain.models import TestData, TestSeries, series_to_testdata
+
 
 def _to_byte(v: Any) -> int:
     try:
@@ -11,28 +14,15 @@ def _to_byte(v: Any) -> int:
         x = 0
     return max(0, min(255, x))
 
+
 def _get_attr(obj: Any, name: str, default=None):
     if isinstance(obj, dict):
         return obj.get(name, default)
     return getattr(obj, name, default)
 
+
 def build_k2_geo_from_template(original: bytes, blocks_info: Sequence[Any], prepared_tests: Sequence[Any]) -> bytes:
-    """K2 GEO rebuild using existing template blocks_info (from monolith).
-
-    This is meant to be a drop-in replacement for the monolith call:
-      geo_bytes = _rebuild_geo_from_template(self.original_bytes, blocks_info, prepared)
-
-    Strategy:
-    - Iterate tests in the same order as prepared_tests.
-    - For each i, locate data_start/data_end from blocks_info[i].
-      (blocks_info items may be dicts or objects)
-    - Replace the [data_start:data_end) region with newly built qc/fs byte pairs.
-    - Keep everything else from original intact.
-
-    NOTE:
-    - This keeps the template-driven behavior (headers, params) identical to the monolith,
-      but moves the rebuild logic into this module.
-    """
+    """K2 GEO rebuild using existing template blocks_info (from monolith)."""
     out = bytearray(original)
     n_orig = len(original)
 
@@ -44,14 +34,14 @@ def build_k2_geo_from_template(original: bytes, blocks_info: Sequence[Any], prep
         ds = _get_attr(bi, "data_start", None)
         de = _get_attr(bi, "data_end", None)
         if ds is None or de is None:
-            # fallback names used in some versions
             ds = _get_attr(bi, "dataStart", None)
             de = _get_attr(bi, "dataEnd", None)
         if ds is None or de is None:
             continue
 
         try:
-            ds = int(ds); de = int(de)
+            ds = int(ds)
+            de = int(de)
         except Exception:
             continue
 
@@ -71,26 +61,83 @@ def build_k2_geo_from_template(original: bytes, blocks_info: Sequence[Any], prep
             payload.append(qv)
             payload.append(fv)
 
-        # Replace segment; allow size change by rebuilding full bytearray
         out = out[:ds] + payload + out[de:]
-        # Update n_orig for subsequent bounds; but blocks_info offsets are from original.
-        # To keep offsets valid, we DO NOT adjust later ds/de. Therefore, this function is safe
-        # only when payload length matches original segment length. That is the typical case
-        # for "save without changing point count". For variable length, use the monolith builder.
         n_orig = len(out)
 
     return bytes(out)
+
+
+def _apply_test_ids_to_headers(geo_bytes: bytes, blocks_info: Sequence[Any], prepared_tests: Sequence[Any]) -> bytes:
+    out = bytearray(geo_bytes)
+    n = min(len(blocks_info), len(prepared_tests))
+    for idx in range(n):
+        bi = blocks_info[idx]
+        t = prepared_tests[idx]
+        id_pos = _get_attr(bi, "id_pos", None)
+        if id_pos is None:
+            continue
+        try:
+            pos = int(id_pos)
+        except Exception:
+            continue
+        if not (0 <= pos < len(out)):
+            continue
+        tid = int(getattr(t, "tid", 0) or getattr(t, "test_id", 0) or (idx + 1))
+        tid = min(255, max(1, tid))
+        out[pos] = tid
+    return bytes(out)
+
+
+def _normalize_prepared_tests(tests: Sequence[TestSeries | TestData | Any]) -> list[TestData]:
+    prepared: list[TestData] = []
+    for idx, t in enumerate(tests, start=1):
+        if isinstance(t, TestSeries):
+            td = series_to_testdata(t)
+        elif isinstance(t, TestData):
+            td = t
+        else:
+            td = TestData(
+                tid=int(getattr(t, "tid", 0) or getattr(t, "test_id", 0) or idx),
+                dt=str(getattr(t, "dt", "") or ""),
+                depth=list(getattr(t, "depth", []) or []),
+                qc=list(getattr(t, "qc", []) or []),
+                fs=list(getattr(t, "fs", []) or []),
+                incl=list(getattr(t, "incl", []) or []) if getattr(t, "incl", None) is not None else None,
+                marker=str(getattr(t, "marker", "") or ""),
+                header_pos=str(getattr(t, "header_pos", "") or ""),
+                orig_id=getattr(t, "orig_id", None),
+                block=getattr(t, "block", None),
+            )
+        td.tid = min(255, max(1, int(getattr(td, "tid", idx) or idx)))
+        prepared.append(td)
+    return prepared
+
+
+def save_geo_as(
+    path: str | Path,
+    tests: Sequence[TestSeries | TestData | Any],
+    *,
+    source_bytes: bytes,
+    blocks_info: Sequence[Any],
+) -> None:
+    """Save GEO using template bytes and block metadata."""
+    out_path = Path(path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    prepared = _normalize_prepared_tests(tests)
+    payload = build_k2_geo_from_template(source_bytes, blocks_info, prepared)
+    payload = _apply_test_ids_to_headers(payload, blocks_info, prepared)
+    out_path.write_bytes(payload)
+
 
 def save_k2_geo_from_template(path_out: Path, original: bytes, blocks_info: Sequence[Any], prepared_tests: Sequence[Any]) -> None:
     path_out.parent.mkdir(parents=True, exist_ok=True)
     path_out.write_bytes(build_k2_geo_from_template(original, blocks_info, prepared_tests))
 
+
 # Older writer API (roundtrip module) kept for tests
 def build_k2_geo_bytes(original: bytes, tests: Iterable[Any]) -> bytes:
-    """Rebuild K2 GEO bytes by replacing qc/fs payload using test.block mapping.
-
-    Used by roundtrip test (Step14).
-    """
+    """Rebuild K2 GEO bytes by replacing qc/fs payload using test.block mapping."""
     items = []
     for t in tests:
         b = getattr(t, "block", None)
@@ -109,7 +156,7 @@ def build_k2_geo_bytes(original: bytes, tests: Iterable[Any]) -> bytes:
     cur = 0
     n_orig = len(original)
 
-    for ds, de, oi, t in items:
+    for ds, de, _oi, t in items:
         ds = max(0, min(n_orig, ds))
         de = max(0, min(n_orig, de))
         if ds < cur:
@@ -129,6 +176,7 @@ def build_k2_geo_bytes(original: bytes, tests: Iterable[Any]) -> bytes:
 
     out += original[cur:]
     return bytes(out)
+
 
 def save_k2_geo(path_out: Path, original: bytes, tests: Iterable[Any]) -> None:
     path_out.parent.mkdir(parents=True, exist_ok=True)
