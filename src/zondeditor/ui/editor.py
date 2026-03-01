@@ -122,6 +122,7 @@ class GeoCanvasEditor(tk.Tk):
         from tkinter import messagebox
         _check_license_or_exit(messagebox)
         self.usage_logger = _setup_shared_logger()
+        self._install_dialog_defaults()
         self.bind_all("<F12>", lambda e: _open_logs_folder())
 
         self.geo_path: Path | None = None
@@ -185,6 +186,22 @@ class GeoCanvasEditor(tk.Tk):
             self.after(400, self._footer_live_tick)
         except Exception:
             pass
+
+    def _install_dialog_defaults(self):
+        """Ensure dialogs are parented to the main window to avoid extra implicit tk roots."""
+        def _wrap(module, name: str):
+            fn = getattr(module, name, None)
+            if not callable(fn):
+                return
+            def _wrapped(*args, **kwargs):
+                kwargs.setdefault("parent", self)
+                return fn(*args, **kwargs)
+            setattr(module, name, _wrapped)
+
+        for _name in ("showinfo", "showwarning", "showerror", "askyesno", "askyesnocancel", "askokcancel", "askretrycancel", "askquestion"):
+            _wrap(messagebox, _name)
+        for _name in ("askopenfilename", "askopenfilenames", "asksaveasfilename", "askdirectory"):
+            _wrap(filedialog, _name)
 
     # ---------------- history ----------------
 
@@ -1918,7 +1935,7 @@ class GeoCanvasEditor(tk.Tk):
             self._update_status_loaded(f"Загружено опытов {len(self.tests)} шт.")
 
 
-    def _scan_by_algorithm(self):
+    def _scan_by_algorithm(self, preview_mode: bool = True):
         """Скан-проверка: подсветить, но не менять значения (qc/fs).
         Возвращает сводку (dict) и обновляет self.flags для подсветки.
         """
@@ -1932,7 +1949,7 @@ class GeoCanvasEditor(tk.Tk):
         if not self.tests:
             return summary
 
-        self._algo_preview_mode = True
+        self._algo_preview_mode = bool(preview_mode)
         summary["tests_total"] = len(self.tests)
 
         for t in self.tests:
@@ -3364,8 +3381,13 @@ class GeoCanvasEditor(tk.Tk):
 
                 if not depth_txt:
                     depth_fill = "white"
+                if fl.invalid and has_row:
+                    depth_fill = GUI_RED
 
                 def fill_for(kind: str):
+                    # Некорректный опыт перекрывает остальные статусы/marks.
+                    if fl.invalid and has_row:
+                        return GUI_RED
                     # Сначала — специальные подсветки, которые могут относиться к "пустым" строкам (хвост).
                     if data_i in getattr(fl, 'force_tail_rows', set()) and kind in ('depth','qc','fs','incl'):
                         return (GUI_BLUE_P if getattr(self, '_algo_preview_mode', False) else GUI_BLUE)
@@ -3373,8 +3395,6 @@ class GeoCanvasEditor(tk.Tk):
                     # Далее — обычная логика по существующим/пустым строкам
                     if not has_row or is_blank_row:
                         return "white"
-                    if fl.invalid:
-                        return GUI_RED
 
                     if (data_i, kind) in getattr(fl, 'user_cells', set()):
                         return GUI_PURPLE
@@ -3391,13 +3411,6 @@ class GeoCanvasEditor(tk.Tk):
                         return (GUI_BLUE_P if getattr(self, '_algo_preview_mode', False) else GUI_BLUE)
                     if (data_i, kind) in fl.interp_cells:
                         return (GUI_ORANGE_P if getattr(self, '_algo_preview_mode', False) else GUI_ORANGE)
-
-                    # Подсветка нулей (qc/fs) — как "некорректно"
-                    # (в т.ч. для только что добавленных зондирований, где значения по умолчанию 0)
-                    if kind == 'qc' and str(qc_txt).strip() == '0':
-                        return GUI_RED
-                    if kind == 'fs' and str(fs_txt).strip() == '0':
-                        return GUI_RED
 
                     return "white" 
 
@@ -5039,6 +5052,29 @@ class GeoCanvasEditor(tk.Tk):
             self._marks_applied_count = len(self._marks_index)
         print(f"[marks] ops_loaded={self._marks_ops_count} marks_built={self._marks_built_count} marks_visible={self._marks_applied_count}")
 
+    def _recompute_statuses_after_data_load(self, *, preview_mode: bool = False) -> dict:
+        """Force full status recomputation and redraw after loading/restoring data."""
+        info = self._scan_by_algorithm(preview_mode=preview_mode)
+        self._algo_preview_mode = bool(preview_mode)
+        self._redraw()
+        self._update_footer_realtime()
+        return info or {}
+
+    def _project_open_diagnostics(self, status_info: dict | None = None) -> str:
+        status_info = status_info or {}
+        try:
+            status_now = self._compute_footer_realtime()
+        except Exception:
+            status_now = {}
+        no_ref = int(status_now.get("no_ref", 0) or 0)
+        miss = int(status_now.get("miss", 0) or 0)
+        invalid = int(status_now.get("inv", 0) or 0)
+        return (
+            f"Проект открыт: ops={self._marks_ops_count}, marks={self._marks_built_count}, "
+            f"подсвечено_marks={self._marks_applied_count}, статус_синий={no_ref}, "
+            f"статус_жёлтый={miss}, некорректных_опытов={invalid}"
+        )
+
     def save_project_file(self, save_as: bool = False):
         out = self.project_path
         if save_as or not out:
@@ -5075,6 +5111,7 @@ class GeoCanvasEditor(tk.Tk):
         self.original_bytes = source_bytes
         self._restore(project.state or {})
         self._rebuild_marks_index()
+        status_info = self._recompute_statuses_after_data_load(preview_mode=False)
         if hasattr(self, "scale_var"):
             self.scale_var.set(project.settings.scale)
             self.fcone_var.set(project.settings.fcone)
@@ -5084,12 +5121,79 @@ class GeoCanvasEditor(tk.Tk):
         self._dirty = False
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)
-        self.status.config(text=f"Проект открыт: ops={self._marks_ops_count}, marks={self._marks_built_count}, подсвечено={self._marks_applied_count}")
+        self.status.config(text=self._project_open_diagnostics(status_info))
         self._update_window_title()
 
     def new_project_file(self):
         if not self._confirm_discard_if_dirty():
             return
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Создать проект")
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill="both", expand=True)
+
+        ttk.Label(frm, text="Глубина (м):").grid(row=0, column=0, sticky="w", pady=(0, 6))
+        depth_var = tk.StringVar(master=self, value="10")
+        e_depth = ttk.Entry(frm, textvariable=depth_var, width=12)
+        e_depth.grid(row=0, column=1, sticky="w", pady=(0, 6))
+
+        ttk.Label(frm, text="Шаг (м):").grid(row=1, column=0, sticky="w", pady=(0, 6))
+        step_var = tk.StringVar(master=self, value="0.10")
+        e_step = ttk.Entry(frm, textvariable=step_var, width=12)
+        e_step.grid(row=1, column=1, sticky="w", pady=(0, 6))
+
+        incl_var = tk.BooleanVar(master=self, value=True)
+        ttk.Checkbutton(
+            frm,
+            text="Инклинометр при глубине > 10 м",
+            variable=incl_var,
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 10))
+
+        result = {"ok": False}
+
+        def _cancel(_evt=None):
+            dlg.destroy()
+
+        def _ok(_evt=None):
+            try:
+                depth_m = float(str(depth_var.get()).replace(",", ".").strip())
+                step_m = float(str(step_var.get()).replace(",", ".").strip())
+                if depth_m <= 0 or step_m <= 0:
+                    raise ValueError
+            except Exception:
+                messagebox.showerror("Ошибка", "Введите корректные значения глубины и шага.", parent=self)
+                return
+            result.update(ok=True, depth=depth_m, step=step_m, incl=bool(incl_var.get()))
+            dlg.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=3, column=0, columnspan=2, sticky="e")
+        ttk.Button(btns, text="Отмена", command=_cancel).pack(side="right", padx=(8, 0))
+        ttk.Button(btns, text="OK", command=_ok).pack(side="right")
+
+        dlg.bind("<Return>", _ok)
+        dlg.bind("<Escape>", _cancel)
+
+        try:
+            self._center_child(dlg)
+        except Exception:
+            pass
+
+        e_depth.focus_set()
+        self.wait_window(dlg)
+
+        if not result.get("ok"):
+            return
+
+        depth_m = float(result["depth"])
+        step_m = float(result["step"])
+        with_incl = bool(result["incl"])
+
         self.tests = []
         self.flags = {}
         self.undo_stack.clear()
@@ -5104,14 +5208,46 @@ class GeoCanvasEditor(tk.Tk):
         self.object_code = ""
         self.geo_path = None
         self.original_bytes = None
+        self.depth_start = 0.0
+        self.step_m = step_m
+        self.depth0_by_tid = {1: 0.0}
+
+        dt_now = _dt.datetime.now().replace(microsecond=0)
+        dt_text = dt_now.strftime("%Y-%m-%d %H:%M:%S")
+
+        depth_vals = []
+        cur = 0.0
+        guard = 0
+        while cur <= depth_m + 1e-9 and guard < 200000:
+            depth_vals.append(f"{round(cur, 2):g}")
+            cur = round(cur + step_m, 6)
+            guard += 1
+        if not depth_vals:
+            depth_vals = ["0"]
+
+        n = len(depth_vals)
+        qc = ["0"] * n
+        fs = ["0"] * n
+
+        incl_data = None
+        self.geo_kind = "K2"
+        if depth_m > 10 and with_incl:
+            self.geo_kind = "K4"
+            incl_data = ["0"] * n
+
+        self.tests.append(TestData(tid=1, dt=dt_text, depth=depth_vals, qc=qc, fs=fs, incl=incl_data, orig_id=None, block=None))
+        self.flags[1] = TestFlags(False, set(), set(), set(), set(), set())
+
         try:
-            self.file_var.set("(не выбран)")
+            self.file_var.set("(шаблон проекта)")
         except Exception:
             pass
-        self._dirty = False
-        self._redraw()
+
+        self._dirty = True
+        self._recompute_statuses_after_data_load(preview_mode=False)
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)
+        self.status.config(text="Создан новый проект-шаблон: 1 опыт")
         self._update_window_title()
 
     def _on_object_name_changed(self, value: str):
