@@ -32,3 +32,6 @@ jobs:
 
       - name: Run UI handler selfcheck
         run: python tools/selfcheck_ui_handlers.py
+
+      - name: Run fixtures selfcheck
+        run: python tools/selfcheck_fixtures.py
