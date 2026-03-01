@@ -41,6 +41,9 @@ from src.zondeditor.domain.models import TestData, GeoBlockInfo, TestFlags
 from src.zondeditor.ui.consts import *
 from src.zondeditor.ui.helpers import _apply_win11_style, _setup_shared_logger, _validate_nonneg_float_key, _check_license_or_exit, _parse_depth_float, _try_parse_dt, _pick_icon_font, _validate_tid_key, _validate_depth_0_4_key, _format_date_ru, _format_time_ru, _canvas_view_bbox, _validate_hh_key, _validate_mm_key, _parse_cell_int, _max_zero_run, _noise_around, _interp_with_noise, _resource_path, _open_logs_folder
 from src.zondeditor.ui.widgets import ToolTip, CalendarDialog
+from src.zondeditor.ui.ribbon import RibbonView
+from src.zondeditor.project import Project, ProjectSettings, SourceInfo, load_project, save_project
+from src.zondeditor.project.ops import op_algo_fix_applied, op_cell_set, op_meta_change
 
 _rebuild_geo_from_template = build_k2_geo_from_template
 
@@ -149,6 +152,10 @@ class GeoCanvasEditor(tk.Tk):
         # Algorithm preview mode (autocheck on open): use pale colors, no data modification
         self._algo_preview_mode = False
         self.object_code = ""
+        self.object_name = ""
+        self.project_path: Path | None = None
+        self.project_ops: list[dict] = []
+        self.use_ribbon_ui = True
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.display_cols: list[int] = []  # indices of self.tests in left-to-right order
@@ -167,6 +174,7 @@ class GeoCanvasEditor(tk.Tk):
         self._rc_preview = None  # (ti,row) transient red row highlight for context menu
 
         self._build_ui()
+        self._update_window_title()
         # realtime footer status
         self._footer_force_live = True
         try:
@@ -445,7 +453,8 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
     def _build_ui(self):
-        # ========= RIBBON (Word-like) =========
+        self.ribbon_view = None
+        # ========= LEGACY TOP BAR =========
         ribbon = ttk.Frame(self, padding=(10,8))
         ribbon.pack(side="top", fill="x")
 
@@ -574,6 +583,33 @@ class GeoCanvasEditor(tk.Tk):
         p_row(1, 0, "Fкон (кН):", self.fcone_var, "Макс. усилие по лбу конуса, кН")
         p_row(1, 2, "Aмуф (см²):", self.asl_var, "Площадь боковой поверхности муфты, см²")
         p_row(2, 0, "Fмуф (кН):", self.fsleeve_var, "Макс. усилие по муфте, кН")
+        if getattr(self, "use_ribbon_ui", False):
+            commands = {
+                "undo": self.undo,
+                "redo": self.redo,
+                "new_project": self.new_project_file,
+                "open_project": self.open_project_file,
+                "save_project": self.save_project_file,
+                "save_project_as": lambda: self.save_project_file(save_as=True),
+                "object_name_changed": self._on_object_name_changed,
+                "open_geo": lambda: self.pick_file_and_load(forced_ext=".geo"),
+                "open_gxl": lambda: self.pick_file_and_load(forced_ext=".gxl"),
+                "export_geo": self.save_geo,
+                "export_gxl": self.save_gxl,
+                "export_excel": self.export_excel,
+                "export_credo": self.export_credo_zip,
+                "export_archive": self.export_bundle,
+                "geo_params": self.open_geo_params_dialog,
+                "fix_algo": self.fix_by_algorithm,
+                "reduce_step": self.convert_10_to_5,
+                "apply_calc": lambda: self._redraw(),
+                "k2k4_30": lambda: messagebox.showinfo("К2→К4", "Режим 30 МПа будет добавлен в следующем шаге."),
+                "k2k4_50": lambda: messagebox.showinfo("К2→К4", "Режим 50 МПа будет добавлен в следующем шаге."),
+            }
+            self.ribbon_view = RibbonView(self, commands=commands, icon_font=_pick_icon_font(11))
+            self.ribbon_view.pack(side="top", fill="x", before=ribbon)
+            self.ribbon_view.set_object_name(self.object_name)
+            ribbon.pack_forget()
         # ========= Main canvas (fixed header) =========
         mid = ttk.Frame(self)
         mid.pack(side="top", fill="both", expand=True)
@@ -825,28 +861,53 @@ class GeoCanvasEditor(tk.Tk):
         # hscroll живёт ВНУТРИ mid (между таблицей и нижними статус/подвал)
         self.hscroll_frame.pack(side="bottom", fill="x")
         self.hscroll_frame.pack_forget()
-    def pick_file_and_load(self):
-        path = filedialog.askopenfilename(
-            title="Выберите файл GEO/GE0 или GXL",
-            filetypes=[
+    def _update_window_title(self):
+        obj = self.object_name.strip() if getattr(self, "object_name", "") else ""
+        obj = obj or "(без названия)"
+        pname = Path(self.project_path).name if getattr(self, "project_path", None) else "(без проекта)"
+        self.title(f"ZondEditor — {obj} — {pname}")
+
+    def _confirm_discard_if_dirty(self) -> bool:
+        if not getattr(self, "_dirty", False):
+            return True
+        ans = messagebox.askyesnocancel("Несохраненные изменения", "Сохранить изменения проекта?")
+        if ans is None:
+            return False
+        if ans:
+            ok = self.save_project_file()
+            return bool(ok)
+        return True
+
+    def pick_file_and_load(self, forced_ext: str | None = None):
+        if not self._confirm_discard_if_dirty():
+            return
+        if forced_ext == ".geo":
+            title = "Открыть GEO/GE0"
+            fts = [("GEO/GE0", "*.geo *.ge0 *.GEO *.GE0"), ("Все файлы", "*.*")]
+        elif forced_ext == ".gxl":
+            title = "Открыть GXL"
+            fts = [("GXL", "*.gxl *.GXL"), ("Все файлы", "*.*")]
+        else:
+            title = "Выберите файл GEO/GE0 или GXL"
+            fts = [
                 ("GeoExplorer GEO / GXL", "*.geo *.ge0 *.GEO *.GE0 *.gxl *.GXL"),
                 ("Все файлы", "*.*"),
-            ],
-        )
+            ]
+        path = filedialog.askopenfilename(title=title, filetypes=fts)
         if not path:
             return
         self.geo_path = Path(path)
         self.file_var.set(str(self.geo_path))
         self.is_gxl = (self.geo_path.suffix.lower() == ".gxl")
-        # путь текущего загруженного файла
         self.loaded_path = str(self.geo_path)
-        # Современный поток: сразу загружаем и показываем.
+        self.project_path = None
         self.load_and_render()
         try:
             _log_event(self.usage_logger, "OPEN", file=str(self.geo_path))
         except Exception:
             pass
         self._ensure_object_code()
+        self._update_window_title()
 
     def open_geo_params_dialog(self):
         """Открыть окно параметров GEO для текущего файла."""
@@ -4107,6 +4168,10 @@ class GeoCanvasEditor(tk.Tk):
                             fl.algo_cells.discard((row, field))
                         except Exception:
                             pass
+                        try:
+                            self.project_ops.append(op_cell_set(test_id=int(getattr(t, "tid", 0) or 0), row=row, field=field, before=str(old), after=str(newv)))
+                        except Exception:
+                            pass
                 except Exception:
                     pass
                 fl.invalid = False
@@ -4497,6 +4562,17 @@ class GeoCanvasEditor(tk.Tk):
 
             self.flags[tid] = TestFlags(False, interp_cells, force_cells, _prev_user_cells, algo_cells, set())
 
+        try:
+            changes = []
+            for t in self.tests:
+                fl = self.flags.get(getattr(t, "tid", 0))
+                for row, fld in sorted(list(getattr(fl, "algo_cells", set()) or set())):
+                    changes.append({"testId": int(getattr(t, "tid", 0) or 0), "row": int(row), "field": fld})
+            if changes:
+                self.project_ops.append(op_algo_fix_applied(changes=changes))
+        except Exception:
+            pass
+
         self._end_edit(commit=True)
         self._redraw()
 
@@ -4820,17 +4896,115 @@ class GeoCanvasEditor(tk.Tk):
 
         ttk.Button(top, text="Закрыть", command=win.destroy).pack(anchor="e", pady=(10,0))
 
-    def _on_close(self):
-        if getattr(self, "_dirty", False):
-            ans = messagebox.askyesnocancel(
-                "Есть изменения",
-                "Есть несохранённые изменения. Экспортировать архив перед выходом?"
+
+    def _project_settings_from_ui(self) -> ProjectSettings:
+        return ProjectSettings(
+            scale=(self.scale_var.get().strip() if hasattr(self, "scale_var") else "250") or "250",
+            fcone=(self.fcone_var.get().strip() if hasattr(self, "fcone_var") else "30") or "30",
+            fsleeve=(self.fsleeve_var.get().strip() if hasattr(self, "fsleeve_var") else "10") or "10",
+            acon=(self.acon_var.get().strip() if hasattr(self, "acon_var") else "10") or "10",
+            asleeve=(self.asl_var.get().strip() if hasattr(self, "asl_var") else "350") or "350",
+            step_m=float(getattr(self, "step_m", 0.1) or 0.1),
+        )
+
+    def _build_project_payload(self) -> Project:
+        src = SourceInfo(
+            kind=("GXL" if getattr(self, "is_gxl", False) else "GEO"),
+            filename=(Path(self.geo_path).name if getattr(self, "geo_path", None) else ""),
+            ext=((Path(self.geo_path).suffix.lower().lstrip(".")) if getattr(self, "geo_path", None) else ""),
+            mime="application/octet-stream",
+        )
+        return Project(
+            object_name=(self.object_name or self.object_code or ""),
+            source=src,
+            settings=self._project_settings_from_ui(),
+            ops=list(getattr(self, "project_ops", []) or []),
+            state=self._snapshot(),
+        )
+
+    def save_project_file(self, save_as: bool = False):
+        out = self.project_path
+        if save_as or not out:
+            out = filedialog.asksaveasfilename(
+                title="Сохранить проект",
+                defaultextension=".zproj",
+                filetypes=[("ZondEditor project", "*.zproj")],
             )
-            if ans is None:
-                return
-            if ans:
-                if not self.export_bundle():
-                    return
+            if not out:
+                return False
+            out = Path(out)
+        payload = self._build_project_payload()
+        src_bytes = getattr(self, "original_bytes", None)
+        save_project(Path(out), project=payload, source_bytes=src_bytes)
+        self.project_path = Path(out)
+        self._dirty = False
+        self._update_window_title()
+        return True
+
+    def open_project_file(self):
+        if not self._confirm_discard_if_dirty():
+            return
+        path = filedialog.askopenfilename(
+            title="Открыть проект",
+            filetypes=[("ZondEditor project", "*.zproj")],
+        )
+        if not path:
+            return
+        project, source_bytes = load_project(Path(path))
+        self.project_path = Path(path)
+        self.object_name = project.object_name or ""
+        self.object_code = self.object_name
+        self.project_ops = list(project.ops or [])
+        self.original_bytes = source_bytes
+        self._restore(project.state or {})
+        if hasattr(self, "scale_var"):
+            self.scale_var.set(project.settings.scale)
+            self.fcone_var.set(project.settings.fcone)
+            self.fsleeve_var.set(project.settings.fsleeve)
+            self.acon_var.set(project.settings.acon)
+            self.asl_var.set(project.settings.asleeve)
+        self._dirty = False
+        if getattr(self, "ribbon_view", None):
+            self.ribbon_view.set_object_name(self.object_name)
+        self._update_window_title()
+
+    def new_project_file(self):
+        if not self._confirm_discard_if_dirty():
+            return
+        self.tests = []
+        self.flags = {}
+        self.undo_stack.clear()
+        self.redo_stack.clear()
+        self.project_ops = []
+        self.project_path = None
+        self.object_name = ""
+        self.object_code = ""
+        self.geo_path = None
+        self.original_bytes = None
+        try:
+            self.file_var.set("(не выбран)")
+        except Exception:
+            pass
+        self._dirty = False
+        self._redraw()
+        if getattr(self, "ribbon_view", None):
+            self.ribbon_view.set_object_name(self.object_name)
+        self._update_window_title()
+
+    def _on_object_name_changed(self, value: str):
+        before = self.object_name
+        value = (value or "").strip()
+        if before == value:
+            return
+        self.object_name = value
+        self.object_code = value
+        self.project_ops.append(op_meta_change(object_name_before=before, object_name_after=value))
+        self._dirty = True
+        self._update_window_title()
+
+    def _on_close(self):
+        if not self._confirm_discard_if_dirty():
+            return
         self.destroy()
 
     def export_bundle(self) -> bool:
@@ -4842,13 +5016,12 @@ class GeoCanvasEditor(tk.Tk):
             messagebox.showwarning('Нет данных', 'Нет зондирований для экспорта (все исключены).')
             return False
 
-
         obj = self._ensure_object_code()
         ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
         default_name = f"{obj}_{ts}.zip"
 
         out_zip = filedialog.asksaveasfilename(
-            title="Сохранить архив экспорта",
+            title="Сохранить архивом",
             defaultextension=".zip",
             initialfile=default_name,
             filetypes=[("ZIP", "*.zip")],
@@ -4856,12 +5029,53 @@ class GeoCanvasEditor(tk.Tk):
         if not out_zip:
             return False
 
+        include = {"project": True, "geo": True, "gxl": False, "excel": True, "credo": False}
+        dlg = tk.Toplevel(self)
+        dlg.title("Состав архива")
+        dlg.transient(self)
+        dlg.grab_set()
+        vars_map = {k: tk.BooleanVar(value=v) for k, v in include.items()}
+        labels = {
+            "project": "Проект (*.zproj)",
+            "geo": "GEO",
+            "gxl": "GXL",
+            "excel": "Excel",
+            "credo": "CREDO/ZIP",
+        }
+        frm = ttk.Frame(dlg, padding=10)
+        frm.pack(fill="both", expand=True)
+        for k in ("project", "geo", "gxl", "excel", "credo"):
+            ttk.Checkbutton(frm, text=labels[k], variable=vars_map[k]).pack(anchor="w")
+        result = {"ok": False}
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x", pady=(8, 0))
+        ttk.Button(btns, text="OK", command=lambda: (result.update(ok=True), dlg.destroy())).pack(side="right", padx=(6, 0))
+        ttk.Button(btns, text="Отмена", command=dlg.destroy).pack(side="right")
+        self.wait_window(dlg)
+        if not result["ok"]:
+            return False
+        include = {k: bool(v.get()) for k, v in vars_map.items()}
+
         try:
             with tempfile.TemporaryDirectory() as td:
                 td_path = Path(td)
 
-                meta_path = td_path / f"{obj}_meta.txt"
-                self._write_meta_txt(meta_path)
+                meta_path = td_path / "meta.json"
+                meta_payload = {
+                    "objectName": self.object_name or self.object_code or "",
+                    "createdAt": _dt.datetime.now().isoformat(),
+                    "sourceType": ("gxl" if getattr(self, "is_gxl", False) else "geo"),
+                    "geoKind": getattr(self, "geo_kind", ""),
+                    "step": getattr(self, "step_m", None),
+                    "recalc": {
+                        "scale": self.scale_var.get() if hasattr(self, "scale_var") else "",
+                        "fcone": self.fcone_var.get() if hasattr(self, "fcone_var") else "",
+                        "fsleeve": self.fsleeve_var.get() if hasattr(self, "fsleeve_var") else "",
+                        "acon": self.acon_var.get() if hasattr(self, "acon_var") else "",
+                        "asleeve": self.asl_var.get() if hasattr(self, "asl_var") else "",
+                    },
+                }
+                meta_path.write_text(json.dumps(meta_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
                 gxl_path = td_path / f"{obj}.gxl"
                 orig_tests = getattr(self, 'tests', None)
@@ -4975,15 +5189,23 @@ class GeoCanvasEditor(tk.Tk):
                         pass
 
                 xlsx_path = td_path / f"{obj}.xlsx"
-                self._export_excel_silent(xlsx_path)
+                if include.get("excel"):
+                    self._export_excel_silent(xlsx_path)
 
                 credo_zip_path = td_path / f"{obj}_CREDO.zip"
-                self._export_credo_silent(credo_zip_path)
+                if include.get("credo"):
+                    self._export_credo_silent(credo_zip_path)
+
+                project_path = td_path / "project.zproj"
+                if include.get("project"):
+                    project_payload = self._build_project_payload()
+                    save_project(project_path, project=project_payload, source_bytes=getattr(self, "original_bytes", None))
 
                 with zipfile.ZipFile(out_zip, "w", compression=zipfile.ZIP_DEFLATED) as z:
-                    z.write(meta_path, meta_path.name)
-                    z.write(gxl_path, gxl_path.name)
-                    if geo_path and geo_path.exists():
+                    z.write(meta_path, "meta.json")
+                    if include.get("gxl"):
+                        z.write(gxl_path, gxl_path.name)
+                    if include.get("geo") and geo_path and geo_path.exists():
                         z.write(geo_path, geo_path.name)
                     if geo_log_path and geo_log_path.exists():
                         z.write(geo_log_path, geo_log_path.name)
@@ -4991,16 +5213,18 @@ class GeoCanvasEditor(tk.Tk):
                     if 'dbg_path' in locals() and dbg_path and Path(dbg_path).exists():
                         z.write(dbg_path, Path(dbg_path).name)
 
-                    if xlsx_path.exists():
+                    if include.get("excel") and xlsx_path.exists():
                         z.write(xlsx_path, xlsx_path.name)
-                    if credo_zip_path.exists():
+                    if include.get("credo") and credo_zip_path.exists():
                         z.write(credo_zip_path, credo_zip_path.name)
+                    if include.get("project") and project_path.exists():
+                        z.write(project_path, project_path.name)
 
             # Excel не любит открывать .xlsx прямо ИЗ zip (появляется путь вида ...zip.8a3\file.xlsx и файл недоступен).
             # Поэтому дополнительно сохраняем копию XLSX рядом с архивом, чтобы открывалась без проблем.
             try:
                 side_xlsx = Path(out_zip).with_suffix('.xlsx')
-                if xlsx_path.exists():
+                if include.get("excel") and xlsx_path.exists():
                     shutil.copy2(xlsx_path, side_xlsx)
             except Exception:
                 pass
