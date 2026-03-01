@@ -28,7 +28,7 @@ def main(argv: list[str] | None = None) -> None:
     # --- Win11-like theme (safe) ---
     try:
         import sv_ttk  # type: ignore
-        sv_ttk.set_theme("light")
+        # [moved] sv_ttk.set_theme("light")
     except Exception:
         pass
 
