@@ -71,13 +71,10 @@ def parse_geo_with_blocks(
             continue
         data_start = second + 2
         data_end = headers[i + 1][0] if i + 1 < len(headers) else len(data)
-        block = data[data_start:data_end]
-        if len(block) < 2:
-            pairs = []
-        else:
-            if len(block) % 2 == 1:
-                block = block[:-1]
-            pairs = [(block[j], block[j + 1]) for j in range(0, len(block), 2)]
+        raw_block = data[data_start:data_end]
+        payload_len = len(raw_block) - (len(raw_block) % 2)
+        payload = raw_block[:payload_len]
+        pairs = [(payload[j], payload[j + 1]) for j in range(0, len(payload), 2)] if payload else []
 
         bid = GeoBlockInfoCls(
             order_index=i,
@@ -88,6 +85,9 @@ def parse_geo_with_blocks(
             data_start=data_start,
             data_end=data_end,
             marker_byte=marker,
+            data_len=payload_len,
+            bytes_per_row=2,
+            layout="K2_QC_FS",
         )
 
         dt_str = _parse_datetime_bcd(data, dt_pos) or ""

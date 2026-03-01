@@ -324,6 +324,9 @@ class GeoCanvasEditor(tk.Tk):
                     "data_start": t.block.data_start,
                     "data_end": t.block.data_end,
                     "marker_byte": t.block.marker_byte,
+                    "data_len": getattr(t.block, "data_len", max(0, t.block.data_end - t.block.data_start)),
+                    "bytes_per_row": getattr(t.block, "bytes_per_row", 2),
+                    "layout": getattr(t.block, "layout", "K2_QC_FS"),
                 },
             })
         flags_snap: dict[int, dict] = {}
@@ -381,6 +384,9 @@ class GeoCanvasEditor(tk.Tk):
                     data_start=b["data_start"],
                     data_end=b["data_end"],
                     marker_byte=b["marker_byte"],
+                    data_len=int(b.get("data_len", max(0, b["data_end"] - b["data_start"]))),
+                    bytes_per_row=int(b.get("bytes_per_row", 2) or 2),
+                    layout=str(b.get("layout", "K2_QC_FS") or "K2_QC_FS"),
                 )
             t = TestData(
                 tid=int(d["tid"]),

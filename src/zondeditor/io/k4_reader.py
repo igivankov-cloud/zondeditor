@@ -51,7 +51,7 @@ def _k4_find_starts(buf: bytes) -> List[int]:
         i = j + 2
     return sorted(starts)
 
-def parse_k4_geo_strict(data: bytes, TestDataCls: Any) -> list:
+def parse_k4_geo_strict(data: bytes, TestDataCls: Any, GeoBlockInfoCls: Any | None = None) -> list:
     """Parse K4 GEO into list[TestDataCls].
 
     TestDataCls must accept:
@@ -93,11 +93,27 @@ def parse_k4_geo_strict(data: bytes, TestDataCls: Any) -> list:
         if k < 0:
             t = TestDataCls(int(exp), ts, [], [], [], marker.hex(" "), str(p))
             t.incl = []
+            if GeoBlockInfoCls is not None:
+                t.block = GeoBlockInfoCls(
+                    order_index=idx,
+                    header_start=p,
+                    header_end=p + 13,
+                    id_pos=p + 2,
+                    dt_pos=p + 8,
+                    data_start=end,
+                    data_end=end,
+                    marker_byte=block[4] if len(block) > 4 else 0,
+                    data_len=0,
+                    bytes_per_row=9,
+                    layout="K4_QC_FS_U",
+                )
             tests.append(t)
             continue
 
+        payload_start = p + k + len(K4_SIG)
         payload = block[k + len(K4_SIG):]
         n = len(payload) // 9
+        payload_len = n * 9
 
         qc: list[str] = []
         fs: list[str] = []
@@ -112,6 +128,20 @@ def parse_k4_geo_strict(data: bytes, TestDataCls: Any) -> list:
 
         t = TestDataCls(int(exp), ts, depth, qc, fs, marker.hex(" "), str(p))
         t.incl = U
+        if GeoBlockInfoCls is not None:
+            t.block = GeoBlockInfoCls(
+                order_index=idx,
+                header_start=p,
+                header_end=p + 13,
+                id_pos=p + 2,
+                dt_pos=p + 8,
+                data_start=payload_start,
+                data_end=end,
+                marker_byte=block[4] if len(block) > 4 else 0,
+                data_len=payload_len,
+                bytes_per_row=9,
+                layout="K4_QC_FS_U",
+            )
         tests.append(t)
 
     try:
