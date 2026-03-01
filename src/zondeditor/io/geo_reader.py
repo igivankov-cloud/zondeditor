@@ -41,7 +41,7 @@ def parse_geo_bytes(data: bytes) -> tuple[list[TestData], list[dict], str]:
     try:
         geo_kind = detect_geo_kind(data)
         if geo_kind == "K4":
-            tests = parse_k4_geo_strict(data, TestData)
+            tests = parse_k4_geo_strict(data, TestData, GeoBlockInfo)
             return tests, [], geo_kind
         tests, meta_rows = parse_geo_with_blocks(data, TestData, GeoBlockInfo)
         return tests, meta_rows, geo_kind

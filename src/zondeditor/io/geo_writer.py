@@ -32,12 +32,14 @@ def _build_qc_fs_payload(test: Any) -> bytes:
     return bytes(payload)
 
 
-def _block_span(block: Any) -> tuple[int, int, int, int]:
+def _block_span(block: Any) -> tuple[int, int, int, int, int]:
     hs = int(_get_attr(block, "header_start", 0))
     ds = int(_get_attr(block, "data_start", 0))
     de = int(_get_attr(block, "data_end", 0))
+    dl = int(_get_attr(block, "data_len", max(0, de - ds)) or 0)
+    payload_end = min(de, ds + max(0, dl))
     ip = int(_get_attr(block, "id_pos", hs + 2))
-    return hs, ds, de, ip
+    return hs, ds, de, payload_end, ip
 
 
 def _match_template_blocks(original: bytes, blocks_info: Sequence[Any], prepared_tests: Sequence[Any]) -> list[tuple[Any, Any]]:
@@ -48,7 +50,7 @@ def _match_template_blocks(original: bytes, blocks_info: Sequence[Any], prepared
     block_by_id: dict[int, list[Any]] = {}
     for b in blocks_sorted:
         try:
-            _, _, _, ip = _block_span(b)
+            _, _, _, _, ip = _block_span(b)
             bid = int(original[ip]) if 0 <= ip < len(original) else 0
         except Exception:
             bid = 0
@@ -108,11 +110,11 @@ def build_k2_geo_from_template(original: bytes, blocks_info: Sequence[Any], prep
 
     all_blocks = sorted(list(blocks_info or []), key=lambda b: _block_span(b)[0])
     first_hs, *_ = _block_span(all_blocks[0])
-    *_, last_de, _ = _block_span(all_blocks[-1])
+    _, _, last_de, _, _ = _block_span(all_blocks[-1])
 
     chunks = [original[:first_hs]]
     for block, test in pairs:
-        hs, ds, de, ip = _block_span(block)
+        hs, ds, de, payload_end, ip = _block_span(block)
         hs = max(0, min(len(original), hs))
         ds = max(hs, min(len(original), ds))
         de = max(ds, min(len(original), de))
@@ -124,7 +126,7 @@ def build_k2_geo_from_template(original: bytes, blocks_info: Sequence[Any], prep
             seg[rel_id] = min(255, max(1, tid))
 
         rel_ds = ds - hs
-        rel_de = de - hs
+        rel_de = max(rel_ds, payload_end - hs)
         payload = _build_qc_fs_payload(test)
         seg = seg[:rel_ds] + payload + seg[rel_de:]
         chunks.append(bytes(seg))
@@ -190,19 +192,22 @@ def build_k2_geo_bytes(original: bytes, tests: Iterable[Any]) -> bytes:
         try:
             ds = int(getattr(b, "data_start"))
             de = int(getattr(b, "data_end"))
+            dl = int(getattr(b, "data_len", max(0, de - ds)) or 0)
+            pe = min(de, ds + max(0, dl))
             oi = int(getattr(b, "order_index", 0))
         except Exception:
             continue
-        items.append((ds, de, oi, t))
-    items.sort(key=lambda x: (x[0], x[2]))
+        items.append((ds, pe, de, oi, t))
+    items.sort(key=lambda x: (x[0], x[3]))
 
     out = bytearray()
     cur = 0
     n_orig = len(original)
 
-    for ds, de, _oi, t in items:
+    for ds, pe, de, _oi, t in items:
         ds = max(0, min(n_orig, ds))
-        de = max(0, min(n_orig, de))
+        pe = max(ds, min(n_orig, pe))
+        de = max(pe, min(n_orig, de))
         if ds < cur:
             continue
         out += original[cur:ds]
@@ -216,6 +221,7 @@ def build_k2_geo_bytes(original: bytes, tests: Iterable[Any]) -> bytes:
             payload.append(_to_byte(fs[i]) if i < len(fs) else 0)
 
         out += payload
+        out += original[pe:de]
         cur = de
 
     out += original[cur:]

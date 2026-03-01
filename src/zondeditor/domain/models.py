@@ -47,6 +47,9 @@ class GeoBlockInfo:
     data_start: int      # absolute pos of first qc/fs byte
     data_end: int        # absolute pos of end of block (start of next header or EOF)
     marker_byte: int
+    data_len: int = 0    # length of decoded row payload only (without service tail)
+    bytes_per_row: int = 2
+    layout: str = "K2_QC_FS"
 
 
 @dataclass
