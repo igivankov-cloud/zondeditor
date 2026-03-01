@@ -34,8 +34,7 @@ except Exception:
     export_excel_file = None
 from src.zondeditor.export.credo_zip import export_credo_zip
 from src.zondeditor.export.gxl_export import export_gxl_generated
-from src.zondeditor.io.k2_reader import parse_geo_with_blocks
-from src.zondeditor.io.k4_reader import parse_k4_geo_strict, detect_geo_kind
+from src.zondeditor.io.geo_reader import parse_geo_bytes, GeoParseError
 from src.zondeditor.io.gxl_reader import parse_gxl_file, GxlParseError
 from src.zondeditor.io.geo_writer import save_k2_geo_from_template, build_k2_geo_from_template
 from src.zondeditor.domain.models import TestData, GeoBlockInfo, TestFlags
@@ -1849,12 +1848,15 @@ class GeoCanvasEditor(tk.Tk):
                 data = self.geo_path.read_bytes()
                 self.loaded_path = str(self.geo_path)
                 self.is_gxl = False
-                self.geo_kind = detect_geo_kind(data)
                 self.original_bytes = data
-                tests_list, meta_rows = (parse_k4_geo_strict(data, TestData), []) if (detect_geo_kind(data)=="K4") else parse_geo_with_blocks(data, TestData, GeoBlockInfo)
+                tests_list, meta_rows, self.geo_kind = parse_geo_bytes(data)
                 # store template blocks (do not depend on current edited/deleted tests)
                 self._geo_template_blocks_info = [t.block for t in tests_list if getattr(t, 'block', None)]
                 self._geo_template_blocks_info_full = list(self._geo_template_blocks_info)
+
+            except GeoParseError as e:
+                messagebox.showerror("Неподдерживаемый GEO/GE0", str(e))
+                return
 
             except Exception as e:
                 messagebox.showerror("Ошибка чтения", str(e))

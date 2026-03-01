@@ -35,3 +35,6 @@ jobs:
 
       - name: Run fixtures selfcheck
         run: python tools/selfcheck_fixtures.py
+
+      - name: Run fixtures import selfcheck
+        run: python tools/selfcheck_fixtures_import.py
