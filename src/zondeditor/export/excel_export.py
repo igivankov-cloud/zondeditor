@@ -7,6 +7,7 @@ from typing import Iterable, Any, Optional
 from openpyxl import Workbook
 
 from src.zondeditor.processing.calibration import calc_qc_fs, Calibration, K2_DEFAULT, K4_DEFAULT
+from src.zondeditor.export.selection import select_export_tests
 
 def _parse_depth_float(s: Any) -> Optional[float]:
     try:
@@ -50,11 +51,10 @@ def export_excel(
     ws_meta.append(["fcone_kN", cal.fcone_kn])
     ws_meta.append(["fsleeve_kN", cal.fsleeve_kn])
 
-    tests_list = []
-    for t in tests:
-        if include_only_export_on and not bool(getattr(t, "export_on", True)):
-            continue
-        tests_list.append(t)
+    if include_only_export_on:
+        tests_list = select_export_tests(tests).tests
+    else:
+        tests_list = list(tests or [])
     ws_meta.append(["tests", len(tests_list)])
 
     for t in tests_list:

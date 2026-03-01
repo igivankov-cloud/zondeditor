@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable, Any, Optional
-import xml.etree.ElementTree as ET
+
+from src.zondeditor.export.selection import select_export_tests
+
 
 def _parse_depth_float(s: Any) -> Optional[float]:
     try:
@@ -11,6 +13,7 @@ def _parse_depth_float(s: Any) -> Optional[float]:
         return float(ss) if ss else None
     except Exception:
         return None
+
 
 def _parse_cell_int(s: Any) -> Optional[int]:
     try:
@@ -21,6 +24,7 @@ def _parse_cell_int(s: Any) -> Optional[int]:
     except Exception:
         return None
 
+
 def export_gxl_generated(
     tests: Iterable[Any],
     *,
@@ -28,66 +32,92 @@ def export_gxl_generated(
     object_code: str = "OBJ",
     include_only_export_on: bool = True,
 ) -> None:
-    """Сформировать GXL (XML) из текущих данных (генератор).
+    """Сформировать GXL, совместимый с GeoExplorer (<exportfile>/<object>/<test>)."""
+    if include_only_export_on:
+        tests_list = select_export_tests(tests).tests
+    else:
+        tests_list = list(tests or [])
 
-    Создаёт минимально необходимую структуру:
-      <gxl><object><code>...</code><test>...</test>...</object></gxl>
+    def xml_escape(t: str) -> str:
+        t = '' if t is None else str(t)
+        return (t.replace('&', '&amp;')
+                 .replace('<', '&lt;')
+                 .replace('>', '&gt;')
+                 .replace('"', '&quot;')
+                 .replace("'", '&apos;'))
 
-    В <test>:
-      - <numtest>
-      - <deepbegin>
-      - <stepzond>
-      - <dat> (строки 'qc;fs')
-    """
-    tests_list = []
-    for t in tests:
-        if include_only_export_on and not bool(getattr(t, "export_on", True)):
-            continue
-        tests_list.append(t)
+    def fmt_comma_num(x, ndp=2):
+        try:
+            x = float(x)
+        except Exception:
+            x = 0.0
+        s = f"{x:.{ndp}f}".rstrip('0').rstrip('.')
+        return (s or "0").replace('.', ',')
 
-    root = ET.Element("gxl")
-    obj = ET.SubElement(root, "object")
-    ET.SubElement(obj, "code").text = str(object_code)
+    def parse_d(x):
+        return _parse_depth_float(x)
 
-    for t in tests_list:
-        xt = ET.SubElement(obj, "test")
-        tid = int(getattr(t, "tid", 0) or 0)
-        ET.SubElement(xt, "numtest").text = str(tid)
+    def make_dat(t, step_m=0.1):
+        ds = [parse_d(v) for v in (getattr(t, 'depth', []) or [])]
+        qc = getattr(t, 'qc', []) or []
+        fs = getattr(t, 'fs', []) or []
 
-        depth_arr = list(getattr(t, "depth", []) or [])
-        d0 = _parse_depth_float(depth_arr[0]) if depth_arr else None
-        if d0 is None:
-            d0 = 0.0
-        ET.SubElement(xt, "deepbegin").text = f"{d0:.2f}"
+        ds2 = [d for d in ds if d is not None]
+        if not ds2:
+            return ["0;0;0;0;0;"], 0.0, step_m
 
-        step = None
-        if len(depth_arr) >= 2:
-            a = _parse_depth_float(depth_arr[0])
-            b = _parse_depth_float(depth_arr[1])
-            if a is not None and b is not None:
-                step = b - a
-        if step is None:
-            step = 0.05
-        st = f"{step:.2f}".rstrip("0").rstrip(".")
-        ET.SubElement(xt, "stepzond").text = st if st else "0.05"
+        deepbegin = min(ds2)
+        step = step_m
+        if len(ds2) >= 2:
+            st = abs(ds2[1] - ds2[0])
+            if 0.045 <= st <= 0.055:
+                step = 0.05
+            elif 0.095 <= st <= 0.105:
+                step = 0.10
 
-        qc = list(getattr(t, "qc", []) or [])
-        fs = list(getattr(t, "fs", []) or [])
-        n = min(len(qc), len(fs))
-        lines = []
-        for i in range(n):
-            qv = _parse_cell_int(qc[i])
-            fv = _parse_cell_int(fs[i])
-            qs = "" if qv is None else str(int(qv))
-            fs_s = "" if fv is None else str(int(fv))
-            lines.append(f"{qs};{fs_s}")
-        ET.SubElement(xt, "dat").text = "\n".join(lines)
+        endd = max(ds2)
+        n = max(1, int(round((endd - deepbegin) / step)) + 1)
+        grid_local = [round(deepbegin + i * step, 2) for i in range(n)]
 
-    try:
-        ET.indent(root, space="  ")
-    except Exception:
-        pass
+        m = {}
+        for i, d in enumerate(ds):
+            if d is None:
+                continue
+            key = round(d, 2)
+            q = _parse_cell_int(qc[i]) if i < len(qc) else 0
+            f = _parse_cell_int(fs[i]) if i < len(fs) else 0
+            m[key] = (max(0, int(q or 0)), max(0, int(f or 0)))
 
-    xml_out = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        return [f"{m.get(d,(0,0))[0]};{m.get(d,(0,0))[1]};0;0;0;" for d in grid_local], deepbegin, step
+
+    out = []
+    out.append('<?xml version="1.0" encoding="windows-1251"?>\r\n')
+    out.append('<exportfile>\r\n')
+    out.append('  <verfile>3</verfile>\r\n')
+    out.append('  <verprogram>GeoExplorer v3.0.14.523</verprogram>\r\n')
+    out.append('  <object>\r\n')
+    out.append('    <id>60</id>\r\n')
+    out.append(f'    <name>{xml_escape(object_code or "OBJ")}</name>\r\n')
+
+    for idx, t in enumerate(tests_list, start=1):
+        numtest = int(getattr(t, 'tid', idx) or idx)
+        dat_lines, deepbegin_val, step_for_test = make_dat(t)
+        out.append('    <test>\r\n')
+        out.append(f'      <numtest>{numtest}</numtest>\r\n')
+        out.append('      <date></date>\r\n')
+        out.append(f"      <deepbegin>{fmt_comma_num(deepbegin_val, 1)}</deepbegin>\r\n")
+        out.append(f"      <stepzond>{fmt_comma_num(step_for_test, 2)}</stepzond>\r\n")
+        out.append('      <scale>250</scale>\r\n')
+        out.append('      <controllertype>1</controllertype>\r\n')
+        out.append('      <dat>')
+        out.append(dat_lines[0] + '\r\n')
+        for ln in dat_lines[1:]:
+            out.append(ln + '\r\n')
+        out.append('      </dat>\r\n')
+        out.append('    </test>\r\n')
+
+    out.append('  </object>\r\n')
+    out.append('</exportfile>\r\n')
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_bytes(xml_out)
+    out_path.write_bytes(''.join(out).encode('cp1251', errors='replace'))

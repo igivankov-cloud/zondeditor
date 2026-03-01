@@ -6,6 +6,7 @@ from typing import Iterable, Any, Optional
 import zipfile
 
 from src.zondeditor.processing.calibration import calc_qc_fs, Calibration, K2_DEFAULT, K4_DEFAULT
+from src.zondeditor.export.selection import select_export_tests
 
 def _parse_depth_float(s: Any) -> Optional[float]:
     try:
@@ -46,11 +47,10 @@ def export_credo_zip(
     if cal is None:
         cal = K4_DEFAULT if g == "K4" else K2_DEFAULT
 
-    tests_list = []
-    for t in tests:
-        if include_only_export_on and not bool(getattr(t, "export_on", True)):
-            continue
-        tests_list.append(t)
+    if include_only_export_on:
+        tests_list = select_export_tests(tests).tests
+    else:
+        tests_list = list(tests or [])
 
     out_zip_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(str(out_zip_path), "w", compression=zipfile.ZIP_DEFLATED) as z:
