@@ -43,7 +43,7 @@ from src.zondeditor.ui.helpers import _apply_win11_style, _setup_shared_logger, 
 from src.zondeditor.ui.widgets import ToolTip, CalendarDialog
 from src.zondeditor.ui.ribbon import RibbonView
 from src.zondeditor.project import Project, ProjectSettings, SourceInfo, load_project, save_project
-from src.zondeditor.project.ops import op_algo_fix_applied, op_cell_set, op_meta_change
+from src.zondeditor.project.ops import op_algo_fix_applied, op_cell_set, op_cells_marked, op_meta_change
 
 _rebuild_geo_from_template = build_k2_geo_from_template
 
@@ -156,12 +156,14 @@ class GeoCanvasEditor(tk.Tk):
         self.object_name = ""
         self.project_path: Path | None = None
         self.project_ops: list[dict] = []
-        self._marks_index: dict[tuple[int, int, str], dict] = {}
+        self._marks_index: dict[tuple[int, float, str], dict] = {}
         self._marks_ops_count = 0
         self._marks_built_count = 0
         self._marks_applied_count = 0
+        self._marks_color_counts: dict[str, int] = {"green": 0, "purple": 0, "blue": 0}
         self.use_ribbon_ui = True
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._install_tk_root_guard()
 
         self.display_cols: list[int] = []  # indices of self.tests in left-to-right order
 
@@ -202,6 +204,27 @@ class GeoCanvasEditor(tk.Tk):
             _wrap(messagebox, _name)
         for _name in ("askopenfilename", "askopenfilenames", "asksaveasfilename", "askdirectory"):
             _wrap(filedialog, _name)
+
+    def _install_tk_root_guard(self):
+        if os.environ.get("ZONDEDITOR_DEV_GUARD") != "1":
+            return
+        tk_mod = tk
+        if getattr(tk_mod, "_zondeditor_tk_guard", False):
+            return
+        original_tk = tk_mod.Tk
+        main_root = self
+
+        def _guarded_tk(*args, **kwargs):
+            if getattr(main_root, "_allow_secondary_tk", False):
+                return original_tk(*args, **kwargs)
+            stack = "".join(traceback.format_stack(limit=20))
+            msg = "[ZondEditor guard] Попытка создать второй tk.Tk(). Используйте Toplevel(parent)."
+            print(msg, file=sys.stderr)
+            print(stack, file=sys.stderr)
+            raise RuntimeError(msg)
+
+        tk_mod.Tk = _guarded_tk
+        tk_mod._zondeditor_tk_guard = True
 
     # ---------------- history ----------------
 
@@ -2539,8 +2562,7 @@ class GeoCanvasEditor(tk.Tk):
             messagebox.showwarning("Нет данных", "Сначала загрузи и покажи зондирования.")
             return
         self._push_undo()
-
-
+        resample_cells: list[dict] = []
 
         for t in self.tests:
             old_flags = self.flags.get(t.tid) or TestFlags(False, set(), set(), set(), set(), set())
@@ -2616,10 +2638,14 @@ class GeoCanvasEditor(tk.Tk):
                 if r in map_old_to_new:
                     new_tail.add(map_old_to_new[r])
 
-            # новые созданные строки (вставки при 10→5) помечаем ЗЕЛЁНЫМ как «откорректировано»
+            # новые созданные строки (вставки при 10→5) оставляем в СИНЕЙ категории
             for rr in created_rows:
-                new_algo.add((rr, "qc"))
-                new_algo.add((rr, "fs"))
+                new_force.add((rr, "qc"))
+                new_force.add((rr, "fs"))
+                depth_m = self._safe_depth_m(t, rr)
+                if depth_m is not None:
+                    resample_cells.append({"testId": int(getattr(t, "tid", 0) or 0), "depthM": depth_m, "field": "qc", "before": "", "after": str((t.qc or [""])[rr]).strip()})
+                    resample_cells.append({"testId": int(getattr(t, "tid", 0) or 0), "depthM": depth_m, "field": "fs", "before": "", "after": str((t.fs or [""])[rr]).strip()})
 
             # если после 10→5 появился критерий некорректности (>5 нулей подряд) — считаем опыт некорректным (красным)
             try:
@@ -2638,8 +2664,15 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
 
+        try:
+            if resample_cells:
+                self.project_ops.append(op_cells_marked(reason="resample_insert", color="blue", cells=resample_cells))
+                self._rebuild_marks_index()
+        except Exception:
+            pass
+
         self._redraw()
-        self.status.config(text="Конвертация 10→5 выполнена. Новые строки помечены зелёным.")
+        self.status.config(text="Конвертация 10→5 выполнена. Новые строки помечены синим.")
 
     # ---------------- drawing helpers ----------------
     def _content_size(self):
@@ -3400,13 +3433,15 @@ class GeoCanvasEditor(tk.Tk):
                         return GUI_PURPLE
                     if (data_i, kind) in getattr(fl, 'algo_cells', set()):
                         return GUI_GREEN
-                    mk = (self._marks_index or {}).get((int(getattr(t, 'tid', 0) or 0), int(data_i), str(kind))) if data_i is not None else None
+                    mk = (self._marks_index or {}).get(self._mark_key(int(getattr(t, 'tid', 0) or 0), self._safe_depth_m(t, int(data_i)), str(kind))) if data_i is not None else None
                     if isinstance(mk, dict):
                         clr = str(mk.get("color") or "").strip().lower()
                         if clr == "purple":
                             return GUI_PURPLE
                         if clr == "green":
                             return GUI_GREEN
+                        if clr == "blue":
+                            return (GUI_BLUE_P if getattr(self, '_algo_preview_mode', False) else GUI_BLUE)
                     if (data_i, kind) in fl.force_cells:
                         return (GUI_BLUE_P if getattr(self, '_algo_preview_mode', False) else GUI_BLUE)
                     if (data_i, kind) in fl.interp_cells:
@@ -4194,7 +4229,9 @@ class GeoCanvasEditor(tk.Tk):
                             pass
                         try:
                             self.project_ops.append(op_cell_set(test_id=int(getattr(t, "tid", 0) or 0), row=row, field=field, before=str(old), after=str(newv), depth_m=self._safe_depth_m(t, row)))
-                            self._marks_index[(int(getattr(t, "tid", 0) or 0), int(row), str(field))] = {"reason": "manual_edit", "color": "purple"}
+                            _mk = self._mark_key(int(getattr(t, "tid", 0) or 0), self._safe_depth_m(t, row), str(field))
+                            if _mk is not None:
+                                self._marks_index[_mk] = {"reason": "manual_edit", "color": "purple"}
                         except Exception:
                             pass
                 except Exception:
@@ -4408,6 +4445,7 @@ class GeoCanvasEditor(tk.Tk):
 
         self._push_undo()
         random.seed(42)
+        tail_fill_cells: list[dict] = []
 
         for t in self.tests:
             tid = t.tid
@@ -4554,6 +4592,8 @@ class GeoCanvasEditor(tk.Tk):
 
                     dd = last_depth + step * k_i
                     t.depth[-1] = f"{dd:.2f}"
+                    tail_fill_cells.append({"testId": int(getattr(t, "tid", 0) or 0), "depthM": round(float(dd), 3), "field": "qc", "before": "", "after": str(int(qc[-1]))})
+                    tail_fill_cells.append({"testId": int(getattr(t, "tid", 0) or 0), "depthM": round(float(dd), 3), "field": "fs", "before": "", "after": str(int(fs[-1]))})
 # write back with markers (for user visibility)
             for i in range(n):
                 qv = int(max(1, round(qc[i])))
@@ -4595,6 +4635,10 @@ class GeoCanvasEditor(tk.Tk):
                     changes.append({"testId": int(getattr(t, "tid", 0) or 0), "row": int(row), "field": fld, "depthM": self._safe_depth_m(t, row), "mark": {"reason": "algo_fix", "color": "green"}})
             if changes:
                 self.project_ops.append(op_algo_fix_applied(changes=changes))
+            if tail_fill_cells:
+                self.project_ops.append(op_cells_marked(reason="tail_fill", color="blue", cells=tail_fill_cells))
+            if changes or tail_fill_cells:
+                self._rebuild_marks_index()
         except Exception:
             pass
 
@@ -4958,26 +5002,53 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             return None
 
-    def _row_by_depth_m(self, t: TestData, depth_m: float | int | str | None) -> int | None:
+    def _norm_depth_key(self, depth_m: float | int | str | None) -> float | None:
         if depth_m is None:
             return None
         try:
-            target = round(float(depth_m), 3)
+            return round(float(depth_m), 3)
         except Exception:
             return None
+
+    def _row_by_depth_m(self, t: TestData, depth_m: float | int | str | None) -> int | None:
+        target = self._norm_depth_key(depth_m)
+        if target is None:
+            return None
         for idx, d_raw in enumerate(getattr(t, "depth", []) or []):
-            d = _parse_depth_float(str(d_raw))
+            d = self._norm_depth_key(_parse_depth_float(str(d_raw)))
             if d is None:
                 continue
-            if round(float(d), 3) == target:
+            if d == target:
                 return idx
         return None
 
-    def _build_marks_index_from_ops(self) -> dict[tuple[int, int, str], dict]:
-        marks: dict[tuple[int, int, str], dict] = {}
+    def _mark_key(self, tid: int, depth_m: float | int | str | None, field: str) -> tuple[int, float, str] | None:
+        d_key = self._norm_depth_key(depth_m)
+        f_key = str(field or "").strip()
+        if d_key is None or not f_key:
+            return None
+        return (int(tid), d_key, f_key)
+
+    def _build_marks_index_from_ops(self) -> dict[tuple[int, float, str], dict]:
+        marks: dict[tuple[int, float, str], dict] = {}
         tests_by_tid = {int(getattr(t, "tid", 0) or 0): t for t in (self.tests or [])}
         ops = list(getattr(self, "project_ops", []) or [])
         self._marks_ops_count = len(ops)
+
+        def _put_mark(*, tid: int, t: TestData | None, field: str, depth_m: float | int | str | None, row: int | None, op_mark: dict):
+            row_i = int(row) if isinstance(row, int) else -1
+            d_key = self._norm_depth_key(depth_m)
+            if d_key is None and t is not None and row_i >= 0:
+                d_key = self._safe_depth_m(t, row_i)
+            key = self._mark_key(tid, d_key, field)
+            if key is None:
+                return
+            mark = dict(op_mark or {})
+            if not mark.get("color"):
+                mark["color"] = "purple"
+            if not mark.get("reason"):
+                mark["reason"] = "manual_edit"
+            marks[key] = mark
 
         for op in ops:
             op_type = str((op or {}).get("opType") or "")
@@ -4989,23 +5060,14 @@ class GeoCanvasEditor(tk.Tk):
                 except Exception:
                     continue
                 t = tests_by_tid.get(tid)
-                if t is None:
-                    continue
+                row_i = None
                 try:
                     row_i = int(payload.get("row"))
                 except Exception:
-                    row_i = -1
-                if row_i < 0:
-                    row_i = self._row_by_depth_m(t, payload.get("depthM")) or -1
-                field = str(payload.get("field") or "").strip()
-                if row_i < 0 or not field:
-                    continue
-                mark = dict(op_mark)
-                if not mark.get("color"):
-                    mark["color"] = "purple"
-                if not mark.get("reason"):
-                    mark["reason"] = "manual_edit"
-                marks[(tid, row_i, field)] = mark
+                    row_i = None
+                if t is not None and (row_i is not None) and row_i < 0:
+                    row_i = self._row_by_depth_m(t, payload.get("depthM"))
+                _put_mark(tid=tid, t=t, field=str(payload.get("colKey") or payload.get("field") or ""), depth_m=payload.get("depthM"), row=row_i, op_mark=op_mark)
             elif op_type == "algo_fix_applied":
                 for ch in list(payload.get("changes") or []):
                     one = dict(ch or {})
@@ -5014,43 +5076,62 @@ class GeoCanvasEditor(tk.Tk):
                     except Exception:
                         continue
                     t = tests_by_tid.get(tid)
-                    if t is None:
-                        continue
+                    row_i = None
                     try:
                         row_i = int(one.get("row"))
                     except Exception:
-                        row_i = -1
-                    if row_i < 0:
-                        row_i = self._row_by_depth_m(t, one.get("depthM")) or -1
-                    field = str(one.get("field") or "").strip()
-                    if row_i < 0 or not field:
+                        row_i = None
+                    if t is not None and (row_i is not None) and row_i < 0:
+                        row_i = self._row_by_depth_m(t, one.get("depthM"))
+                    _put_mark(tid=tid, t=t, field=str(one.get("colKey") or one.get("field") or ""), depth_m=one.get("depthM"), row=row_i, op_mark=dict(one.get("mark") or op_mark or {}))
+            elif op_type == "cells_marked":
+                for cell in list(payload.get("cells") or []):
+                    one = dict(cell or {})
+                    try:
+                        tid = int(one.get("testId"))
+                    except Exception:
                         continue
-                    mark = dict(one.get("mark") or op_mark or {})
-                    if not mark.get("color"):
-                        mark["color"] = "green"
-                    if not mark.get("reason"):
-                        mark["reason"] = "algo_fix"
-                    marks[(tid, row_i, field)] = mark
+                    t = tests_by_tid.get(tid)
+                    row_i = None
+                    try:
+                        row_i = int(one.get("row"))
+                    except Exception:
+                        row_i = None
+                    if t is not None and (row_i is not None) and row_i < 0:
+                        row_i = self._row_by_depth_m(t, one.get("depthM"))
+                    _put_mark(tid=tid, t=t, field=str(one.get("colKey") or one.get("field") or ""), depth_m=one.get("depthM"), row=row_i, op_mark=dict(one.get("mark") or op_mark or {}))
 
         self._marks_built_count = len(marks)
         return marks
 
     def _rebuild_marks_index(self) -> None:
         self._marks_index = self._build_marks_index_from_ops()
+        self._marks_color_counts = {"green": 0, "purple": 0, "blue": 0}
         try:
-            self._marks_applied_count = sum(
-                1
-                for tid, row, field in self._marks_index.keys()
-                if any(
-                    int(getattr(t, "tid", 0) or 0) == int(tid)
-                    and 0 <= int(row) < len(getattr(t, "qc", []) or [])
-                    and field in {"qc", "fs", "incl", "depth"}
-                    for t in self.tests
-                )
-            )
+            tests_by_tid = {int(getattr(t, "tid", 0) or 0): t for t in (self.tests or [])}
+            visible = 0
+            for tid, depth_m, field in self._marks_index.keys():
+                t = tests_by_tid.get(int(tid))
+                if t is None or field not in {"qc", "fs", "incl", "depth"}:
+                    continue
+                row = self._row_by_depth_m(t, depth_m)
+                if row is None:
+                    continue
+                visible += 1
+                clr = str((self._marks_index.get((tid, depth_m, field)) or {}).get("color") or "").strip().lower()
+                if clr in self._marks_color_counts:
+                    self._marks_color_counts[clr] += 1
+            self._marks_applied_count = visible
         except Exception:
             self._marks_applied_count = len(self._marks_index)
-        print(f"[marks] ops_loaded={self._marks_ops_count} marks_built={self._marks_built_count} marks_visible={self._marks_applied_count}")
+        print(
+            "[marks] "
+            f"ops={self._marks_ops_count}, marks_total={self._marks_built_count}, "
+            f"marks_green={self._marks_color_counts.get('green', 0)}, "
+            f"marks_purple={self._marks_color_counts.get('purple', 0)}, "
+            f"marks_blue={self._marks_color_counts.get('blue', 0)}, "
+            f"подсвечено_marks={self._marks_applied_count}"
+        )
 
     def _recompute_statuses_after_data_load(self, *, preview_mode: bool = False) -> dict:
         """Force full status recomputation and redraw after loading/restoring data."""
@@ -5070,7 +5151,10 @@ class GeoCanvasEditor(tk.Tk):
         miss = int(status_now.get("miss", 0) or 0)
         invalid = int(status_now.get("inv", 0) or 0)
         return (
-            f"Проект открыт: ops={self._marks_ops_count}, marks={self._marks_built_count}, "
+            f"Проект открыт: ops={self._marks_ops_count}, marks_total={self._marks_built_count}, "
+            f"marks_green={self._marks_color_counts.get('green', 0)}, "
+            f"marks_purple={self._marks_color_counts.get('purple', 0)}, "
+            f"marks_blue={self._marks_color_counts.get('blue', 0)}, "
             f"подсвечено_marks={self._marks_applied_count}, статус_синий={no_ref}, "
             f"статус_жёлтый={miss}, некорректных_опытов={invalid}"
         )
@@ -5203,6 +5287,7 @@ class GeoCanvasEditor(tk.Tk):
         self._marks_ops_count = 0
         self._marks_built_count = 0
         self._marks_applied_count = 0
+        self._marks_color_counts: dict[str, int] = {"green": 0, "purple": 0, "blue": 0}
         self.project_path = None
         self.object_name = ""
         self.object_code = ""
