@@ -60,3 +60,8 @@ build/__pycache__/
 !build/assets/
 !build/assets/*.ico
 !build/assets/*.txt
+# allow fixtures (test samples)
+!fixtures/*.gxl
+!fixtures/*.GXL
+!fixtures/*.geo
+!fixtures/*.GEO

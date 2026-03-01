@@ -1,0 +1,259 @@
+<?xml version="1.0"?>
+<exportfile>
+  <verfile>3</verfile>
+  <verprogram>GeoExplorer v3.0.14.523</verprogram>
+  <object>
+    <id>101</id>
+    <name>к4</name>
+    <h_abs_plan>0</h_abs_plan>
+    <FullName></FullName>
+    <NumArch></NumArch>
+    <Cashman></Cashman>
+    <Appendix></Appendix>
+    <test>
+      <numtest>1</numtest>
+      <woker>Katko E</woker>
+      <privazka>По плану...</privazka>
+      <date>16.02.2026</date>
+      <sechsvai>0,3</sechsvai>
+      <scaleostria>50</scaleostria>
+      <scalemufta>20</scalemufta>
+      <deepbegin>2,5</deepbegin>
+      <stepzond>0,1</stepzond>
+      <sands>False</sands>
+      <h_abs>0</h_abs>
+      <scale>1000</scale>
+      <controllertype>2</controllertype>
+      <id_zond>14</id_zond>
+      <zond>
+        <id>14</id>
+        <channels>3</channels>
+        <conemax>50</conemax>
+        <sleevemax>20</sleevemax>
+        <poramax>1</poramax>
+        <cornermax>90</cornermax>
+        <conearea>10</conearea>
+        <sleevearea>350</sleevearea>
+        <scalemax>1000</scalemax>
+        <uvid>8</uvid>
+        <num>62</num>
+        <t0>62887</t0>
+      </zond>
+      <dat>149;35;0;3;50;
+141;45;0;9;0,3;
+157;76;0;43;0,8;
+137;86;0;28;0,6;
+100;92;0;2;0,8;
+95;82;0;0;0,6;
+113;66;0;23;0,7;
+84;59;0;18;0,6;
+36;87;0;18;0,5;
+26;96;0;1;0,4;
+52;97;0;1;30,9;
+79;112;0;4;0,9;
+70;80;0;0;0,8;
+64;48;0;6;0,6;
+51;29;0;0;0,6;
+53;28;0;0;0,7;
+71;28;0;8;0,8;
+94;26;0;11;0,6;
+158;38;0;25;0,8;
+186;70;0;28;0,8;
+31;84;0;9;24,6;
+12;110;0;4;0,4;
+15;121;0;24;0,7;
+12;97;0;12;0,5;
+14;84;0;10;0,7;
+14;87;0;5;0,6;
+68;87;0;1;0,7;
+64;81;0;0;0,6;
+13;97;0;3;0,6;
+25;76;0;1;0,5;
+62;138;0;0;39,2;
+95;202;0;2;0,8;
+95;334;0;10;0,9;
+103;401;0;2;0,7;
+105;493;0;2;1;
+109;488;0;3;0,8;
+111;465;0;4;0,7;
+112;473;0;4;0,9;
+117;500;0;4;0,7;
+158;539;0;4;1,1;
+192;633;0;4;31,7;
+168;686;0;4;0,8;
+220;790;0;5;1,4;
+182;798;0;6;1,3;
+159;822;0;5;1,1;
+144;781;0;5;1,1;
+128;670;0;5;0,9;
+117;565;0;4;1;
+767;383;0;4;2,9;
+769;617;0;5;1,5;
+617;713;0;5;35,1;
+858;965;0;5;4,9;
+</dat>
+      <soils></soils>
+      <rtable></rtable>
+    </test>
+    <test>
+      <numtest>2</numtest>
+      <woker>Katko E</woker>
+      <privazka>По плану...</privazka>
+      <date>16.02.2026</date>
+      <sechsvai>0,3</sechsvai>
+      <scaleostria>50</scaleostria>
+      <scalemufta>20</scalemufta>
+      <deepbegin>2,5</deepbegin>
+      <stepzond>0,1</stepzond>
+      <sands>False</sands>
+      <h_abs>0</h_abs>
+      <scale>1000</scale>
+      <controllertype>2</controllertype>
+      <id_zond>14</id_zond>
+      <zond>
+        <id>14</id>
+        <channels>3</channels>
+        <conemax>50</conemax>
+        <sleevemax>20</sleevemax>
+        <poramax>1</poramax>
+        <cornermax>90</cornermax>
+        <conearea>10</conearea>
+        <sleevearea>350</sleevearea>
+        <scalemax>1000</scalemax>
+        <uvid>8</uvid>
+        <num>62</num>
+        <t0>62887</t0>
+      </zond>
+      <dat>184;50;0;4;52,1;
+148;78;0;2;0,7;
+157;81;0;2;0,7;
+169;79;0;2;0,7;
+191;66;0;18;0,7;
+166;61;0;21;0,7;
+151;58;0;14;0,7;
+148;67;0;24;0,6;
+144;65;0;49;0,7;
+105;66;0;1;30,6;
+111;68;0;14;0,7;
+106;73;0;24;0,6;
+100;65;0;3;0,6;
+100;42;0;10;0,8;
+106;36;0;0;0,6;
+116;37;0;1;0,7;
+132;55;0;5;0,9;
+110;57;0;28;0,7;
+100;73;0;7;0,7;
+131;79;0;27;28,4;
+208;90;0;46;0,8;
+157;97;0;5;0,6;
+187;116;0;30;1;
+87;191;0;68;0,5;
+82;218;0;5;0,6;
+63;385;0;2;1,1;
+50;365;0;5;0,7;
+22;331;0;10;0,9;
+66;254;0;3;0,6;
+142;244;0;7;29,2;
+106;312;0;10;0,8;
+86;360;0;4;0,7;
+73;409;0;2;0,8;
+76;377;0;9;0,8;
+90;326;0;11;0,8;
+78;312;0;5;0,6;
+117;357;0;9;0,8;
+219;409;0;2;1,5;
+113;564;0;4;0,8;
+158;609;0;4;26,7;
+188;677;0;4;0,9;
+185;680;0;4;1,3;
+141;750;0;4;1,2;
+145;729;0;3;1;
+127;649;0;4;1,2;
+135;548;0;3;1;
+347;526;0;25;1,7;
+314;556;0;4;0,7;
+757;431;0;4;2,7;
+797;432;0;4;1,1;
+</dat>
+      <soils></soils>
+      <rtable></rtable>
+    </test>
+    <test>
+      <numtest>3</numtest>
+      <woker>Katko E</woker>
+      <privazka>По плану...</privazka>
+      <date>16.02.2026</date>
+      <sechsvai>0,3</sechsvai>
+      <scaleostria>50</scaleostria>
+      <scalemufta>20</scalemufta>
+      <deepbegin>2,5</deepbegin>
+      <stepzond>0,1</stepzond>
+      <sands>False</sands>
+      <h_abs>0</h_abs>
+      <scale>1000</scale>
+      <controllertype>2</controllertype>
+      <id_zond>14</id_zond>
+      <zond>
+        <id>14</id>
+        <channels>3</channels>
+        <conemax>50</conemax>
+        <sleevemax>20</sleevemax>
+        <poramax>1</poramax>
+        <cornermax>90</cornermax>
+        <conearea>10</conearea>
+        <sleevearea>350</sleevearea>
+        <scalemax>1000</scalemax>
+        <uvid>8</uvid>
+        <num>62</num>
+        <t0>62887</t0>
+      </zond>
+      <dat>283;130;0;57;34,5;
+286;53;0;40;1;
+90;125;0;18;0,6;
+56;151;0;3;0,6;
+47;184;0;14;0,6;
+67;163;0;42;0,7;
+20;155;0;3;0,6;
+30;96;0;0;0,6;
+86;107;0;1;0,8;
+79;227;0;2;34,7;
+98;296;0;1;0,7;
+132;341;0;0;0,5;
+845;330;0;1;2,7;
+995;472;0;0;1,4;
+</dat>
+      <soils></soils>
+      <rtable></rtable>
+    </test>
+    <iges></iges>
+    <rdirectory>
+      <set>
+        <name>Уральский</name>
+        <psr>0,2</psr>
+        <pml>0,5</pml>
+        <ppy>0,9</ppy>
+        <supes>1,5</supes>
+        <sugl>5</sugl>
+        <glina>5</glina>
+      </set>
+      <set>
+        <name>Тюменский</name>
+        <psr>0,2</psr>
+        <pml>0,5</pml>
+        <ppy>0,9</ppy>
+        <supes>1,5</supes>
+        <sugl>2,8</sugl>
+        <glina>2,8</glina>
+      </set>
+      <set>
+        <name>Уральский1</name>
+        <psr>0,2</psr>
+        <pml>0,5</pml>
+        <ppy>0,9</ppy>
+        <supes>4</supes>
+        <sugl>5</sugl>
+        <glina>5</glina>
+      </set>
+    </rdirectory>
+  </object>
+</exportfile>
