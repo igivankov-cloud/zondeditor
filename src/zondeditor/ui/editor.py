@@ -472,7 +472,7 @@ class GeoCanvasEditor(tk.Tk):
         mid.pack(side="left", fill="x", expand=True, padx=(10, 0), pady=8)
 
         # Текущий файл (перенесено в левую часть ленты)
-        self.file_var = tk.StringVar(value="(не выбран)")
+        self.file_var = tk.StringVar(master=self, value="(не выбран)")
         f_lbl = ttk.Label(mid, textvariable=self.file_var)
         f_lbl.pack(side="left", padx=(0, 10))
         ToolTip(f_lbl, "Текущий файл")
@@ -494,8 +494,8 @@ class GeoCanvasEditor(tk.Tk):
 
 
         # Inputs (скрыты: параметры спрашиваем только при необходимости при открытии GEO)
-        self.depth_var = tk.StringVar(value="")
-        self.step_choice = tk.StringVar(value="")
+        self.depth_var = tk.StringVar(master=self, value="")
+        self.step_choice = tk.StringVar(master=self, value="")
 
         self._depth_label = ttk.Label(left, text="Глубина начала, м:")
         self._depth_label.grid(row=0, column=4, padx=(20, 4))
@@ -550,11 +550,11 @@ class GeoCanvasEditor(tk.Tk):
         params = ttk.LabelFrame(right, text="Параметры пересчёта", padding=(10,6))
         params.pack(side="right")
 
-        self.scale_var = tk.StringVar(value="250")
-        self.fcone_var = tk.StringVar(value="30")
-        self.fsleeve_var = tk.StringVar(value="10")
-        self.acon_var = tk.StringVar(value="10")
-        self.asl_var = tk.StringVar(value="350")
+        self.scale_var = tk.StringVar(master=self, value="250")
+        self.fcone_var = tk.StringVar(master=self, value="30")
+        self.fsleeve_var = tk.StringVar(master=self, value="10")
+        self.acon_var = tk.StringVar(master=self, value="10")
+        self.asl_var = tk.StringVar(master=self, value="350")
 
         def p_row(r, c, label, var, tip):
             ttk.Label(params, text=label).grid(row=r, column=c, sticky="w", padx=(8, 4), pady=2)
@@ -1113,8 +1113,8 @@ class GeoCanvasEditor(tk.Tk):
         info.grid(row=row, column=0, columnspan=3, sticky="w")
         row += 1
 
-        depth_var = tk.StringVar(value="")
-        step_var = tk.StringVar(value="10")
+        depth_var = tk.StringVar(master=self, value="")
+        step_var = tk.StringVar(master=self, value="10")
 
         if need_depth:
             ttk.Label(frm, text="Начальная глубина h0, м (0..4):").grid(row=row, column=0, sticky="w", pady=(10, 4))
@@ -1137,7 +1137,7 @@ class GeoCanvasEditor(tk.Tk):
             ttk.Label(frm, text=f"Шаг, см: задан ранее ({step_cm})").grid(row=row, column=0, columnspan=3, sticky="w", pady=(6, 4))
             row += 1
 
-        msg_var = tk.StringVar(value="")
+        msg_var = tk.StringVar(master=self, value="")
         ttk.Label(frm, textvariable=msg_var, foreground="#b00020").grid(row=row, column=0, columnspan=3, sticky="w", pady=(6, 0))
         row += 1
 
@@ -1225,7 +1225,7 @@ class GeoCanvasEditor(tk.Tk):
         # шаг (по умолчанию 10 см)
         _sm = float(getattr(self, "step_m", 0.10) or 0.10)
         _default_step = "5" if abs(_sm - 0.05) < 1e-6 else "10"
-        step_var = tk.StringVar(value=_default_step)
+        step_var = tk.StringVar(master=self, value=_default_step)
         # общая начальная глубина
         if getattr(self, "depth0_by_tid", None):
             try:
@@ -1234,14 +1234,14 @@ class GeoCanvasEditor(tk.Tk):
                 common_depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
         else:
             common_depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
-        common_var = tk.StringVar(value=f"{common_depth0:g}")
-        apply_all_var = tk.BooleanVar(value=(False if getattr(self, 'geo_kind', 'K2')=='K4' else True))
+        common_var = tk.StringVar(master=self, value=f"{common_depth0:g}")
+        apply_all_var = tk.BooleanVar(master=self, value=(False if getattr(self, 'geo_kind', 'K2')=='K4' else True))
 
         # объект (встроено)
-        obj_var = tk.StringVar(value=(getattr(self, "object_code", "") or ""))
+        obj_var = tk.StringVar(master=self, value=(getattr(self, "object_code", "") or ""))
 
         # сообщение об ошибке
-        msg_var = tk.StringVar(value="")
+        msg_var = tk.StringVar(master=self, value="")
         # msg_lbl будет создан ниже, перед кнопками
 
         # --- объект ---
@@ -1358,7 +1358,7 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 init_v = common_depth0
 
-            h0_var = tk.StringVar(value=f"{init_v:g}")
+            h0_var = tk.StringVar(master=self, value=f"{init_v:g}")
             ent = ttk.Entry(
                 table,
                 textvariable=h0_var,
@@ -1374,7 +1374,7 @@ class GeoCanvasEditor(tk.Tk):
 
             # дата/время (парсим из файла)
             dt0 = _norm_dt(getattr(t, "dt", None))
-            dt_var = tk.StringVar(value=_fmt_dt(dt0))
+            dt_var = tk.StringVar(master=self, value=_fmt_dt(dt0))
 
             dt_lbl = ttk.Label(table, textvariable=dt_var, foreground="#666666", cursor="hand2")
             dt_lbl.grid(row=i, column=2, sticky="w", padx=(12, 0), pady=2)
@@ -2289,14 +2289,14 @@ class GeoCanvasEditor(tk.Tk):
         frm.columnconfigure(1, weight=1)
 
         
-        v_id = tk.StringVar(value=str(new_id))
+        v_id = tk.StringVar(master=self, value=str(new_id))
 
         # Раздельно: дата (с календарём) + время (HH:MM). Секунды НЕ показываем, но сохраняем (случайные).
-        v_date = tk.StringVar(value=dt_default_dt.strftime("%Y-%m-%d"))
-        v_time = tk.StringVar(value=dt_default_dt.strftime("%H:%M"))
+        v_date = tk.StringVar(master=self, value=dt_default_dt.strftime("%Y-%m-%d"))
+        v_time = tk.StringVar(master=self, value=dt_default_dt.strftime("%H:%M"))
 
-        v_d0 = tk.StringVar(value=f"{d0_default:g}")
-        v_d1 = tk.StringVar(value=f"{d1_default:g}")
+        v_d0 = tk.StringVar(master=self, value=f"{d0_default:g}")
+        v_d1 = tk.StringVar(master=self, value=f"{d1_default:g}")
 
         e_id = _row(0, "Номер:", v_id)
 
@@ -3776,7 +3776,7 @@ class GeoCanvasEditor(tk.Tk):
 
         # ---- № ----
         ttk.Label(win, text="№ зондирования").grid(row=0, column=0, sticky="w", padx=PADX, pady=(PADY, 2))
-        tid_var = tk.StringVar(value=str(t.tid))
+        tid_var = tk.StringVar(master=self, value=str(t.tid))
         tid_entry = ttk.Entry(
             win,
             textvariable=tid_var,
@@ -3800,7 +3800,7 @@ class GeoCanvasEditor(tk.Tk):
         hh0 = (parsed.hour if parsed else 0)
         mm0 = (parsed.minute if parsed else 0)
 
-        date_var = tk.StringVar(value=_format_date_ru(d0))
+        date_var = tk.StringVar(master=self, value=_format_date_ru(d0))
         date_entry = ttk.Entry(win, textvariable=date_var, width=12, state="readonly")
         date_entry.grid(row=1, column=1, sticky="w", padx=(0, 6), pady=2)
 
@@ -3823,8 +3823,8 @@ class GeoCanvasEditor(tk.Tk):
         time_frame = ttk.Frame(win)
         time_frame.grid(row=2, column=1, columnspan=2, sticky="w", padx=(0, PADX), pady=2)
 
-        hh_var = tk.StringVar(value=f"{hh0:02d}")
-        mm_var = tk.StringVar(value=f"{mm0:02d}")
+        hh_var = tk.StringVar(master=self, value=f"{hh0:02d}")
+        mm_var = tk.StringVar(master=self, value=f"{mm0:02d}")
 
         hh_entry = ttk.Entry(
             time_frame,
@@ -5034,7 +5034,7 @@ class GeoCanvasEditor(tk.Tk):
         dlg.title("Состав архива")
         dlg.transient(self)
         dlg.grab_set()
-        vars_map = {k: tk.BooleanVar(value=v) for k, v in include.items()}
+        vars_map = {k: tk.BooleanVar(master=self, value=v) for k, v in include.items()}
         labels = {
             "project": "Проект (*.zproj)",
             "geo": "GEO",

@@ -45,3 +45,5 @@ py
 *.err
 *.pid
 logs/
+*.bak
+*.bak

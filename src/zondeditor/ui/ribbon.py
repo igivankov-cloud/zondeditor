@@ -30,7 +30,14 @@ class RibbonView(ttk.Frame):
     def _add_qat_btn(self, parent, key: str, text: str, tip: str):
         btn = ttk.Button(parent, text=text, width=3, command=self.commands.get(key))
         if self.icon_font:
-            btn.configure(font=self.icon_font)
+            # ttk.Button does not support configure(font=...). Use a style.
+            if self.icon_font:
+                try:
+                    style = ttk.Style(btn)
+                    style.configure('Zond.QAT.TButton', font=self.icon_font)
+                    btn.configure(style='Zond.QAT.TButton')
+                except Exception:
+                    pass
         btn.pack(side="left", padx=2)
         ToolTip(btn, tip)
         self._buttons[key] = btn
