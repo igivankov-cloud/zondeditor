@@ -5321,163 +5321,154 @@ class GeoCanvasEditor(tk.Tk):
                 z.writestr(f"СЗ-{tid} лоб.csv", "\n".join(qc_lines))
                 z.writestr(f"СЗ-{tid} бок.csv", "\n".join(fs_lines))
     def save_file(self):
-        """Сохранение.
-
-        - Если открыт GXL: сохраняем только в GXL (как в исходном файле).
-        - Если открыт GEO/GE0: можно сохранить обратно в GEO/GE0 ИЛИ экспортнуть в GXL.
-        """
+        """Сохранение через диалог "Сохранить как..." без silent overwrite."""
         try:
             if not getattr(self, 'tests', None):
                 messagebox.showwarning("Внимание", "Нет данных для сохранения.")
                 return
 
-            if getattr(self, "is_gxl", False) or (getattr(self, "geo_path", None) and str(self.geo_path).lower().endswith(".gxl")):
-                return self.save_gxl()
-
             from tkinter import filedialog
             import os
+
             base = os.path.basename(str(getattr(self, "geo_path", "data.geo") or "data.geo"))
             base_noext = os.path.splitext(base)[0]
-            out_file = getattr(self, '_save_geo_path_override', None)
-            if not out_file:
-                out_file = filedialog.asksaveasfilename(
-                title="Сохранить",
+            out_file = filedialog.asksaveasfilename(
+                title="Сохранить как",
                 defaultextension=".geo",
                 initialfile=base_noext + ".geo",
                 filetypes=[("GEO/GE0", "*.geo *.ge0 *.GEO *.GE0"), ("GXL", "*.gxl *.GXL"), ("Все файлы", "*.*")],
             )
             if not out_file:
                 return
+
             ext = os.path.splitext(out_file)[1].lower()
             if ext == ".gxl":
-                return self.export_gxl_generated(out_file)
-            else:
-                # save back to GEO via template
                 self._save_geo_path_override = out_file
                 try:
-                    return self.save_geo()
+                    return self.export_gxl_as()
                 finally:
                     self._save_geo_path_override = None
+
+            self._save_geo_path_override = out_file
+            try:
+                return self.export_geo_as()
+            finally:
+                self._save_geo_path_override = None
         except Exception:
             import traceback
             messagebox.showerror("Ошибка", traceback.format_exc())
-    def save_gxl(self):
-        """Сохранение текущих данных в GXL (XML). Используется, когда открыт .gxl."""
+
+    def export_gxl_as(self):
+        """Экспорт GXL только через "Сохранить как..."."""
         try:
             if not getattr(self, 'tests', None):
-                messagebox.showwarning("Внимание", "Сначала загрузите файл GXL.")
+                messagebox.showwarning("Внимание", "Нет данных для экспорта GXL.")
                 return
-            if not getattr(self, 'geo_path', None) or self.geo_path.suffix.lower() != ".gxl":
-                messagebox.showwarning("Внимание", "Сохранение в GXL доступно только при открытом файле .gxl.")
+            if not self._validate_export_rows():
                 return
 
-            from tkinter import filedialog
-            import os
-            base = os.path.basename(str(self.geo_path))
             out_file = getattr(self, '_save_geo_path_override', None)
             if not out_file:
                 out_file = filedialog.asksaveasfilename(
-                title="Сохранить GXL",
-                defaultextension=".gxl",
-                initialfile=base,
-                filetypes=[('GXL', '*.gxl *.GXL'), ('Все файлы', '*.*')]
-            )
+                    title="Сохранить GXL как...",
+                    defaultextension=".gxl",
+                    initialfile="export.gxl",
+                    filetypes=[('GXL', '*.gxl *.GXL'), ('Все файлы', '*.*')],
+                )
             if not out_file:
                 return
 
-            # Читаем исходный XML, чтобы сохранить «шапку» и прочие поля.
-            xml_text = _decode_xml_bytes(self.geo_path.read_bytes())
-            root = ET.fromstring(xml_text)
-            obj = root.find(".//object")
-            if obj is None:
-                messagebox.showerror("Ошибка", "Не удалось найти узел <object> в GXL.")
-                return
-
-            # Индекс тестов в XML по numtest
-            xml_tests = {}
-            for xt in obj.findall("test"):
-                num = (xt.findtext("numtest") or "").strip()
-                if not num:
-                    continue
-                try:
-                    tid = int(float(num.replace(",", ".")))
-                except Exception:
-                    continue
-                xml_tests[tid] = xt
-
-
-            # Удаляем из XML те опыты, которых больше нет в текущем списке (иначе они "воскресают" при сохранении)
-            keep_tids = set()
-            for t in self.tests:
-                try:
-                    keep_tids.add(int(getattr(t, "tid", 0) or 0))
-                except Exception:
-                    pass
-            for tid, xt in list(xml_tests.items()):
-                if tid not in keep_tids:
-                    try:
-                        obj.remove(xt)
-                    except Exception:
-                        pass
-                    xml_tests.pop(tid, None)
-
-            # Обновляем данные опытов
-            for t in self.tests:
-                tid = int(getattr(t, "tid", 0) or 0)
-                xt = xml_tests.get(tid)
-                if xt is None:
-                    # Если теста нет в исходном XML — пропускаем (без добавления новых узлов, чтобы не ломать формат)
-                    continue
-
-                # deepbegin = первая глубина
-                d0 = _parse_depth_float(t.depth[0]) if getattr(t, "depth", None) else None
-                if d0 is None:
-                    d0 = 0.0
-
-                # stepzond = шаг по двум первым глубинам (если есть)
-                step = None
-                if getattr(t, "depth", None) and len(t.depth) >= 2:
-                    a = _parse_depth_float(t.depth[0])
-                    b = _parse_depth_float(t.depth[1])
-                    if a is not None and b is not None:
-                        step = b - a
-                if step is None:
-                    step = float(getattr(self, "step_m", 0.05) or 0.05)
-
-                def _set_child_text(parent, tag, text):
-                    node = parent.find(tag)
-                    if node is None:
-                        node = ET.SubElement(parent, tag)
-                    node.text = str(text)
-
-                _set_child_text(xt, "deepbegin", f"{d0:.2f}")
-                _set_child_text(xt, "stepzond", f"{step:.2f}".rstrip('0').rstrip('.') if step is not None else "0.05")
-
-                # dat: строки qc;fs
-                qc = list(getattr(t, "qc", []) or [])
-                fs = list(getattr(t, "fs", []) or [])
-                n = min(len(qc), len(fs))
-                out_lines = []
-                for i in range(n):
-                    qv = _parse_cell_int(qc[i])
-                    fv = _parse_cell_int(fs[i])
-                    qs = "" if qv is None else str(int(qv))
-                    fs_s = "" if fv is None else str(int(fv))
-                    out_lines.append(f"{qs};{fs_s}")
-                dat_text = "\n".join(out_lines)
-                _set_child_text(xt, "dat", dat_text)
-
-            # Пишем файл
-            ET.indent(root, space="  ")
-            xml_out = ET.tostring(root, encoding="utf-8", xml_declaration=True)
-            with open(out_file, "wb") as f:
-                f.write(xml_out)
-
-            self._update_status_loaded(prefix=f"Сохранено GXL: {out_file} | опытов {len(self.tests)}")
+            self.export_gxl_generated(out_file)
+            try:
+                self.status.set(f"GXL сохранён: {out_file}")
+            except Exception:
+                pass
         except Exception:
             import traceback
             messagebox.showerror("Ошибка сохранения GXL", traceback.format_exc())
 
+    def save_gxl(self):
+        """Alias для совместимости UI: экспорт GXL всегда через "Сохранить как..."."""
+        return self.export_gxl_as()
+
+    def export_geo_as(self):
+        """Экспорт GEO/GE0 только через "Сохранить как..." и без перезаписи источника."""
+        try:
+            if not getattr(self, 'tests', None):
+                messagebox.showwarning("Внимание", "Сначала загрузите файл GEO/GE0.")
+                return
+            if not getattr(self, 'original_bytes', None):
+                messagebox.showwarning("Внимание", "Экспорт в GEO/GE0 доступен только после загрузки исходного GEO/GE0.")
+                return
+            if not self._validate_export_rows():
+                return
+
+            import os
+            base = os.path.basename(getattr(self, 'loaded_path', '') or 'export.GEO')
+            out_file = getattr(self, '_save_geo_path_override', None)
+            if not out_file:
+                out_file = filedialog.asksaveasfilename(
+                    title="Сохранить GEO/GE0 как...",
+                    defaultextension=os.path.splitext(base)[1] or '.GEO',
+                    initialfile=base,
+                    filetypes=[('GEO/GE0', '*.GEO *.GE0'), ('Все файлы', '*.*')],
+                )
+            if not out_file:
+                return
+
+            tests_exp = [t for t in (getattr(self, 'tests', []) or []) if bool(getattr(t, 'export_on', True))]
+            if not tests_exp:
+                messagebox.showwarning('Нет данных', 'Нет зондирований для экспорта (все исключены).')
+                return
+
+            tests_list = [self._normalize_test_lengths(t) for t in tests_exp]
+            prepared = []
+            for t in tests_list:
+                try:
+                    d = list(getattr(t, "depth", []) or [])
+                    qc = list(getattr(t, "qc", []) or [])
+                    fs = list(getattr(t, "fs", []) or [])
+                    rows = []
+                    n = min(len(d), len(qc), len(fs))
+                    for k in range(n):
+                        ds = str(d[k]).strip()
+                        if ds == "":
+                            continue
+                        rows.append((d[k], qc[k], fs[k]))
+                    prepared.append(TestData(
+                        tid=int(getattr(t, "tid", 0) or 0),
+                        dt=str(getattr(t, "dt", "") or ""),
+                        depth=[r[0] for r in rows],
+                        qc=[r[1] for r in rows],
+                        fs=[r[2] for r in rows],
+                        marker=str(getattr(t, "marker", "") or ""),
+                        header_pos=str(getattr(t, "header_pos", "") or ""),
+                        orig_id=getattr(t, "orig_id", None),
+                        block=getattr(t, "block", None),
+                    ))
+                except Exception:
+                    prepared.append(t)
+
+            blocks_info = list((getattr(self, '_geo_template_blocks_info_full', None) or self._geo_template_blocks_info) or [])
+            if not blocks_info:
+                messagebox.showerror("Ошибка", "Не удалось найти блоки опытов в исходном GEO.")
+                return
+
+            out_bytes = _rebuild_geo_from_template(self.original_bytes, blocks_info, prepared)
+            with open(out_file, 'wb') as f:
+                f.write(out_bytes)
+
+            try:
+                self.status.set(f"Сохранено: {out_file} | опытов: {len(tests_list)}")
+            except Exception:
+                pass
+        except Exception:
+            import traceback
+            messagebox.showerror("Ошибка сохранения GEO", traceback.format_exc())
+
+    def save_geo(self):
+        """Alias для совместимости UI: экспорт GEO всегда через "Сохранить как..."."""
+        return self.export_geo_as()
 
 def export_gxl_generated(self, out_file: str):
     """Сформировать GXL максимально идентичный экспорту GeoExplorer.
@@ -5767,114 +5758,6 @@ def export_gxl_generated(self, out_file: str):
 
 
 
-    def save_geo(self):
-        # Сохранение GEO/GE0 через шаблон исходного файла (самый надёжный вариант)
-        try:
-            if not getattr(self, 'tests', None):
-                messagebox.showwarning("Внимание", "Сначала загрузите файл GEO/GE0.")
-                return
-            if not getattr(self, 'original_bytes', None):
-                messagebox.showwarning("Внимание", "Экспорт в GEO/GE0 доступен только после загрузки исходного GEO/GE0.")
-                return
-
-            from tkinter import filedialog
-            import os
-            base = os.path.basename(getattr(self, 'loaded_path', '') or 'export.GEO')
-            out_file = getattr(self, '_save_geo_path_override', None)
-            if not out_file:
-                out_file = filedialog.asksaveasfilename(
-                title="Сохранить GEO/GE0",
-                defaultextension=os.path.splitext(base)[1] or '.GEO',
-                initialfile=base,
-                filetypes=[('GEO/GE0', '*.GEO *.GE0'), ('Все файлы', '*.*')]
-            )
-            if not out_file:
-                return
-
-            tests_list = tests_exp  # файл-ориентированный порядок
-
-            
-
-            # Нормализация длин внутри каждого опыта перед сохранением
-            tests_list = [self._normalize_test_lengths(t) for t in tests_list]
-# Перед сохранением: выкидываем удалённые строки (где depth пустая) так,
-            # чтобы GeoExplorer не подставлял нули на месте "пустот".
-            prepared = []
-            for t in tests_list:
-                try:
-                    d = list(getattr(t, "depth", []) or [])
-                    qc = list(getattr(t, "qc", []) or [])
-                    fs = list(getattr(t, "fs", []) or [])
-                    rows = []
-                    n = min(len(d), len(qc), len(fs))
-                    for k in range(n):
-                        ds = str(d[k]).strip()
-                        if ds == "":
-                            continue
-                        rows.append((d[k], qc[k], fs[k]))
-                    d2 = [r[0] for r in rows]
-                    qc2 = [r[1] for r in rows]
-                    fs2 = [r[2] for r in rows]
-                    prepared.append(TestData(
-                        tid=int(getattr(t, "tid", 0) or 0),
-                        dt=str(getattr(t, "dt", "") or ""),
-                        depth=d2, qc=qc2, fs=fs2,
-                        marker=str(getattr(t, "marker", "") or ""),
-                        header_pos=str(getattr(t, "header_pos", "") or ""),
-                        orig_id=getattr(t, "orig_id", None),
-                        block=getattr(t, "block", None),
-                    ))
-                except Exception:
-                    prepared.append(t)
-
-
-            # --- GEO export safety: use ONLY tests_list (respect delete/copy/export checkbox) ---
-            try:
-                _exp_ids = [int(getattr(tt, 'tid', 0) or 0) for tt in tests_list]
-                _exp_ids = [x for x in _exp_ids if x > 0]
-                _exp_set = set(_exp_ids)
-                prepared = [pp for pp in prepared if int(getattr(pp, 'tid', 0) or 0) in _exp_set]
-                _order = {tid: i for i, tid in enumerate(_exp_ids)}
-                prepared.sort(key=lambda pp: _order.get(int(getattr(pp, 'tid', 0) or 0), 10**9))
-            except Exception:
-                pass
-            if getattr(self, 'geo_kind', 'K2') == 'K4':
-                messagebox.showwarning('K4', 'Сохранение K4 GEO пока не поддержано.\nИспользуй Экспорт-архив: там будут XLSX/GXL/CREDO и исходный GEO.')
-                return
-            blocks_info = list((getattr(self, '_geo_template_blocks_info_full', None) or self._geo_template_blocks_info) or [])
-            if not blocks_info:
-                messagebox.showerror("Ошибка", "Не удалось найти блоки опытов в исходном файле.")
-                return
-
-            out_bytes = _rebuild_geo_from_template(self.original_bytes, blocks_info, prepared)
-            with open(out_file, 'wb') as f:
-                f.write(out_bytes)
-
-            # Обновляем «шаблон» и блоки после сохранения:
-            # это позволяет сохранять GEO повторно (в т.ч. после добавления зондировок),
-            # т.к. в новом файле появляются корректные блоки для всех опытов.
-            try:
-                self.original_bytes = out_bytes
-                self.loaded_path = out_file
-                # перепарсим только что сохранённый GEO, чтобы получить новые block-метаданные
-                _tests2 = parse_geo_with_blocks(out_bytes, TestData, GeoBlockInfo)
-                if _tests2 and len(_tests2) == len(self.tests):
-                    for i in range(len(self.tests)):
-                        try:
-                            self.tests[i].block = getattr(_tests2[i], "block", None)
-                            self.tests[i].orig_id = getattr(_tests2[i], "orig_id", getattr(self.tests[i], "orig_id", None))
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-
-            try:
-                self.status.set(f"Сохранено: {out_file} | опытов: {len(tests_list)}")
-            except Exception:
-                pass
-        except Exception:
-            import traceback
-            messagebox.showerror("Ошибка сохранения GEO", traceback.format_exc())
 
 
 # --- bind module-level helpers as methods (fix for indentation) ---
