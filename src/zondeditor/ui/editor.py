@@ -160,7 +160,7 @@ class GeoCanvasEditor(tk.Tk):
         self._marks_ops_count = 0
         self._marks_built_count = 0
         self._marks_applied_count = 0
-        self._marks_color_counts: dict[str, int] = {"green": 0, "purple": 0, "blue": 0}
+        self._marks_color_counts: dict[str, int] = {"green": 0, "purple": 0, "blue": 0, "orange": 0}
         self.use_ribbon_ui = True
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._install_tk_root_guard()
@@ -892,6 +892,7 @@ class GeoCanvasEditor(tk.Tk):
         _leg_item(leg, GUI_YELLOW, "отсутствуют значения")
         _leg_item(leg, GUI_BLUE, "отсутствует отказ")
         _leg_item(leg, GUI_GREEN, "откорректировано")
+        _leg_item(leg, GUI_ORANGE, "исправлено на 0")
         _leg_item(leg, GUI_RED, "некорректный опыт")
 
         self.status = ttk.Label(self, text="Готов.", padding=(12, 6))
@@ -1973,7 +1974,7 @@ class GeoCanvasEditor(tk.Tk):
             return summary
 
         self._algo_preview_mode = bool(preview_mode)
-        summary["tests_total"] = len(self.tests)
+        summary["tests_total"] = len([t for t in self.tests if bool(getattr(t, "export_on", True))])
 
         for t in self.tests:
             tid = t.tid
@@ -1983,6 +1984,11 @@ class GeoCanvasEditor(tk.Tk):
             interp_cells = set(getattr(prev, "interp_cells", set()) or set())
             force_cells = set(getattr(prev, "force_cells", set()) or set())
             force_tail_rows = set(getattr(prev, "force_tail_rows", set()) or set())
+
+            if not bool(getattr(t, "export_on", True)):
+                # Отключённые опыты исключаем из статусов и убираем подсветку некорректности.
+                self.flags[tid] = TestFlags(False, interp_cells, force_cells, user_cells, set(), force_tail_rows)
+                continue
 
             qc = [(_parse_cell_int(v) or 0) for v in t.qc]
             fs = [(_parse_cell_int(v) or 0) for v in t.fs]
@@ -2638,10 +2644,10 @@ class GeoCanvasEditor(tk.Tk):
                 if r in map_old_to_new:
                     new_tail.add(map_old_to_new[r])
 
-            # новые созданные строки (вставки при 10→5) оставляем в СИНЕЙ категории
+            # новые созданные строки (вставки при 10→5) помечаем как откорректированные (зелёным)
             for rr in created_rows:
-                new_force.add((rr, "qc"))
-                new_force.add((rr, "fs"))
+                new_algo.add((rr, "qc"))
+                new_algo.add((rr, "fs"))
                 depth_m = self._safe_depth_m(t, rr)
                 if depth_m is not None:
                     resample_cells.append({"testId": int(getattr(t, "tid", 0) or 0), "depthM": depth_m, "field": "qc", "before": "", "after": str((t.qc or [""])[rr]).strip()})
@@ -2666,13 +2672,13 @@ class GeoCanvasEditor(tk.Tk):
 
         try:
             if resample_cells:
-                self.project_ops.append(op_cells_marked(reason="resample_insert", color="blue", cells=resample_cells))
+                self.project_ops.append(op_cells_marked(reason="step_reduce", color="green", cells=resample_cells))
                 self._rebuild_marks_index()
         except Exception:
             pass
 
         self._redraw()
-        self.status.config(text="Конвертация 10→5 выполнена. Новые строки помечены синим.")
+        self.status.config(text="Конвертация 10→5 выполнена. Новые строки помечены зелёным.")
 
     # ---------------- drawing helpers ----------------
     def _content_size(self):
@@ -2861,8 +2867,12 @@ class GeoCanvasEditor(tk.Tk):
                 t.export_on = not bool(getattr(t, "export_on", True))
             except Exception:
                 pass
+            try:
+                self._recompute_statuses_after_data_load(preview_mode=False)
+            except Exception:
+                self._update_footer_realtime()
+                self._redraw()
             self._hide_canvas_tip()
-            self._redraw()
             return
 
         # --- Single-click cell edit (ironclad) ---
@@ -3429,19 +3439,21 @@ class GeoCanvasEditor(tk.Tk):
                     if not has_row or is_blank_row:
                         return "white"
 
-                    if (data_i, kind) in getattr(fl, 'user_cells', set()):
-                        return GUI_PURPLE
-                    if (data_i, kind) in getattr(fl, 'algo_cells', set()):
-                        return GUI_GREEN
                     mk = (self._marks_index or {}).get(self._mark_key(int(getattr(t, 'tid', 0) or 0), self._safe_depth_m(t, int(data_i)), str(kind))) if data_i is not None else None
                     if isinstance(mk, dict):
                         clr = str(mk.get("color") or "").strip().lower()
+                        if clr == "orange":
+                            return GUI_ORANGE
                         if clr == "purple":
                             return GUI_PURPLE
                         if clr == "green":
                             return GUI_GREEN
                         if clr == "blue":
                             return (GUI_BLUE_P if getattr(self, '_algo_preview_mode', False) else GUI_BLUE)
+                    if (data_i, kind) in getattr(fl, 'user_cells', set()):
+                        return GUI_PURPLE
+                    if (data_i, kind) in getattr(fl, 'algo_cells', set()):
+                        return GUI_GREEN
                     if (data_i, kind) in fl.force_cells:
                         return (GUI_BLUE_P if getattr(self, '_algo_preview_mode', False) else GUI_BLUE)
                     if (data_i, kind) in fl.interp_cells:
@@ -4222,16 +4234,18 @@ class GeoCanvasEditor(tk.Tk):
                     t.fs[row] = newv
                 try:
                     if str(old).strip() != str(newv).strip():
+                        mark_reason = "manual_zero" if str(newv).strip() == "0" else "manual_edit"
+                        mark_color = "orange" if str(newv).strip() == "0" else "purple"
                         fl.user_cells.add((row, field))
                         try:
                             fl.algo_cells.discard((row, field))
                         except Exception:
                             pass
                         try:
-                            self.project_ops.append(op_cell_set(test_id=int(getattr(t, "tid", 0) or 0), row=row, field=field, before=str(old), after=str(newv), depth_m=self._safe_depth_m(t, row)))
+                            self.project_ops.append(op_cell_set(test_id=int(getattr(t, "tid", 0) or 0), row=row, field=field, before=str(old), after=str(newv), reason=mark_reason, color=mark_color, depth_m=self._safe_depth_m(t, row)))
                             _mk = self._mark_key(int(getattr(t, "tid", 0) or 0), self._safe_depth_m(t, row), str(field))
                             if _mk is not None:
-                                self._marks_index[_mk] = {"reason": "manual_edit", "color": "purple"}
+                                self._marks_index[_mk] = {"reason": mark_reason, "color": mark_color}
                         except Exception:
                             pass
                 except Exception:
@@ -5106,7 +5120,7 @@ class GeoCanvasEditor(tk.Tk):
 
     def _rebuild_marks_index(self) -> None:
         self._marks_index = self._build_marks_index_from_ops()
-        self._marks_color_counts = {"green": 0, "purple": 0, "blue": 0}
+        self._marks_color_counts = {"green": 0, "purple": 0, "blue": 0, "orange": 0}
         try:
             tests_by_tid = {int(getattr(t, "tid", 0) or 0): t for t in (self.tests or [])}
             visible = 0
@@ -5130,6 +5144,7 @@ class GeoCanvasEditor(tk.Tk):
             f"marks_green={self._marks_color_counts.get('green', 0)}, "
             f"marks_purple={self._marks_color_counts.get('purple', 0)}, "
             f"marks_blue={self._marks_color_counts.get('blue', 0)}, "
+            f"marks_orange={self._marks_color_counts.get('orange', 0)}, "
             f"подсвечено_marks={self._marks_applied_count}"
         )
 
@@ -5155,6 +5170,7 @@ class GeoCanvasEditor(tk.Tk):
             f"marks_green={self._marks_color_counts.get('green', 0)}, "
             f"marks_purple={self._marks_color_counts.get('purple', 0)}, "
             f"marks_blue={self._marks_color_counts.get('blue', 0)}, "
+            f"marks_orange={self._marks_color_counts.get('orange', 0)}, "
             f"подсвечено_marks={self._marks_applied_count}, статус_синий={no_ref}, "
             f"статус_жёлтый={miss}, некорректных_опытов={invalid}"
         )
@@ -5287,7 +5303,7 @@ class GeoCanvasEditor(tk.Tk):
         self._marks_ops_count = 0
         self._marks_built_count = 0
         self._marks_applied_count = 0
-        self._marks_color_counts: dict[str, int] = {"green": 0, "purple": 0, "blue": 0}
+        self._marks_color_counts: dict[str, int] = {"green": 0, "purple": 0, "blue": 0, "orange": 0}
         self.project_path = None
         self.object_name = ""
         self.object_code = ""
