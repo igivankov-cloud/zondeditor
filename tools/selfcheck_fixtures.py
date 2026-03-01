@@ -14,6 +14,7 @@ from src.zondeditor.io.geo_reader import parse_geo_bytes
 from src.zondeditor.io.geo_writer import build_k2_geo_from_template
 from src.zondeditor.io.gxl_reader import parse_gxl_file
 from src.zondeditor.io.k2_reader import parse_geo_with_blocks
+from tools.geo_probe import _is_experiment, _probe_k2, _probe_k4
 
 
 def fail(msg: str) -> int:
@@ -40,31 +41,55 @@ def _load_geo_template() -> tuple[bytes, list[GeoBlockInfo]]:
 def _validate_geo_block_data(path: Path) -> None:
     raw = path.read_bytes()
     tests, _meta, kind = parse_geo_bytes(raw)
+    blocks = _probe_k4(raw) if kind == "K4" else _probe_k2(raw)
+    accepted = [b for b in blocks if _is_experiment(kind, b)]
     if not tests:
         raise RuntimeError(f"{path.name}: no tests parsed")
+
+    if kind == "K2":
+        if len(tests) != 6:
+            raise RuntimeError(f"{path.name}: expected 6 tests, got {len(tests)}")
+    else:
+        if any(len(getattr(t, "qc", []) or []) < 10 for t in tests):
+            raise RuntimeError(f"{path.name}: tiny blocks were not filtered out (rows < 10 found)")
+        if any(int(getattr(t, "tid", 0) or 0) > 300 for t in tests):
+            raise RuntimeError(f"{path.name}: service test_id values leaked (>300)")
+        if len(tests) != 19:
+            raise RuntimeError(f"{path.name}: expected 19 real tests, got {len(tests)}")
 
     for idx, t in enumerate(tests, start=1):
         block = getattr(t, "block", None)
         if block is None:
-            continue
+            raise RuntimeError(f"{path.name} block#{idx}: missing GeoBlockInfo")
 
         rows = max(len(getattr(t, "qc", []) or []), len(getattr(t, "fs", []) or []), len(getattr(t, "incl", []) or []))
-        bpr = int(getattr(block, "bytes_per_row", 2) or 2)
+        bpr = int(getattr(block, "bytes_per_row", 0) or 0)
         data_len = int(getattr(block, "data_len", max(0, int(block.data_end) - int(block.data_start))) or 0)
-        min_bpr = 2 if kind == "K2" else 6
 
-        if data_len < rows * min_bpr:
-            raise RuntimeError(
-                f"{path.name} block#{idx}: data_len={data_len} too small for rows={rows} min_bytes_per_row={min_bpr}"
-            )
+        if kind == "K2":
+            if bpr != 2:
+                raise RuntimeError(f"{path.name} block#{idx}: bytes_per_row={bpr}, expected 2")
+            if data_len % 2 != 0:
+                raise RuntimeError(f"{path.name} block#{idx}: data_len={data_len} is not divisible by 2")
+            if rows != data_len // 2:
+                raise RuntimeError(f"{path.name} block#{idx}: rows={rows}, expected {data_len // 2}")
+        else:
+            step_raw = getattr(t, "marker", "").split()
+            if len(step_raw) < 2:
+                raise RuntimeError(f"{path.name} block#{idx}: invalid marker for step check")
+            step = int(step_raw[1], 16) / 1000.0
+            if abs(step - 0.05) > 1e-9:
+                raise RuntimeError(f"{path.name} block#{idx}: step={step}, expected 0.05")
+            if bpr != 9:
+                raise RuntimeError(f"{path.name} block#{idx}: bytes_per_row={bpr}, expected 9")
+            if data_len % 9 != 0:
+                raise RuntimeError(f"{path.name} block#{idx}: data_len={data_len} is not divisible by 9")
+            if rows != data_len // 9:
+                raise RuntimeError(f"{path.name} block#{idx}: rows={rows}, expected {data_len // 9}")
+            if rows < 10:
+                raise RuntimeError(f"{path.name} block#{idx}: tiny block rows={rows} leaked")
 
-        expected = rows * bpr
-        if data_len != expected:
-            raise RuntimeError(
-                f"{path.name} block#{idx}: data_len={data_len} not aligned with decoded rows={rows} and bytes_per_row={bpr}"
-            )
-
-    ok(f"{path.name}: GEO block layout validated ({kind})")
+    ok(f"{path.name}: blocks found={len(blocks)} accepted_as_tests={len(accepted)} parsed_tests={len(tests)} ({kind})")
 
 
 def main() -> int:

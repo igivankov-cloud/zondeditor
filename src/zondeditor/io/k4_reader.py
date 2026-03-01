@@ -60,6 +60,7 @@ def parse_k4_geo_strict(data: bytes, TestDataCls: Any, GeoBlockInfoCls: Any | No
     """
     starts = _k4_find_starts(data)
     tests: list = []
+    min_rows = 10
 
     for idx, p in enumerate(starts):
         end = starts[idx + 1] if idx + 1 < len(starts) else len(data)
@@ -70,13 +71,12 @@ def parse_k4_geo_strict(data: bytes, TestDataCls: Any, GeoBlockInfoCls: Any | No
         except Exception:
             continue
 
-        # Skip service/internal records
-        if exp > 300:
+        if exp == 0 or exp == 0xFFFF or exp > 300:
             continue
 
         marker = block[4:8]
         start_m = marker[0] / 100.0
-        step_m = marker[1] / 1000.0
+        step_m = block[5] / 1000.0 if len(block) > 5 else 0.0
 
         # datetime
         try:
@@ -91,29 +91,17 @@ def parse_k4_geo_strict(data: bytes, TestDataCls: Any, GeoBlockInfoCls: Any | No
 
         k = block.find(K4_SIG)
         if k < 0:
-            t = TestDataCls(int(exp), ts, [], [], [], marker.hex(" "), str(p))
-            t.incl = []
-            if GeoBlockInfoCls is not None:
-                t.block = GeoBlockInfoCls(
-                    order_index=idx,
-                    header_start=p,
-                    header_end=p + 13,
-                    id_pos=p + 2,
-                    dt_pos=p + 8,
-                    data_start=end,
-                    data_end=end,
-                    marker_byte=block[4] if len(block) > 4 else 0,
-                    data_len=0,
-                    bytes_per_row=9,
-                    layout="K4_QC_FS_U",
-                )
-            tests.append(t)
             continue
 
         payload_start = p + k + len(K4_SIG)
+        payload_len = end - payload_start
+        if payload_len <= 0 or payload_len % 9 != 0:
+            continue
+
         payload = block[k + len(K4_SIG):]
-        n = len(payload) // 9
-        payload_len = n * 9
+        n = payload_len // 9
+        if n < min_rows:
+            continue
 
         qc: list[str] = []
         fs: list[str] = []
@@ -126,8 +114,16 @@ def parse_k4_geo_strict(data: bytes, TestDataCls: Any, GeoBlockInfoCls: Any | No
 
         depth = [f"{(start_m + i * step_m):.2f}".replace(".", ",") for i in range(n)]
 
-        t = TestDataCls(int(exp), ts, depth, qc, fs, marker.hex(" "), str(p))
-        t.incl = U
+        t = TestDataCls(
+            tid=int(exp),
+            dt=ts,
+            depth=depth,
+            qc=qc,
+            fs=fs,
+            incl=U,
+            marker=marker.hex(" "),
+            header_pos=str(p),
+        )
         if GeoBlockInfoCls is not None:
             t.block = GeoBlockInfoCls(
                 order_index=idx,
