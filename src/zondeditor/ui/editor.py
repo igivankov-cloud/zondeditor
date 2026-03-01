@@ -34,6 +34,7 @@ except Exception:
     export_excel_file = None
 from src.zondeditor.export.credo_zip import export_credo_zip
 from src.zondeditor.export.gxl_export import export_gxl_generated
+from src.zondeditor.export.selection import select_export_tests
 from src.zondeditor.io.geo_reader import load_geo, parse_geo_bytes, GeoParseError
 from src.zondeditor.io.gxl_reader import load_gxl, parse_gxl_file, GxlParseError
 from src.zondeditor.io.geo_writer import save_geo_as, save_k2_geo_from_template, build_k2_geo_from_template
@@ -4747,15 +4748,31 @@ class GeoCanvasEditor(tk.Tk):
         return name[:31]
 
 
+    def _collect_export_tests(self):
+        selection = select_export_tests(getattr(self, "tests", []) or [])
+        try:
+            print(
+                "[EXPORT_SELECTION] "
+                f"total_tests={selection.total_tests} "
+                f"exported_tests={selection.exported_tests} "
+                f"skipped_hidden={selection.skipped_hidden} "
+                f"skipped_deleted={selection.skipped_deleted}"
+            )
+        except Exception:
+            pass
+        return selection
+
     def _validate_export_rows(self) -> bool:
         """Блокируем экспорт, если есть строки, где заполнена только одна колонка (qc или fs).
         Подсвечиваем зондирование красным (как ошибка) и показываем предупреждение.
         """
         bad = False
+        selected = self._collect_export_tests().tests
+        selected_ids = {id(t) for t in selected}
         for t in self.tests:
             tid = t.tid
             fl = self.flags.get(tid) or TestFlags(False, set(), set(), set(), set(), set())
-            if not getattr(t, 'export_on', True):
+            if id(t) not in selected_ids:
                 self.flags[tid] = fl
                 continue
             n = max(len(getattr(t, 'qc', []) or []), len(getattr(t, 'fs', []) or []))
@@ -4816,7 +4833,8 @@ class GeoCanvasEditor(tk.Tk):
         if not getattr(self, "tests", None):
             messagebox.showwarning("Нет данных", "Сначала нажми «Показать зондирования»")
             return
-        tests_exp = [t for t in (getattr(self, 'tests', []) or []) if bool(getattr(t, 'export_on', True))]
+        selection = self._collect_export_tests()
+        tests_exp = list(selection.tests)
         if not tests_exp:
             messagebox.showwarning('Нет данных', 'Нет зондирований для экспорта (все исключены).')
             return
@@ -5434,7 +5452,8 @@ class GeoCanvasEditor(tk.Tk):
         if not self.tests:
             messagebox.showwarning("Нет данных", "Сначала открой файл.")
             return False
-        tests_exp = [t for t in (getattr(self, 'tests', []) or []) if bool(getattr(t, 'export_on', True))]
+        selection = self._collect_export_tests()
+        tests_exp = list(selection.tests)
         if not tests_exp:
             messagebox.showwarning('Нет данных', 'Нет зондирований для экспорта (все исключены).')
             return False
@@ -5704,7 +5723,8 @@ class GeoCanvasEditor(tk.Tk):
         """Тихий экспорт ZIP для CREDO (две CSV на опыт) без диалогов (для экспорта-архива)."""
         import zipfile
 
-        tests_exp = [t for t in (getattr(self, "tests", []) or []) if bool(getattr(t, "export_on", True))]
+        selection = self._collect_export_tests()
+        tests_exp = list(selection.tests)
         if not tests_exp:
             # нечего экспортировать
             with zipfile.ZipFile(out_zip_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
@@ -5839,7 +5859,8 @@ class GeoCanvasEditor(tk.Tk):
             if not out_file:
                 return
 
-            tests_exp = [t for t in (getattr(self, 'tests', []) or []) if bool(getattr(t, 'export_on', True))]
+            selection = self._collect_export_tests()
+            tests_exp = list(selection.tests)
             if not tests_exp:
                 messagebox.showwarning('Нет данных', 'Нет зондирований для экспорта (все исключены).')
                 return
