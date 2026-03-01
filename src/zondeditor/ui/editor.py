@@ -155,6 +155,10 @@ class GeoCanvasEditor(tk.Tk):
         self.object_name = ""
         self.project_path: Path | None = None
         self.project_ops: list[dict] = []
+        self._marks_index: dict[tuple[int, int, str], dict] = {}
+        self._marks_ops_count = 0
+        self._marks_built_count = 0
+        self._marks_applied_count = 0
         self.use_ribbon_ui = True
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -3376,6 +3380,13 @@ class GeoCanvasEditor(tk.Tk):
                         return GUI_PURPLE
                     if (data_i, kind) in getattr(fl, 'algo_cells', set()):
                         return GUI_GREEN
+                    mk = (self._marks_index or {}).get((int(getattr(t, 'tid', 0) or 0), int(data_i), str(kind))) if data_i is not None else None
+                    if isinstance(mk, dict):
+                        clr = str(mk.get("color") or "").strip().lower()
+                        if clr == "purple":
+                            return GUI_PURPLE
+                        if clr == "green":
+                            return GUI_GREEN
                     if (data_i, kind) in fl.force_cells:
                         return (GUI_BLUE_P if getattr(self, '_algo_preview_mode', False) else GUI_BLUE)
                     if (data_i, kind) in fl.interp_cells:
@@ -4169,7 +4180,8 @@ class GeoCanvasEditor(tk.Tk):
                         except Exception:
                             pass
                         try:
-                            self.project_ops.append(op_cell_set(test_id=int(getattr(t, "tid", 0) or 0), row=row, field=field, before=str(old), after=str(newv)))
+                            self.project_ops.append(op_cell_set(test_id=int(getattr(t, "tid", 0) or 0), row=row, field=field, before=str(old), after=str(newv), depth_m=self._safe_depth_m(t, row)))
+                            self._marks_index[(int(getattr(t, "tid", 0) or 0), int(row), str(field))] = {"reason": "manual_edit", "color": "purple"}
                         except Exception:
                             pass
                 except Exception:
@@ -4567,7 +4579,7 @@ class GeoCanvasEditor(tk.Tk):
             for t in self.tests:
                 fl = self.flags.get(getattr(t, "tid", 0))
                 for row, fld in sorted(list(getattr(fl, "algo_cells", set()) or set())):
-                    changes.append({"testId": int(getattr(t, "tid", 0) or 0), "row": int(row), "field": fld})
+                    changes.append({"testId": int(getattr(t, "tid", 0) or 0), "row": int(row), "field": fld, "depthM": self._safe_depth_m(t, row), "mark": {"reason": "algo_fix", "color": "green"}})
             if changes:
                 self.project_ops.append(op_algo_fix_applied(changes=changes))
         except Exception:
@@ -4922,6 +4934,111 @@ class GeoCanvasEditor(tk.Tk):
             state=self._snapshot(),
         )
 
+    def _safe_depth_m(self, t: TestData, row: int) -> float | None:
+        try:
+            if row < 0 or row >= len(getattr(t, "depth", []) or []):
+                return None
+            d = _parse_depth_float(str(t.depth[row]))
+            if d is None:
+                return None
+            return float(d)
+        except Exception:
+            return None
+
+    def _row_by_depth_m(self, t: TestData, depth_m: float | int | str | None) -> int | None:
+        if depth_m is None:
+            return None
+        try:
+            target = round(float(depth_m), 3)
+        except Exception:
+            return None
+        for idx, d_raw in enumerate(getattr(t, "depth", []) or []):
+            d = _parse_depth_float(str(d_raw))
+            if d is None:
+                continue
+            if round(float(d), 3) == target:
+                return idx
+        return None
+
+    def _build_marks_index_from_ops(self) -> dict[tuple[int, int, str], dict]:
+        marks: dict[tuple[int, int, str], dict] = {}
+        tests_by_tid = {int(getattr(t, "tid", 0) or 0): t for t in (self.tests or [])}
+        ops = list(getattr(self, "project_ops", []) or [])
+        self._marks_ops_count = len(ops)
+
+        for op in ops:
+            op_type = str((op or {}).get("opType") or "")
+            payload = dict((op or {}).get("payload") or {})
+            op_mark = dict((op or {}).get("mark") or {})
+            if op_type == "cell_set":
+                try:
+                    tid = int(payload.get("testId"))
+                except Exception:
+                    continue
+                t = tests_by_tid.get(tid)
+                if t is None:
+                    continue
+                try:
+                    row_i = int(payload.get("row"))
+                except Exception:
+                    row_i = -1
+                if row_i < 0:
+                    row_i = self._row_by_depth_m(t, payload.get("depthM")) or -1
+                field = str(payload.get("field") or "").strip()
+                if row_i < 0 or not field:
+                    continue
+                mark = dict(op_mark)
+                if not mark.get("color"):
+                    mark["color"] = "purple"
+                if not mark.get("reason"):
+                    mark["reason"] = "manual_edit"
+                marks[(tid, row_i, field)] = mark
+            elif op_type == "algo_fix_applied":
+                for ch in list(payload.get("changes") or []):
+                    one = dict(ch or {})
+                    try:
+                        tid = int(one.get("testId"))
+                    except Exception:
+                        continue
+                    t = tests_by_tid.get(tid)
+                    if t is None:
+                        continue
+                    try:
+                        row_i = int(one.get("row"))
+                    except Exception:
+                        row_i = -1
+                    if row_i < 0:
+                        row_i = self._row_by_depth_m(t, one.get("depthM")) or -1
+                    field = str(one.get("field") or "").strip()
+                    if row_i < 0 or not field:
+                        continue
+                    mark = dict(one.get("mark") or op_mark or {})
+                    if not mark.get("color"):
+                        mark["color"] = "green"
+                    if not mark.get("reason"):
+                        mark["reason"] = "algo_fix"
+                    marks[(tid, row_i, field)] = mark
+
+        self._marks_built_count = len(marks)
+        return marks
+
+    def _rebuild_marks_index(self) -> None:
+        self._marks_index = self._build_marks_index_from_ops()
+        try:
+            self._marks_applied_count = sum(
+                1
+                for tid, row, field in self._marks_index.keys()
+                if any(
+                    int(getattr(t, "tid", 0) or 0) == int(tid)
+                    and 0 <= int(row) < len(getattr(t, "qc", []) or [])
+                    and field in {"qc", "fs", "incl", "depth"}
+                    for t in self.tests
+                )
+            )
+        except Exception:
+            self._marks_applied_count = len(self._marks_index)
+        print(f"[marks] ops_loaded={self._marks_ops_count} marks_built={self._marks_built_count} marks_visible={self._marks_applied_count}")
+
     def save_project_file(self, save_as: bool = False):
         out = self.project_path
         if save_as or not out:
@@ -4957,6 +5074,7 @@ class GeoCanvasEditor(tk.Tk):
         self.project_ops = list(project.ops or [])
         self.original_bytes = source_bytes
         self._restore(project.state or {})
+        self._rebuild_marks_index()
         if hasattr(self, "scale_var"):
             self.scale_var.set(project.settings.scale)
             self.fcone_var.set(project.settings.fcone)
@@ -4966,6 +5084,7 @@ class GeoCanvasEditor(tk.Tk):
         self._dirty = False
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)
+        self.status.config(text=f"Проект открыт: ops={self._marks_ops_count}, marks={self._marks_built_count}, подсвечено={self._marks_applied_count}")
         self._update_window_title()
 
     def new_project_file(self):
@@ -4976,6 +5095,10 @@ class GeoCanvasEditor(tk.Tk):
         self.undo_stack.clear()
         self.redo_stack.clear()
         self.project_ops = []
+        self._marks_index = {}
+        self._marks_ops_count = 0
+        self._marks_built_count = 0
+        self._marks_applied_count = 0
         self.project_path = None
         self.object_name = ""
         self.object_code = ""
