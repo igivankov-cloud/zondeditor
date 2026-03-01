@@ -123,6 +123,7 @@ def parse_k4_geo_strict(data: bytes, TestDataCls: Any, GeoBlockInfoCls: Any | No
             incl=U,
             marker=marker.hex(" "),
             header_pos=str(p),
+            orig_id=int(exp),
         )
         if GeoBlockInfoCls is not None:
             t.block = GeoBlockInfoCls(
@@ -137,6 +138,10 @@ def parse_k4_geo_strict(data: bytes, TestDataCls: Any, GeoBlockInfoCls: Any | No
                 data_len=payload_len,
                 bytes_per_row=9,
                 layout="K4_QC_FS_U",
+                raw_block_start=p,
+                raw_block_end=end,
+                data_off=max(0, payload_start - p),
+                orig_test_id=int(exp),
             )
         tests.append(t)
 

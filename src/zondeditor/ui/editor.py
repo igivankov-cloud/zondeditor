@@ -5584,25 +5584,12 @@ class GeoCanvasEditor(tk.Tk):
                             prepared.sort(key=lambda pp: _order.get(int(getattr(pp, 'tid', 0) or 0), 10**9))
                         except Exception:
                             pass
-                        # K4: пересборка GEO из шаблона пока не поддержана (другой формат блоков).
-                        # Поэтому: для K4 в архив кладём исходный GEO без пересохранения.
-                        if getattr(self, 'geo_kind', 'K2') == 'K4':
-                            try:
-                                if getattr(self, 'original_bytes', None):
-                                    geo_path.write_bytes(self.original_bytes)
-                                geo_err = None
-                                geo_tb = ''
-                            except Exception as _e:
-                                geo_err = f"{type(_e).__name__}: {_e}"
-                                geo_tb = traceback.format_exc()
-                                geo_path = None
-                        else:
-                            blocks_info = list((getattr(self, '_geo_template_blocks_info_full', None) or self._geo_template_blocks_info) or [])
-                            if not blocks_info:
-                                raise RuntimeError('Не удалось найти блоки опытов в исходном файле.')
+                        blocks_info = list((getattr(self, '_geo_template_blocks_info_full', None) or self._geo_template_blocks_info) or [])
+                        if not blocks_info:
+                            raise RuntimeError('Не удалось найти блоки опытов в исходном файле.')
 
-                            geo_bytes = build_k2_geo_from_template(self.original_bytes, blocks_info, prepared)
-                            geo_path.write_bytes(geo_bytes)
+                        geo_bytes = build_k2_geo_from_template(self.original_bytes, blocks_info, prepared)
+                        geo_path.write_bytes(geo_bytes)
 
                         # DEBUG: сверка количества/номеров блоков в собранном GEO (ловим "воскресший первый опыт")
                         try:
