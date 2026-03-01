@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-from src.zondeditor.domain.models import TestData
+from src.zondeditor.domain.models import TestData, TestSeries, testdata_to_series
 
 
 class GxlParseError(ValueError):
@@ -35,6 +35,12 @@ def _to_int(text: str, default: int = 0) -> int:
     except Exception:
         return default
 
+
+
+def load_gxl(path: str | Path) -> list[TestSeries]:
+    """Load GXL file into unified CPT domain model (list[TestSeries])."""
+    tests, _meta = parse_gxl_file(path)
+    return [testdata_to_series(t) for t in tests]
 
 def parse_gxl_file(path: str | Path) -> tuple[list[TestData], list[dict]]:
     """Parse GeoExplorer GXL export into TestData list and key/value meta rows."""

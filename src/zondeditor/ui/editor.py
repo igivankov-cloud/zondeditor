@@ -34,9 +34,9 @@ except Exception:
     export_excel_file = None
 from src.zondeditor.export.credo_zip import export_credo_zip
 from src.zondeditor.export.gxl_export import export_gxl_generated
-from src.zondeditor.io.geo_reader import parse_geo_bytes, GeoParseError
-from src.zondeditor.io.gxl_reader import parse_gxl_file, GxlParseError
-from src.zondeditor.io.geo_writer import save_k2_geo_from_template, build_k2_geo_from_template
+from src.zondeditor.io.geo_reader import load_geo, parse_geo_bytes, GeoParseError
+from src.zondeditor.io.gxl_reader import load_gxl, parse_gxl_file, GxlParseError
+from src.zondeditor.io.geo_writer import save_geo_as, save_k2_geo_from_template, build_k2_geo_from_template
 from src.zondeditor.domain.models import TestData, GeoBlockInfo, TestFlags
 
 from src.zondeditor.ui.consts import *
@@ -1772,7 +1772,19 @@ class GeoCanvasEditor(tk.Tk):
 
                 try:
 
-                    tests_list, meta_rows = parse_gxl_file(self.geo_path)
+                    series_list = load_gxl(self.geo_path)
+                    tests_list = [TestData(
+                        tid=s.test_id, dt=s.dt,
+                        depth=[f"{r.depth_m:g}" for r in s.rows],
+                        qc=[str(int(r.qc_raw)) for r in s.rows],
+                        fs=[str(int(r.fs_raw)) for r in s.rows],
+                        incl=[str(int(r.u_raw)) for r in s.rows] if any(int(r.u_raw) != 0 for r in s.rows) else None,
+                        marker=getattr(s, "marker", ""),
+                        header_pos=getattr(s, "header_pos", ""),
+                        orig_id=getattr(s, "orig_id", None),
+                        block=getattr(s, "block", None),
+                    ) for s in series_list]
+                    meta_rows = []
                     self.loaded_path = str(self.geo_path)
                     self.is_gxl = True
                     self._geo_template_blocks_info = []
@@ -1849,7 +1861,19 @@ class GeoCanvasEditor(tk.Tk):
                 self.loaded_path = str(self.geo_path)
                 self.is_gxl = False
                 self.original_bytes = data
-                tests_list, meta_rows, self.geo_kind = parse_geo_bytes(data)
+                series_list = load_geo(self.geo_path)
+                tests_list = [TestData(
+                    tid=s.test_id, dt=s.dt,
+                    depth=[f"{r.depth_m:g}" for r in s.rows],
+                    qc=[str(int(r.qc_raw)) for r in s.rows],
+                    fs=[str(int(r.fs_raw)) for r in s.rows],
+                    incl=[str(int(r.u_raw)) for r in s.rows] if any(int(r.u_raw) != 0 for r in s.rows) else None,
+                    marker=getattr(s, "marker", ""),
+                    header_pos=getattr(s, "header_pos", ""),
+                    orig_id=getattr(s, "orig_id", None),
+                    block=getattr(s, "block", None),
+                ) for s in series_list]
+                _tests2, meta_rows, self.geo_kind = parse_geo_bytes(data)
                 # store template blocks (do not depend on current edited/deleted tests)
                 self._geo_template_blocks_info = [t.block for t in tests_list if getattr(t, 'block', None)]
                 self._geo_template_blocks_info_full = list(self._geo_template_blocks_info)
@@ -5855,9 +5879,12 @@ class GeoCanvasEditor(tk.Tk):
                 messagebox.showerror("Экспорт GEO", "Не найдены блоки опытов для шаблона GEO (block metadata отсутствуют).")
                 return
 
-            out_bytes = _rebuild_geo_from_template(self.original_bytes, blocks_info, prepared)
-            with open(out_file, 'wb') as f:
-                f.write(out_bytes)
+            save_geo_as(
+                out_file,
+                prepared,
+                source_bytes=self.original_bytes,
+                blocks_info=blocks_info,
+            )
 
             try:
                 self.status.set(f"Сохранено: {out_file} | опытов: {len(tests_list)}")
