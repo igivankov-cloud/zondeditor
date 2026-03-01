@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-HEADER_RE = re.compile(b"\xFF\xFF(?:\xFF\xFF)?(.)\x1E(\x0A|\x14)")
+HEADER_RE = re.compile(b"\xFF\xFF(.)\x1E\x0A")
 K4_SIG = b"\x01\x02\x03\xFF\xFF"
 
 
@@ -83,15 +83,15 @@ def _probe_k2(data: bytes) -> list[BlockDiag]:
     for i, m in enumerate(headers):
         start = m.start()
         end = headers[i + 1].start() if i + 1 < len(headers) else len(data)
-        id_off = start + (4 if data[start:start + 4] == b"\xFF\xFF\xFF\xFF" else 2)
+        id_off = start + 2
         marker_off = id_off + 2
         marker = data[marker_off] if marker_off < len(data) else None
 
         second_ff = data.find(b"\xFF\xFF", m.end(), end)
         data_off = second_ff + 2 if second_ff >= 0 else None
         data_len = (end - data_off) if data_off is not None else None
-        if data_len is not None:
-            data_len -= (data_len % 2)
+        if data_len is not None and data_len % 2 != 0:
+            data_len = None
 
         rows = (data_len // 2) if data_len is not None else None
 
@@ -167,9 +167,9 @@ def _probe_k4(data: bytes) -> list[BlockDiag]:
         sig_off = start + k if k >= 0 else None
         data_off = (sig_off + len(K4_SIG)) if sig_off is not None else None
         data_len = (end - data_off) if data_off is not None else None
+        if data_len is not None and data_len % 9 != 0:
+            data_len = None
         rows = (data_len // 9) if data_len is not None else None
-        if data_len is not None:
-            data_len = rows * 9
 
         first_rows: list[tuple[str, str, str, str]] = []
         if data_off is not None and rows is not None:
@@ -218,17 +218,35 @@ def _probe_k4(data: bytes) -> list[BlockDiag]:
     return blocks
 
 
+
+
+def _is_experiment(kind: str, block: BlockDiag) -> bool:
+    if block.data_len is None or block.rows is None:
+        return False
+    if kind == "K2":
+        return block.bytes_per_row == 2 and block.data_len % 2 == 0 and block.rows > 0
+    return (
+        any(name == "01 02 03 FF FF" for name, _ in block.signatures)
+        and (block.test_id is not None and 0 < block.test_id <= 300)
+        and block.bytes_per_row == 9
+        and block.data_len % 9 == 0
+        and block.rows >= 10
+    )
+
 def build_report(path: Path) -> str:
     data = path.read_bytes()
     file_size = len(data)
     kind = "K4" if _detect_k4(data) else "K2"
     blocks = _probe_k4(data) if kind == "K4" else _probe_k2(data)
+    experiments = [b for b in blocks if _is_experiment(kind, b)]
 
     lines: list[str] = []
     lines.append(f"GEO probe report for: {path}")
     lines.append(f"Detected kind: {kind}")
     lines.append(f"File size: {file_size} bytes")
     lines.append("")
+    lines.append(f"Blocks found: {len(blocks)}")
+    lines.append(f"Blocks accepted as tests: {len(experiments)}")
     lines.append("Blocks:")
     if not blocks:
         lines.append("  not found")

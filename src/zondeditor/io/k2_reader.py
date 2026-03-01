@@ -4,8 +4,8 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-# Matches GeoExplorer headers (FF FF <id> 1E 0A or 1E 14, sometimes with extra FF FF)
-HEADER_RE = re.compile(b"\xFF\xFF(?:\xFF\xFF)?(.)\x1E(\x0A|\x14)")
+# K2 fixture layout: FF FF <id> 1E 0A
+HEADER_RE = re.compile(b"\xFF\xFF(.)\x1E\x0A")
 
 def _bcd_to_int(b: int) -> int:
     hi, lo = (b >> 4) & 0xF, b & 0xF
@@ -44,10 +44,7 @@ def parse_geo_with_blocks(
     headers = []
     for m in HEADER_RE.finditer(data):
         hs = m.start()
-        # detect id position depending on optional extra FF FF
-        # pattern: FF FF [FF FF]? id 1E marker
-        # if there is extra FF FF, id byte is at hs+4, else hs+2
-        id_pos = hs + (4 if data[hs:hs+4] == b"\xFF\xFF\xFF\xFF" else 2)
+        id_pos = hs + 2
         test_id = data[id_pos]
         marker_pos = id_pos + 2  # id + 1E
         marker = data[marker_pos]
@@ -59,7 +56,7 @@ def parse_geo_with_blocks(
     if not headers:
         raise ValueError(
             "Не найдены заголовки опытов.\n"
-            "Ожидались маркеры: FF FF <id> 1E 0A или FF FF <id> 1E 14."
+            "Ожидался маркер: FF FF <id> 1E 0A."
         )
 
     tests_out: list[TestData] = []
@@ -72,8 +69,10 @@ def parse_geo_with_blocks(
         data_start = second + 2
         data_end = headers[i + 1][0] if i + 1 < len(headers) else len(data)
         raw_block = data[data_start:data_end]
-        payload_len = len(raw_block) - (len(raw_block) % 2)
-        payload = raw_block[:payload_len]
+        payload_len = len(raw_block)
+        if payload_len % 2 != 0:
+            continue
+        payload = raw_block
         pairs = [(payload[j], payload[j + 1]) for j in range(0, len(payload), 2)] if payload else []
 
         bid = GeoBlockInfoCls(
@@ -119,5 +118,4 @@ def parse_geo_with_blocks(
 
 
 # ---------------- UI helpers: validation + calendar ----------------
-
 
