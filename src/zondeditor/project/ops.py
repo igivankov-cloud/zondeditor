@@ -21,10 +21,13 @@ class Operation:
         }
 
 
-def op_cell_set(*, test_id: int, row: int, field: str, before: str, after: str, reason: str = "manual_edit", color: str = "purple") -> dict[str, Any]:
+def op_cell_set(*, test_id: int, row: int, field: str, before: str, after: str, reason: str = "manual_edit", color: str = "purple", depth_m: float | None = None) -> dict[str, Any]:
+    payload = {"testId": int(test_id), "row": int(row), "field": field, "before": before, "after": after}
+    if depth_m is not None:
+        payload["depthM"] = float(depth_m)
     return Operation(
         op_type="cell_set",
-        payload={"testId": int(test_id), "row": int(row), "field": field, "before": before, "after": after},
+        payload=payload,
         mark={"reason": reason, "color": color},
     ).to_dict()
 
@@ -38,8 +41,14 @@ def op_meta_change(*, object_name_before: str, object_name_after: str) -> dict[s
 
 
 def op_algo_fix_applied(*, changes: list[dict[str, Any]]) -> dict[str, Any]:
+    prepared_changes: list[dict[str, Any]] = []
+    for ch in (changes or []):
+        one = dict(ch or {})
+        if not isinstance(one.get("mark"), dict):
+            one["mark"] = {"reason": "algo_fix", "color": "green"}
+        prepared_changes.append(one)
     return Operation(
         op_type="algo_fix_applied",
-        payload={"changes": changes},
+        payload={"changes": prepared_changes},
         mark={"reason": "algo_fix", "color": "green"},
     ).to_dict()
