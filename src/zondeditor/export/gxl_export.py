@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable, Any, Optional
+import xml.etree.ElementTree as ET
 
 from src.zondeditor.export.selection import select_export_tests
 
@@ -119,5 +120,10 @@ def export_gxl_generated(
     out.append('  </object>\r\n')
     out.append('</exportfile>\r\n')
 
+    payload = ''.join(out).encode('cp1251', errors='replace')
+    if not payload.startswith(b'<?xml'):
+        raise ValueError('GXL payload must start with XML declaration')
+    ET.fromstring(payload.decode('cp1251', errors='replace'))
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_bytes(''.join(out).encode('cp1251', errors='replace'))
+    out_path.write_bytes(payload)

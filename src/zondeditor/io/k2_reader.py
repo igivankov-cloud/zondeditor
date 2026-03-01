@@ -71,6 +71,8 @@ def parse_geo_with_blocks(
             continue
         data_start = second + 2
         data_end = headers[i + 1][0] if i + 1 < len(headers) else len(data)
+        if data_end <= hs:
+            continue
         block = data[data_start:data_end]
         if len(block) < 2:
             pairs = []
@@ -88,6 +90,8 @@ def parse_geo_with_blocks(
             data_start=data_start,
             data_end=data_end,
             marker_byte=marker,
+            orig_id=int(test_id),
+            raw_block_bytes=bytes(data[hs:data_end]),
         )
 
         dt_str = _parse_datetime_bcd(data, dt_pos) or ""
@@ -119,5 +123,4 @@ def parse_geo_with_blocks(
 
 
 # ---------------- UI helpers: validation + calendar ----------------
-
 
