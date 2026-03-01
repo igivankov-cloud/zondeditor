@@ -11,7 +11,7 @@ def _show_blocking_message(title: str, text: str) -> None:
 
         root = tk.Tk()
         root.withdraw()
-        messagebox.showerror(title, text)
+        messagebox.showerror(title, text, parent=root)
         root.destroy()
     except Exception:
         print(f"{title}: {text}", file=sys.stderr)

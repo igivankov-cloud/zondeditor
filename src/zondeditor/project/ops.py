@@ -22,7 +22,7 @@ class Operation:
 
 
 def op_cell_set(*, test_id: int, row: int, field: str, before: str, after: str, reason: str = "manual_edit", color: str = "purple", depth_m: float | None = None) -> dict[str, Any]:
-    payload = {"testId": int(test_id), "row": int(row), "field": field, "before": before, "after": after}
+    payload = {"testId": int(test_id), "row": int(row), "field": field, "colKey": field, "before": before, "after": after}
     if depth_m is not None:
         payload["depthM"] = float(depth_m)
     return Operation(
@@ -51,4 +51,31 @@ def op_algo_fix_applied(*, changes: list[dict[str, Any]]) -> dict[str, Any]:
         op_type="algo_fix_applied",
         payload={"changes": prepared_changes},
         mark={"reason": "algo_fix", "color": "green"},
+    ).to_dict()
+
+
+def op_cells_marked(*, reason: str, color: str, cells: list[dict[str, Any]]) -> dict[str, Any]:
+    prepared_cells: list[dict[str, Any]] = []
+    for cell in (cells or []):
+        one = dict(cell or {})
+        try:
+            one["testId"] = int(one.get("testId"))
+        except Exception:
+            continue
+        try:
+            one["depthM"] = float(one.get("depthM"))
+        except Exception:
+            one.pop("depthM", None)
+        one["field"] = str(one.get("field") or one.get("colKey") or "").strip()
+        one["colKey"] = one["field"]
+        if not one["field"]:
+            continue
+        one["before"] = "" if one.get("before") is None else str(one.get("before"))
+        one["after"] = "" if one.get("after") is None else str(one.get("after"))
+        one["mark"] = {"reason": reason, "color": color}
+        prepared_cells.append(one)
+    return Operation(
+        op_type="cells_marked",
+        payload={"cells": prepared_cells},
+        mark={"reason": reason, "color": color},
     ).to_dict()
