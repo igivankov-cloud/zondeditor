@@ -25,6 +25,7 @@ python -m src.zondeditor.app
 ```bat
 python tools\selfcheck.py
 python tools\selfcheck_ui_handlers.py
+python tools\selfcheck_fixtures.py
 python tools\selfcheck_project_marks.py
 python tools\k2k4_selftest.py
 python tools\geo_roundtrip_selftest.py
@@ -81,7 +82,7 @@ ZondEditor.exe --init-license
 ## CI
 Workflow: `.github/workflows/ci.yml`
 - Триггеры: `push`/`pull_request` в `dev`
-- Проверки: `compileall`, `tools/selfcheck_ui_handlers.py`
+- Проверки: `compileall`, `tools/selfcheck_ui_handlers.py`, `tools/selfcheck_fixtures.py`
 - EXE в CI пока не собирается.
 
 ## Дополнительная документация

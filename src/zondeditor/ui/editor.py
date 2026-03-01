@@ -36,6 +36,7 @@ from src.zondeditor.export.credo_zip import export_credo_zip
 from src.zondeditor.export.gxl_export import export_gxl_generated
 from src.zondeditor.io.k2_reader import parse_geo_with_blocks
 from src.zondeditor.io.k4_reader import parse_k4_geo_strict, detect_geo_kind
+from src.zondeditor.io.gxl_reader import parse_gxl_file, GxlParseError
 from src.zondeditor.io.geo_writer import save_k2_geo_from_template, build_k2_geo_from_template
 from src.zondeditor.domain.models import TestData, GeoBlockInfo, TestFlags
 
@@ -1778,6 +1779,12 @@ class GeoCanvasEditor(tk.Tk):
                     self._geo_template_blocks_info = []
                     self._geo_template_blocks_info_full = []
                     self.original_bytes = None
+
+                except GxlParseError as e:
+
+                    messagebox.showerror("Неподдерживаемый GXL", str(e))
+
+                    return
 
                 except Exception as e:
 
@@ -4779,7 +4786,6 @@ class GeoCanvasEditor(tk.Tk):
     def export_credo_zip(self):
         """Export each test into two CSV (depth;qc_MPa and depth;fs_kPa) without headers, pack into ZIP.
         Naming: 'СЗ-<№> лоб.csv' and 'СЗ-<№> бок.csv'.
-        If issues detected, предлагает исправить и ПОКАЗЫВАЕТ изменения; экспорт нужно нажать повторно.
         """
         if not getattr(self, "tests", None):
             messagebox.showwarning("Нет данных", "Сначала нажми «Показать зондирования»")
@@ -4789,7 +4795,6 @@ class GeoCanvasEditor(tk.Tk):
             messagebox.showwarning('Нет данных', 'Нет зондирований для экспорта (все исключены).')
             return
 
-
         params = self._read_calc_params()
         if not params:
             return
@@ -4797,16 +4802,13 @@ class GeoCanvasEditor(tk.Tk):
         A_cone = _cm2_to_m2(area_cone_cm2)
         A_sleeve = _cm2_to_m2(area_sleeve_cm2)
 
-        # Раньше здесь было предупреждение «Найдены проблемы» и предложение исправлять.
-        # По просьбе — убрано: если пользователь нажал «Корректировка»,
-        # он сам контролирует изменения. Экспортируем без повторных диалогов.
-
         out_zip = filedialog.asksaveasfilename(
             title="Куда сохранить ZIP для CREDO",
             defaultextension=".zip",
             filetypes=[("ZIP архив", "*.zip")]
         )
         if not out_zip:
+            messagebox.showinfo("Экспорт CREDO", "Экспорт отменён: файл не выбран.")
             return
 
         def fmt_float_comma(x, nd=2):
@@ -4824,60 +4826,65 @@ class GeoCanvasEditor(tk.Tk):
 
         def safe_part(s):
             s = str(s)
-            return re.sub(r'[<>:"/\\|?*]+', "_", s)
+            return re.sub(r'[<>:"/\|?*]+', "_", s)
 
         tmp_dir = Path(out_zip).with_suffix("")
-        if tmp_dir.exists():
-            shutil.rmtree(tmp_dir)
-        tmp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            if tmp_dir.exists():
+                shutil.rmtree(tmp_dir)
+            tmp_dir.mkdir(parents=True, exist_ok=True)
 
-        created = []
-        for t in tests_exp:
-            tid = safe_part(getattr(t, "tid", ""))
-            rows_lob = []
-            rows_bok = []
-            depth_arr = getattr(t, "depth", [])
-            qc_arr = getattr(t, "qc", [])
-            fs_arr = getattr(t, "fs", [])
-            n = max(len(depth_arr), len(qc_arr), len(fs_arr))
-            for idx in range(n):
-                depth_val = _parse_depth_float(depth_arr[idx]) if idx < len(depth_arr) else None
-                if depth_val is None:
-                    continue  # удалённые строки не экспортируем
-                qc_del = _parse_cell_int(qc_arr[idx]) if idx < len(qc_arr) else None
-                fs_del = _parse_cell_int(fs_arr[idx]) if idx < len(fs_arr) else None
+            created = []
+            for t in tests_exp:
+                tid = safe_part(getattr(t, "tid", ""))
+                rows_lob = []
+                rows_bok = []
+                depth_arr = getattr(t, "depth", [])
+                qc_arr = getattr(t, "qc", [])
+                fs_arr = getattr(t, "fs", [])
+                n = max(len(depth_arr), len(qc_arr), len(fs_arr))
+                for idx in range(n):
+                    depth_val = _parse_depth_float(depth_arr[idx]) if idx < len(depth_arr) else None
+                    if depth_val is None:
+                        continue
+                    qc_del = _parse_cell_int(qc_arr[idx]) if idx < len(qc_arr) else None
+                    fs_del = _parse_cell_int(fs_arr[idx]) if idx < len(fs_arr) else None
 
-                qc_MPa = None
-                fs_kPa = None
-                if qc_del is not None and A_cone:
-                    F_cone_N = (qc_del / scale_div) * (fmax_cone_kn * 1000.0)
-                    qc_MPa = (F_cone_N / A_cone) / 1e6
-                if fs_del is not None and A_sleeve:
-                    F_sleeve_N = (fs_del / scale_div) * (fmax_sleeve_kn * 1000.0)
-                    fs_kPa = (F_sleeve_N / A_sleeve) / 1e3
+                    qc_MPa = None
+                    fs_kPa = None
+                    if qc_del is not None and A_cone:
+                        F_cone_N = (qc_del / scale_div) * (fmax_cone_kn * 1000.0)
+                        qc_MPa = (F_cone_N / A_cone) / 1e6
+                    if fs_del is not None and A_sleeve:
+                        F_sleeve_N = (fs_del / scale_div) * (fmax_sleeve_kn * 1000.0)
+                        fs_kPa = (F_sleeve_N / A_sleeve) / 1e3
 
-                d_str = fmt_depth(depth_val)
-                qc_str = "" if qc_MPa is None else fmt_float_comma(round(qc_MPa, 2), nd=2)
-                fs_str = "" if fs_kPa is None else str(int(round(fs_kPa, 0)))
-                rows_lob.append(f"{d_str};{qc_str}")
-                rows_bok.append(f"{d_str};{fs_str}")
+                    d_str = fmt_depth(depth_val)
+                    qc_str = "" if qc_MPa is None else fmt_float_comma(round(qc_MPa, 2), nd=2)
+                    fs_str = "" if fs_kPa is None else str(int(round(fs_kPa, 0)))
+                    rows_lob.append(f"{d_str};{qc_str}")
+                    rows_bok.append(f"{d_str};{fs_str}")
 
-            fn_lob = tmp_dir / f"СЗ-{tid} лоб.csv"
-            fn_bok = tmp_dir / f"СЗ-{tid} бок.csv"
-            fn_lob.write_text("\n".join(rows_lob) + ("\n" if rows_lob else ""), encoding="utf-8")
-            fn_bok.write_text("\n".join(rows_bok) + ("\n" if rows_bok else ""), encoding="utf-8")
-            created.extend([fn_lob, fn_bok])
+                fn_lob = tmp_dir / f"СЗ-{tid} лоб.csv"
+                fn_bok = tmp_dir / f"СЗ-{tid} бок.csv"
+                fn_lob.write_text("\n".join(rows_lob) + ("\n" if rows_lob else ""), encoding="utf-8")
+                fn_bok.write_text("\n".join(rows_bok) + ("\n" if rows_bok else ""), encoding="utf-8")
+                created.extend([fn_lob, fn_bok])
 
-        with zipfile.ZipFile(out_zip, "w", compression=zipfile.ZIP_DEFLATED) as z:
-            for f in created:
-                z.write(f, arcname=f.name)
+            with zipfile.ZipFile(out_zip, "w", compression=zipfile.ZIP_DEFLATED) as z:
+                for f in created:
+                    z.write(f, arcname=f.name)
 
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        self._credo_force_export = False
-
-
-
-
+            self._credo_force_export = False
+            messagebox.showinfo("Экспорт CREDO", f"ZIP сохранён:\n{out_zip}")
+        except Exception as e:
+            try:
+                self.usage_logger.exception("Ошибка экспорта CREDO ZIP: %s", e)
+            except Exception:
+                pass
+            messagebox.showerror("Ошибка экспорта CREDO", str(e))
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def _center_child(self, win: tk.Toplevel):
         try:
@@ -5225,7 +5232,21 @@ class GeoCanvasEditor(tk.Tk):
         self.object_code = self.object_name
         self.project_ops = list(project.ops or [])
         self.original_bytes = source_bytes
+        self.geo_path = Path(project.source.filename) if (project.source and project.source.filename) else None
+        self.loaded_path = str(self.geo_path) if self.geo_path else str(path)
+        src_kind = str((project.source.kind if project.source else "") or "").strip().upper()
+        self.is_gxl = (src_kind == "GXL")
+        src_ext = str((project.source.ext if project.source else "") or "").strip().lower()
         self._restore(project.state or {})
+        if src_ext in {"geo", "ge0"}:
+            self.geo_kind = "K2"
+            if any(getattr(t, "incl", None) not in (None, []) for t in (getattr(self, "tests", []) or [])):
+                self.geo_kind = "K4"
+        if not getattr(self, "_geo_template_blocks_info_full", None):
+            self._geo_template_blocks_info_full = [
+                t.block for t in (getattr(self, "tests", []) or []) if getattr(t, "block", None)
+            ]
+        self._geo_template_blocks_info = list(getattr(self, "_geo_template_blocks_info_full", []) or [])
         self._rebuild_marks_index()
         status_info = self._recompute_statuses_after_data_load(preview_mode=False)
         if hasattr(self, "scale_var"):
@@ -5771,10 +5792,10 @@ class GeoCanvasEditor(tk.Tk):
         """Экспорт GEO/GE0 только через "Сохранить как..." и без перезаписи источника."""
         try:
             if not getattr(self, 'tests', None):
-                messagebox.showwarning("Внимание", "Сначала загрузите файл GEO/GE0.")
+                messagebox.showwarning("Экспорт GEO", "Нет данных зондирования в памяти.")
                 return
             if not getattr(self, 'original_bytes', None):
-                messagebox.showwarning("Внимание", "Экспорт в GEO/GE0 доступен только после загрузки исходного GEO/GE0.")
+                messagebox.showwarning("Экспорт GEO", "Нет исходного шаблона GEO в проекте (source bytes отсутствуют).")
                 return
             if not self._validate_export_rows():
                 return
@@ -5827,7 +5848,9 @@ class GeoCanvasEditor(tk.Tk):
 
             blocks_info = list((getattr(self, '_geo_template_blocks_info_full', None) or self._geo_template_blocks_info) or [])
             if not blocks_info:
-                messagebox.showerror("Ошибка", "Не удалось найти блоки опытов в исходном GEO.")
+                blocks_info = [t.block for t in (getattr(self, 'tests', []) or []) if getattr(t, 'block', None)]
+            if not blocks_info:
+                messagebox.showerror("Экспорт GEO", "Не найдены блоки опытов для шаблона GEO (block metadata отсутствуют).")
                 return
 
             out_bytes = _rebuild_geo_from_template(self.original_bytes, blocks_info, prepared)
