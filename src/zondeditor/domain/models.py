@@ -47,6 +47,25 @@ class GeoBlockInfo:
     data_start: int      # absolute pos of first qc/fs byte
     data_end: int        # absolute pos of end of block (start of next header or EOF)
     marker_byte: int
+    # template-rebuild helpers
+    orig_id: int = 0
+    raw_block_bytes: bytes = b""
+
+    @property
+    def id_off(self) -> int:
+        return int(self.id_pos - self.header_start)
+
+    @property
+    def dt_off(self) -> int:
+        return int(self.dt_pos - self.header_start)
+
+    @property
+    def data_off(self) -> int:
+        return int(self.data_start - self.header_start)
+
+    @property
+    def data_len(self) -> int:
+        return int(self.data_end - self.data_start)
 
 
 @dataclass

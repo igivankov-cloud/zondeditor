@@ -1,10 +1,13 @@
 # src/zondeditor/io/geo_writer.py
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Any, Sequence
 
 from src.zondeditor.domain.models import TestData, TestSeries, series_to_testdata
+
+_BYTES_PER_ROW_K2 = 2
 
 
 def _to_byte(v: Any) -> int:
@@ -15,76 +18,174 @@ def _to_byte(v: Any) -> int:
     return max(0, min(255, x))
 
 
+def _to_int(v: Any, default: int = 0) -> int:
+    try:
+        return int(v)
+    except Exception:
+        return int(default)
+
+
 def _get_attr(obj: Any, name: str, default=None):
     if isinstance(obj, dict):
         return obj.get(name, default)
     return getattr(obj, name, default)
 
 
-def _build_qc_fs_payload(test: Any) -> bytes:
+def _bcd(val: int) -> int:
+    v = max(0, min(99, int(val)))
+    return ((v // 10) << 4) | (v % 10)
+
+
+def _parse_dt(dt_raw: str) -> datetime | None:
+    s = str(dt_raw or "").strip()
+    if not s:
+        return None
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%d.%m.%Y %H:%M:%S",
+        "%d.%m.%Y %H:%M",
+        "%Y-%m-%d",
+        "%d.%m.%Y",
+    ):
+        try:
+            return datetime.strptime(s, fmt)
+        except Exception:
+            continue
+    return None
+
+
+def _patch_dt_in_block(buf: bytearray, dt_off: int, dt_raw: str) -> None:
+    dt = _parse_dt(dt_raw)
+    if dt is None:
+        return
+    if dt_off < 0 or dt_off + 6 > len(buf):
+        return
+    buf[dt_off + 0] = _bcd(dt.second)
+    buf[dt_off + 1] = _bcd(dt.minute)
+    buf[dt_off + 2] = _bcd(dt.hour)
+    buf[dt_off + 3] = _bcd(dt.day)
+    buf[dt_off + 4] = _bcd(dt.month)
+    buf[dt_off + 5] = _bcd(dt.year % 100)
+
+
+def _collect_qc_fs_payload(test: Any, rows: int) -> bytes:
     qc = list(getattr(test, "qc", []) or [])
     fs = list(getattr(test, "fs", []) or [])
-    m = max(len(qc), len(fs))
     payload = bytearray()
-    for i in range(m):
+    for i in range(rows):
         payload.append(_to_byte(qc[i]) if i < len(qc) else 0)
         payload.append(_to_byte(fs[i]) if i < len(fs) else 0)
     return bytes(payload)
 
 
-def _block_span(block: Any) -> tuple[int, int, int, int]:
-    hs = int(_get_attr(block, "header_start", 0))
-    ds = int(_get_attr(block, "data_start", 0))
-    de = int(_get_attr(block, "data_end", 0))
-    ip = int(_get_attr(block, "id_pos", hs + 2))
-    return hs, ds, de, ip
+def _patch_id_markers_all(buf: bytearray, tid: int) -> None:
+    # FF FF [FF FF]? <id> 1E 0A|14
+    n = len(buf)
+    i = 0
+    while i + 4 < n:
+        if buf[i] == 0xFF and buf[i + 1] == 0xFF:
+            # with extra FFFF
+            if i + 6 < n and buf[i + 2] == 0xFF and buf[i + 3] == 0xFF and buf[i + 5] == 0x1E and buf[i + 6] in (0x0A, 0x14):
+                buf[i + 4] = tid
+                i += 7
+                continue
+            # normal
+            if buf[i + 3] == 0x1E and buf[i + 4] in (0x0A, 0x14):
+                buf[i + 2] = tid
+                i += 5
+                continue
+        i += 1
 
 
-def _match_template_blocks(original: bytes, blocks_info: Sequence[Any], prepared_tests: Sequence[Any]) -> list[tuple[Any, Any]]:
-    blocks_sorted = sorted(list(blocks_info or []), key=lambda b: _block_span(b)[0])
+def _extract_block_meta(original: bytes, block: Any) -> dict[str, Any]:
+    hs = _to_int(_get_attr(block, "header_start", 0))
+    he = _to_int(_get_attr(block, "header_end", hs))
+    ds = _to_int(_get_attr(block, "data_start", 0))
+    de = _to_int(_get_attr(block, "data_end", 0))
+    ip = _to_int(_get_attr(block, "id_pos", hs + 2))
+    dp = _to_int(_get_attr(block, "dt_pos", -1))
+    oid = _to_int(_get_attr(block, "orig_id", 0))
+
+    hs = max(0, min(len(original), hs))
+    he = max(hs, min(len(original), he))
+    ds = max(hs, min(len(original), ds))
+    de = max(ds, min(len(original), de))
+    ip = max(hs, min(len(original) - 1, ip)) if len(original) else 0
+
+    raw = _get_attr(block, "raw_block_bytes", b"") or b""
+    if not raw:
+        raw = bytes(original[hs:de])
+
+    return {
+        "header_start": hs,
+        "header_end": he,
+        "data_start": ds,
+        "data_end": de,
+        "id_pos": ip,
+        "dt_pos": dp,
+        "orig_id": oid,
+        "raw_block": bytes(raw),
+        "id_off": ip - hs,
+        "dt_off": dp - hs,
+        "data_off": ds - hs,
+        "data_len": de - ds,
+    }
+
+
+def _validate_block(meta: dict[str, Any], rows: int) -> None:
+    block = meta["raw_block"]
+    block_len = len(block)
+    id_off = _to_int(meta["id_off"], -1)
+    dt_off = _to_int(meta["dt_off"], -1)
+    data_off = _to_int(meta["data_off"], -1)
+    data_len = _to_int(meta["data_len"], -1)
+
+    if not (0 <= id_off < block_len):
+        raise ValueError(f"Invalid id_off={id_off} for block len={block_len}")
+    if dt_off >= 0 and not (0 <= dt_off < block_len):
+        raise ValueError(f"Invalid dt_off={dt_off} for block len={block_len}")
+    if not (0 < data_off < block_len):
+        raise ValueError(f"Invalid data_off={data_off} for block len={block_len}")
+    if not (0 < data_len and data_off + data_len <= block_len):
+        raise ValueError(f"Invalid data range off={data_off} len={data_len} block_len={block_len}")
+
+    expected = max(0, int(rows)) * _BYTES_PER_ROW_K2
+    if expected != data_len:
+        raise ValueError(
+            f"Invalid data_len={data_len} for rows={rows}; expected rows*{_BYTES_PER_ROW_K2}={expected}"
+        )
+
+
+def _match_template_blocks(original: bytes, blocks_info: Sequence[Any], prepared_tests: Sequence[Any]) -> list[tuple[dict[str, Any], Any]]:
+    blocks_sorted = sorted([_extract_block_meta(original, b) for b in (blocks_info or [])], key=lambda b: b["header_start"])
     if not blocks_sorted:
         return []
 
-    block_by_id: dict[int, list[Any]] = {}
+    id_to_block: dict[int, dict[str, Any]] = {}
     for b in blocks_sorted:
-        try:
-            _, _, _, ip = _block_span(b)
-            bid = int(original[ip]) if 0 <= ip < len(original) else 0
-        except Exception:
-            bid = 0
-        block_by_id.setdefault(bid, []).append(b)
+        oid = _to_int(b.get("orig_id", 0), 0)
+        if oid > 0 and oid not in id_to_block:
+            id_to_block[oid] = b
 
     used: set[int] = set()
-    matched: list[tuple[Any, Any]] = []
-
-    for idx, t in enumerate(prepared_tests, start=1):
+    out: list[tuple[dict[str, Any], Any]] = []
+    for idx, test in enumerate(prepared_tests, start=1):
         candidate = None
-
-        tb = getattr(t, "block", None)
-        if tb is not None:
-            ths = _get_attr(tb, "header_start", None)
-            if ths is not None:
-                for b in blocks_sorted:
-                    if id(b) in used:
-                        continue
-                    if int(_get_attr(b, "header_start", -1)) == int(ths):
-                        candidate = b
-                        break
+        orig_id = _to_int(getattr(test, "orig_id", 0), 0)
+        if orig_id > 0:
+            c = id_to_block.get(orig_id)
+            if c is not None and id(c) not in used:
+                candidate = c
 
         if candidate is None:
-            for key in (getattr(t, "orig_id", None), getattr(t, "tid", None), idx):
-                try:
-                    tid = int(key or 0)
-                except Exception:
-                    continue
-                if tid <= 0:
-                    continue
-                for b in block_by_id.get(tid, []):
-                    if id(b) not in used:
+            tb = getattr(test, "block", None)
+            if tb is not None:
+                ths = _to_int(_get_attr(tb, "header_start", -1), -1)
+                for b in blocks_sorted:
+                    if b["header_start"] == ths and id(b) not in used:
                         candidate = b
                         break
-                if candidate is not None:
-                    break
 
         if candidate is None:
             for b in blocks_sorted:
@@ -95,41 +196,44 @@ def _match_template_blocks(original: bytes, blocks_info: Sequence[Any], prepared
         if candidate is None:
             continue
         used.add(id(candidate))
-        matched.append((candidate, t))
-
-    return matched
+        out.append((candidate, test))
+    return out
 
 
 def build_k2_geo_from_template(original: bytes, blocks_info: Sequence[Any], prepared_tests: Sequence[Any]) -> bytes:
-    """Build K2 GEO using selected tests only (deleted/hidden tests are omitted)."""
+    """Build K2 GEO from immutable template bytes; patch only id/datetime/data region."""
     pairs = _match_template_blocks(original, blocks_info, prepared_tests)
     if not pairs:
         return bytes(original)
 
-    all_blocks = sorted(list(blocks_info or []), key=lambda b: _block_span(b)[0])
-    first_hs, *_ = _block_span(all_blocks[0])
-    *_, last_de, _ = _block_span(all_blocks[-1])
+    first_hs = min(p[0]["header_start"] for p in pairs)
+    last_de = max(p[0]["data_end"] for p in pairs)
+    chunks: list[bytes] = [bytes(original[:first_hs])]
 
-    chunks = [original[:first_hs]]
-    for block, test in pairs:
-        hs, ds, de, ip = _block_span(block)
-        hs = max(0, min(len(original), hs))
-        ds = max(hs, min(len(original), ds))
-        de = max(ds, min(len(original), de))
-        seg = bytearray(original[hs:de])
+    for meta, test in pairs:
+        raw = bytearray(meta["raw_block"])
 
-        rel_id = ip - hs
-        if 0 <= rel_id < len(seg):
-            tid = int(getattr(test, "tid", 0) or getattr(test, "test_id", 0) or 1)
-            seg[rel_id] = min(255, max(1, tid))
+        rows = max(len(list(getattr(test, "qc", []) or [])), len(list(getattr(test, "fs", []) or [])))
+        _validate_block(meta, rows)
 
-        rel_ds = ds - hs
-        rel_de = de - hs
-        payload = _build_qc_fs_payload(test)
-        seg = seg[:rel_ds] + payload + seg[rel_de:]
-        chunks.append(bytes(seg))
+        tid = _to_int(getattr(test, "tid", 0) or getattr(test, "test_id", 0) or 1, 1)
+        tid = max(1, min(255, tid))
 
-    chunks.append(original[max(0, min(len(original), last_de)):])
+        id_off = _to_int(meta["id_off"], -1)
+        raw[id_off] = tid
+        _patch_id_markers_all(raw, tid)
+
+        _patch_dt_in_block(raw, _to_int(meta["dt_off"], -1), str(getattr(test, "dt", "") or ""))
+
+        data_off = _to_int(meta["data_off"], 0)
+        data_len = _to_int(meta["data_len"], 0)
+        payload = _collect_qc_fs_payload(test, rows)
+        if len(payload) != data_len:
+            raise ValueError(f"Payload len={len(payload)} does not match template data_len={data_len}")
+        raw[data_off:data_off + data_len] = payload
+        chunks.append(bytes(raw))
+
+    chunks.append(bytes(original[last_de:]))
     return b"".join(chunks)
 
 
@@ -180,6 +284,7 @@ def save_k2_geo_from_template(path_out: Path, original: bytes, blocks_info: Sequ
 
 
 # Older writer API (roundtrip module) kept for tests
+
 def build_k2_geo_bytes(original: bytes, tests: Iterable[Any]) -> bytes:
     """Rebuild K2 GEO bytes by replacing qc/fs payload using test.block mapping."""
     items = []
