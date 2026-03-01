@@ -50,6 +50,10 @@ class GeoBlockInfo:
     data_len: int = 0    # length of decoded row payload only (without service tail)
     bytes_per_row: int = 2
     layout: str = "K2_QC_FS"
+    raw_block_start: int = 0  # absolute start of template block in original GEO bytes
+    raw_block_end: int = 0    # absolute end (exclusive) of template block in original GEO bytes
+    data_off: int = 0         # offset from raw_block_start to payload start
+    orig_test_id: int = 0
 
 
 @dataclass

@@ -87,6 +87,10 @@ def parse_geo_with_blocks(
             data_len=payload_len,
             bytes_per_row=2,
             layout="K2_QC_FS",
+            raw_block_start=hs,
+            raw_block_end=data_end,
+            data_off=max(0, data_start - hs),
+            orig_test_id=int(test_id),
         )
 
         dt_str = _parse_datetime_bcd(data, dt_pos) or ""
@@ -118,4 +122,3 @@ def parse_geo_with_blocks(
 
 
 # ---------------- UI helpers: validation + calendar ----------------
-
