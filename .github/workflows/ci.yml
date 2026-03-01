@@ -38,3 +38,6 @@ jobs:
 
       - name: Run fixtures import selfcheck
         run: python tools/selfcheck_fixtures_import.py
+
+      - name: Run ZIP GEO export selfcheck
+        run: python tools/selfcheck_zip_geo_export.py

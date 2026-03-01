@@ -33,6 +33,7 @@ try:
 except Exception:
     export_excel_file = None
 from src.zondeditor.export.credo_zip import export_credo_zip
+from src.zondeditor.export.geo_export import bundle_geo_filename, export_bundle_geo, prepare_geo_tests
 from src.zondeditor.export.gxl_export import export_gxl_generated
 from src.zondeditor.export.selection import select_export_tests
 from src.zondeditor.io.geo_reader import load_geo, parse_geo_bytes, GeoParseError
@@ -5540,59 +5541,37 @@ class GeoCanvasEditor(tk.Tk):
                 # В архив кладём GEO/GE0 ТОЛЬКО если исходно был открыт GEO/GE0 (есть original_bytes и путь).
                 if (not getattr(self, "is_gxl", False)) and getattr(self, "original_bytes", None) and getattr(self, "geo_path", None):
                     try:
-                        # Сохраняем с ИСХОДНЫМ именем файла (как просили), чтобы не путаться.
-                        geo_out_name = Path(self.geo_path).name
+                        geo_out_name = bundle_geo_filename(
+                            source_geo_path=getattr(self, "geo_path", None),
+                            fallback_name=obj,
+                        )
                         geo_path = td_path / geo_out_name
-                        # Подготовка данных как в save_geo
                         tests_list = tests_exp
-                        prepared = []
-                        for t in tests_list:
-                            try:
-                                d = list(getattr(t, "depth", []) or [])
-                                qc = list(getattr(t, "qc", []) or [])
-                                fs = list(getattr(t, "fs", []) or [])
-                                rows = []
-                                n = min(len(d), len(qc), len(fs))
-                                for k in range(n):
-                                    ds = str(d[k]).strip()
-                                    if ds == "":
-                                        continue
-                                    rows.append((d[k], qc[k], fs[k]))
-                                d2 = [r[0] for r in rows]
-                                qc2 = [r[1] for r in rows]
-                                fs2 = [r[2] for r in rows]
-                                prepared.append(TestData(
-                                    tid=int(getattr(t, "tid", 0) or 0),
-                                    dt=str(getattr(t, "dt", "") or ""),
-                                    depth=d2, qc=qc2, fs=fs2,
-                                    marker=str(getattr(t, "marker", "") or ""),
-                                    header_pos=str(getattr(t, "header_pos", "") or ""),
-                                    orig_id=getattr(t, "orig_id", None),
-                                    block=getattr(t, "block", None),
-                                ))
-                            except Exception:
-                                prepared.append(t)
-
 
                         # --- GEO export safety: use ONLY tests_list (respect delete/copy/export checkbox) ---
                         try:
                             _exp_ids = [int(getattr(tt, 'tid', 0) or 0) for tt in tests_list]
                             _exp_ids = [x for x in _exp_ids if x > 0]
                             _exp_set = set(_exp_ids)
-                            prepared = [pp for pp in prepared if int(getattr(pp, 'tid', 0) or 0) in _exp_set]
+                            tests_list = [pp for pp in tests_list if int(getattr(pp, 'tid', 0) or 0) in _exp_set]
                             _order = {tid: i for i, tid in enumerate(_exp_ids)}
-                            prepared.sort(key=lambda pp: _order.get(int(getattr(pp, 'tid', 0) or 0), 10**9))
+                            tests_list.sort(key=lambda pp: _order.get(int(getattr(pp, 'tid', 0) or 0), 10**9))
                         except Exception:
                             pass
                         blocks_info = list((getattr(self, '_geo_template_blocks_info_full', None) or self._geo_template_blocks_info) or [])
                         if not blocks_info:
                             raise RuntimeError('Не удалось найти блоки опытов в исходном файле.')
 
-                        geo_bytes = build_k2_geo_from_template(self.original_bytes, blocks_info, prepared)
-                        geo_path.write_bytes(geo_bytes)
+                        export_bundle_geo(
+                            geo_path,
+                            tests=tests_list,
+                            source_bytes=self.original_bytes,
+                            blocks_info=blocks_info,
+                        )
 
                         # DEBUG: сверка количества/номеров блоков в собранном GEO (ловим "воскресший первый опыт")
                         try:
+                            geo_bytes = geo_path.read_bytes()
                             _pos = [m.start() for m in re.finditer(b'\xFF\xFF.\x1E\x0A', geo_bytes)]
                             _ids = [geo_bytes[p+2] for p in _pos]
                             _exp = [int(getattr(tt, 'tid', 0) or 0) for tt in tests_list]
@@ -5603,7 +5582,7 @@ class GeoCanvasEditor(tk.Tk):
                                 f"expected_n={len(_exp)} actual_n={len(_ids)}\n" +
                                 "tests_current_ids=" + ",".join(map(str, [int(getattr(tt,'tid',0) or 0) for tt in (self.tests or [])])) + "\n" +
                                 "export_enabled_ids=" + ",".join(map(str, [int(getattr(tt,'tid',0) or 0) for tt in tests_list])) + "\n" +
-                                "prepared_ids=" + ",".join(map(str, [int(getattr(tt,'tid',0) or 0) for tt in (prepared or [])])) + "\n" +
+                                "prepared_ids=" + ",".join(map(str, [int(getattr(tt,'tid',0) or 0) for tt in (tests_list or [])])) + "\n" +
                                 f"blocks_info_n={len(blocks_info)} using_full_template={'1' if bool(getattr(self,'_geo_template_blocks_info_full',[])) else '0'}\n",
                                 encoding="utf-8"
                             )
@@ -5859,32 +5838,7 @@ class GeoCanvasEditor(tk.Tk):
                 return
 
             tests_list = [self._normalize_test_lengths(t) for t in tests_exp]
-            prepared = []
-            for t in tests_list:
-                try:
-                    d = list(getattr(t, "depth", []) or [])
-                    qc = list(getattr(t, "qc", []) or [])
-                    fs = list(getattr(t, "fs", []) or [])
-                    rows = []
-                    n = min(len(d), len(qc), len(fs))
-                    for k in range(n):
-                        ds = str(d[k]).strip()
-                        if ds == "":
-                            continue
-                        rows.append((d[k], qc[k], fs[k]))
-                    prepared.append(TestData(
-                        tid=int(getattr(t, "tid", 0) or 0),
-                        dt=str(getattr(t, "dt", "") or ""),
-                        depth=[r[0] for r in rows],
-                        qc=[r[1] for r in rows],
-                        fs=[r[2] for r in rows],
-                        marker=str(getattr(t, "marker", "") or ""),
-                        header_pos=str(getattr(t, "header_pos", "") or ""),
-                        orig_id=getattr(t, "orig_id", None),
-                        block=getattr(t, "block", None),
-                    ))
-                except Exception:
-                    prepared.append(t)
+            prepared = prepare_geo_tests(tests_list)
 
             blocks_info = list((getattr(self, '_geo_template_blocks_info_full', None) or self._geo_template_blocks_info) or [])
             if not blocks_info:
