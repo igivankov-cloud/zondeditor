@@ -54,7 +54,7 @@ class RibbonView(ttk.Frame):
 
         project = ttk.LabelFrame(tab, text="Проект", padding=6)
         project.pack(side="left", fill="y", padx=4)
-        self._add_btn(project, "new_project", "Новый проект…", "Создать новый проект")
+        self._add_btn(project, "new_project", "Создать проект…", "Создать новый проект")
         self._add_btn(project, "open_project", "Открыть проект…", "Открыть *.zproj")
         self._add_btn(project, "save_project", "Сохранить проект", "Сохранить *.zproj")
         self._add_btn(project, "save_project_as", "Сохранить проект как…", "Сохранить *.zproj как новый")
