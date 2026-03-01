@@ -12,6 +12,7 @@ import re
 import os
 import sys
 import math
+import copy
 import csv
 import json
 import time
@@ -337,7 +338,13 @@ class GeoCanvasEditor(tk.Tk):
                 }
         except Exception:
             flags_snap = {}
-        return {"tests": tests_snap, "flags": flags_snap, "step_m": float(getattr(self, "step_m", 0.05) or 0.05), "depth0_by_tid": dict(getattr(self, "depth0_by_tid", {}) or {})}
+        return {
+            "tests": tests_snap,
+            "flags": flags_snap,
+            "step_m": float(getattr(self, "step_m", 0.05) or 0.05),
+            "depth0_by_tid": dict(getattr(self, "depth0_by_tid", {}) or {}),
+            "project_ops": copy.deepcopy(list(getattr(self, "project_ops", []) or [])),
+        }
 
     def _restore(self, snap: dict):
         self.tests = []
@@ -354,6 +361,11 @@ class GeoCanvasEditor(tk.Tk):
             self.depth0_by_tid = dict((snap.get("depth0_by_tid") or {}))
         except Exception:
             self.depth0_by_tid = {}
+
+        try:
+            self.project_ops = copy.deepcopy(list(snap.get("project_ops", []) or []))
+        except Exception:
+            self.project_ops = []
 
         for d in snap.get("tests", []):
             blk = None
@@ -410,7 +422,6 @@ class GeoCanvasEditor(tk.Tk):
                 pass
 
         self._end_edit(commit=False)
-        self._redraw()
 
         # После успешной корректировки — синяя строка в подвале
         try:
@@ -432,6 +443,11 @@ class GeoCanvasEditor(tk.Tk):
 
 
 
+
+    def _refresh_after_undo_redo(self) -> None:
+        """Bring UI to a fully consistent state after undo/redo."""
+        self._rebuild_marks_index()
+        self._recompute_statuses_after_data_load(preview_mode=False)
 
     def undo(self):
         # Если сейчас редактируется ячейка — завершаем редактирование и только потом делаем UNDO
@@ -455,7 +471,7 @@ class GeoCanvasEditor(tk.Tk):
         # не затираем статус текстом Undo
         self._footer_force_live = True
         try:
-            self._redraw()
+            self._refresh_after_undo_redo()
         except Exception:
             pass
         # После Undo — вернуть красную строку (или серую, если проблем нет)
@@ -487,7 +503,7 @@ class GeoCanvasEditor(tk.Tk):
         # не затираем статус текстом Redo
         self._footer_force_live = True
         try:
-            self._redraw()
+            self._refresh_after_undo_redo()
         except Exception:
             pass
         # После Redo — показать актуальную строку по текущему состоянию

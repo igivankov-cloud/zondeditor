@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import sys
 
+from src.zondeditor.ui.tk_guard import install_tk_window_guard
+
 
 def _show_blocking_message(title: str, text: str) -> None:
     try:
@@ -19,6 +21,9 @@ def _show_blocking_message(title: str, text: str) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     argv = list(sys.argv[1:] if argv is None else argv)
+
+    # Optional dev diagnostics: logs every Tk/Toplevel window creation/close with stack traces.
+    install_tk_window_guard()
 
     # --- Win11-like theme (safe) ---
     try:
