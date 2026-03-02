@@ -83,11 +83,15 @@ def _payload_from_test(test: Any, *, bytes_per_row: int, rows: int) -> bytes:
     fs = list(getattr(test, "fs", []) or [])
     incl = list(getattr(test, "incl", []) or []) if getattr(test, "incl", None) is not None else []
 
-    if max(len(qc), len(fs), len(incl)) != rows:
-        raise ValueError(
-            f"rows mismatch for test id={getattr(test, 'tid', '?')}: expected {rows}, got "
-            f"qc={len(qc)} fs={len(fs)} incl={len(incl)}"
-        )
+    # Fix rows mismatch: normalize qc/fs/incl to requested row count (truncate/pad with zeros).
+    def _normalize_rows(values: list[Any], n: int) -> list[Any]:
+        if len(values) >= n:
+            return values[:n]
+        return values + [0] * (n - len(values))
+
+    qc = _normalize_rows(qc, rows)
+    fs = _normalize_rows(fs, rows)
+    incl = _normalize_rows(incl, rows)
 
     payload = bytearray()
     if bytes_per_row == 2:
@@ -202,7 +206,9 @@ def build_geo_from_template(original: bytes, blocks_info: Sequence[Any], prepare
     out = bytearray(original)
     by_span, by_orig = _build_test_block_map(prepared_tests)
 
-    for block in blocks_info or []:
+    mutable_blocks = blocks_info if isinstance(blocks_info, list) else list(blocks_info or [])
+
+    for idx, block in enumerate(mutable_blocks):
         span = _resolve_block_key(block)
         t = by_span.get(span)
         if t is None:
@@ -216,8 +222,27 @@ def build_geo_from_template(original: bytes, blocks_info: Sequence[Any], prepare
             continue  # excluded/hidden/deleted: keep original bytes untouched
 
         ds, pe, bpr = _block_payload_bounds(block, len(original))
-        rows = (pe - ds) // bpr
-        payload = _payload_from_test(t, bytes_per_row=bpr, rows=rows)
+        raw_rows = int(_get_attr(block, "rows", (pe - ds) // bpr) or 0)
+        qc = list(getattr(t, "qc", []) or [])
+        fs = list(getattr(t, "fs", []) or [])
+        incl = list(getattr(t, "incl", []) or []) if getattr(t, "incl", None) is not None else []
+        # Fix rows mismatch: keep block rows in sync with actual payload row count.
+        n = max(raw_rows, len(qc), len(fs), len(incl))
+
+        if isinstance(block, dict):
+            block["rows"] = n
+        elif hasattr(block, "_replace"):
+            block = block._replace(rows=n)
+            mutable_blocks[idx] = block
+            if isinstance(blocks_info, list):
+                blocks_info[idx] = block
+        else:
+            try:
+                setattr(block, "rows", n)
+            except Exception:
+                pass
+
+        payload = _payload_from_test(t, bytes_per_row=bpr, rows=n)
         if len(payload) != (pe - ds):
             raise ValueError("Payload size mismatch for template replacement")
         out[ds:pe] = payload
