@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -128,6 +129,12 @@ def _decode_payload_values(payload: bytes, bytes_per_row: int) -> tuple[list[int
     raise ValueError(f"Unsupported bytes_per_row: {bytes_per_row}")
 
 
+@dataclass(frozen=True)
+class GeoBuildResult:
+    payload: bytes
+    diff_count: int
+
+
 def _is_no_change_export(original: bytes, blocks_info: Sequence[Any], prepared_tests: Sequence[Any]) -> bool:
     if len(prepared_tests) != len(list(blocks_info or [])):
         return False
@@ -218,6 +225,16 @@ def build_geo_from_template(original: bytes, blocks_info: Sequence[Any], prepare
     return bytes(out)
 
 
+def build_geo_from_template_with_diff(
+    original: bytes,
+    blocks_info: Sequence[Any],
+    prepared_tests: Sequence[Any],
+) -> GeoBuildResult:
+    payload = build_geo_from_template(original, blocks_info, prepared_tests)
+    diff_count = sum(1 for a, b in zip(original, payload) if a != b)
+    return GeoBuildResult(payload=payload, diff_count=diff_count)
+
+
 def build_k2_geo_from_template(original: bytes, blocks_info: Sequence[Any], prepared_tests: Sequence[Any]) -> bytes:
     return build_geo_from_template(original, blocks_info, prepared_tests)
 
@@ -241,8 +258,8 @@ def save_geo_as(
         out_path.write_bytes(source_bytes)
         return
 
-    payload = build_geo_from_template(source_bytes, blocks_info, prepared)
-    out_path.write_bytes(payload)
+    result = build_geo_from_template_with_diff(source_bytes, blocks_info, prepared)
+    out_path.write_bytes(result.payload if result.diff_count > 0 else source_bytes)
 
 
 def save_k2_geo_from_template(path_out: Path, original: bytes, blocks_info: Sequence[Any], prepared_tests: Sequence[Any]) -> None:

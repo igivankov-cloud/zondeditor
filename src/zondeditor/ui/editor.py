@@ -33,12 +33,16 @@ try:
 except Exception:
     export_excel_file = None
 from src.zondeditor.export.credo_zip import export_credo_zip
-from src.zondeditor.export.geo_export import bundle_geo_filename, export_bundle_geo, prepare_geo_tests
+from src.zondeditor.export.geo_export import bundle_geo_filename, prepare_geo_tests
 from src.zondeditor.export.gxl_export import export_gxl_generated
 from src.zondeditor.export.selection import select_export_tests
 from src.zondeditor.io.geo_reader import load_geo, parse_geo_bytes, GeoParseError
 from src.zondeditor.io.gxl_reader import load_gxl, parse_gxl_file, GxlParseError
-from src.zondeditor.io.geo_writer import save_geo_as, save_k2_geo_from_template, build_k2_geo_from_template
+from src.zondeditor.io.geo_writer import (
+    build_geo_from_template_with_diff,
+    save_k2_geo_from_template,
+    build_k2_geo_from_template,
+)
 from src.zondeditor.domain.models import TestData, GeoBlockInfo, TestFlags
 
 from src.zondeditor.ui.consts import *
@@ -5562,12 +5566,15 @@ class GeoCanvasEditor(tk.Tk):
                         if not blocks_info:
                             raise RuntimeError('Не удалось найти блоки опытов в исходном файле.')
 
-                        export_bundle_geo(
-                            geo_path,
-                            tests=tests_list,
-                            source_bytes=self.original_bytes,
-                            blocks_info=blocks_info,
-                        )
+                        prepared_bundle = prepare_geo_tests(tests_list)
+                        result_bundle = build_geo_from_template_with_diff(self.original_bytes, blocks_info, prepared_bundle)
+                        if int(result_bundle.diff_count) == 0:
+                            dbg = self._collect_geo_change_debug_info(tests_list)
+                            raise RuntimeError(
+                                "Экспорт с изменениями не содержит изменений (diff=0). "
+                                f"changed_cells={dbg['changed_cells']} tests_with_marks={dbg['tests_with_marks']}"
+                            )
+                        geo_path.write_bytes(result_bundle.payload)
 
                         # DEBUG: сверка количества/номеров блоков в собранном GEO (ловим "воскресший первый опыт")
                         try:
@@ -5806,6 +5813,27 @@ class GeoCanvasEditor(tk.Tk):
         """Alias для совместимости UI: экспорт GXL всегда через "Сохранить как..."."""
         return self.export_gxl_as()
 
+    def _collect_geo_change_debug_info(self, tests: list[TestData]) -> dict:
+        changed_cells = 0
+        tests_with_marks: list[int] = []
+        tests_with_data: list[int] = []
+        for t in (tests or []):
+            tid = int(getattr(t, "tid", 0) or 0)
+            if (getattr(t, "qc", None) or getattr(t, "fs", None)):
+                tests_with_data.append(tid)
+            fl = (getattr(self, "flags", {}) or {}).get(tid)
+            if not fl:
+                continue
+            marks = set(getattr(fl, "user_cells", set()) or set())
+            if marks:
+                tests_with_marks.append(tid)
+                changed_cells += len(marks)
+        return {
+            "changed_cells": changed_cells,
+            "tests_with_marks": tests_with_marks,
+            "tests_with_data": tests_with_data,
+        }
+
     def export_geo_as(self):
         """Экспорт GEO/GE0 только через "Сохранить как..." и без перезаписи источника."""
         try:
@@ -5847,15 +5875,21 @@ class GeoCanvasEditor(tk.Tk):
                 messagebox.showerror("Экспорт GEO", "Не найдены блоки опытов для шаблона GEO (block metadata отсутствуют).")
                 return
 
-            save_geo_as(
-                out_file,
-                prepared,
-                source_bytes=self.original_bytes,
-                blocks_info=blocks_info,
-            )
+            result = build_geo_from_template_with_diff(self.original_bytes, blocks_info, prepared)
+            if int(result.diff_count) == 0:
+                dbg = self._collect_geo_change_debug_info(tests_list)
+                print(
+                    "[GEO_EXPORT_NOOP] "
+                    f"diff_count=0 changed_cells={dbg['changed_cells']} "
+                    f"tests_with_marks={dbg['tests_with_marks']} tests_with_data={dbg['tests_with_data']}"
+                )
+                messagebox.showwarning("Экспорт GEO", "Экспорт с изменениями не содержит изменений (diff=0).")
+                return
+
+            Path(out_file).write_bytes(result.payload)
 
             try:
-                self.status.set(f"Сохранено: {out_file} | опытов: {len(tests_list)}")
+                self.status.set(f"Сохранено: {out_file} | опытов: {len(tests_list)} | diff: {result.diff_count}")
             except Exception:
                 pass
         except Exception:
