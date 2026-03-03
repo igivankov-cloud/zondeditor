@@ -178,7 +178,10 @@ class GeoCanvasEditor(tk.Tk):
         self.pad_x = 8
         self.pad_y = 8
         self.show_graphs = False
+        self.compact_1m = False
+        self.expanded_meters: set[int] = set()
         self._graph_redraw_after_id = None
+        self._rebuild_redraw_after_id = None
         self._active_test_idx: int | None = None
         self.graph_qc_max_mpa: float = 30.0
         self.graph_fs_max_kpa: float = 500.0
@@ -320,6 +323,10 @@ class GeoCanvasEditor(tk.Tk):
             self._grid_step = None
             self._grid_row_maps = {}
             self._grid_start_rows = {}
+            self._grid_units = []
+            self._grid_meter_rows = {}
+            self._grid_base = []
+            self._grid_base_row_maps = {}
             return
 
         grid, grid_step, row_maps, start_rows = self._compute_depth_grid()
@@ -329,10 +336,48 @@ class GeoCanvasEditor(tk.Tk):
             row_maps = {ti: {r: r for r in range(len(getattr(self.tests[ti], "qc", []) or []))} for ti in range(len(self.tests))}
             start_rows = {ti: 0 for ti in range(len(self.tests))}
 
-        self._grid = grid
+        view_rows = []
+        meter_rows: dict[int, int] = {}
+        if bool(getattr(self, "compact_1m", False)) and grid:
+            gmin = min((g for g in grid if g is not None), default=None)
+            gmax = max((g for g in grid if g is not None), default=None)
+            if gmin is not None and gmax is not None:
+                meter_start = int(math.floor(float(gmin)))
+                meter_end = int(math.ceil(float(gmax)))
+                for m in range(meter_start, meter_end):
+                    g_rows = [ri for ri, dv in enumerate(grid) if dv is not None and (m <= float(dv) < (m + 1))]
+                    if not g_rows:
+                        continue
+                    if m in getattr(self, "expanded_meters", set()):
+                        for gi in g_rows:
+                            view_rows.append(("row", gi))
+                    else:
+                        disp_r = len(view_rows)
+                        view_rows.append(("meter", m))
+                        meter_rows[disp_r] = m
+
+        if not view_rows:
+            view_rows = [("row", r) for r in range(len(grid))]
+
+        disp_maps = {}
+        disp_start_rows = {}
+        for ti in range(len(self.tests)):
+            base = row_maps.get(ti, {}) or {}
+            dmap = {}
+            for disp_r, unit in enumerate(view_rows):
+                if unit[0] == "row":
+                    dmap[disp_r] = base.get(unit[1])
+            disp_maps[ti] = dmap
+            disp_start_rows[ti] = next((dr for dr, di in dmap.items() if di is not None), 0)
+
+        self._grid = [None] * len(view_rows)
         self._grid_step = grid_step
-        self._grid_row_maps = row_maps
-        self._grid_start_rows = start_rows
+        self._grid_row_maps = disp_maps
+        self._grid_start_rows = disp_start_rows
+        self._grid_units = view_rows
+        self._grid_meter_rows = meter_rows
+        self._grid_base = grid
+        self._grid_base_row_maps = row_maps
 
     def _snapshot(self) -> dict:
         """Снимок состояния для Undo/Redo: данные + раскраска."""
@@ -574,6 +619,40 @@ class GeoCanvasEditor(tk.Tk):
     def _toggle_show_graphs_from_ui(self):
         self._toggle_show_graphs(bool(getattr(self, "_show_graphs_var", None).get() if getattr(self, "_show_graphs_var", None) is not None else False))
 
+    def _schedule_rebuild_redraw(self):
+        prev = getattr(self, "_rebuild_redraw_after_id", None)
+        if prev is not None:
+            try:
+                self.after_cancel(prev)
+            except Exception:
+                pass
+        self._rebuild_redraw_after_id = self.after(60, self._rebuild_redraw_now)
+
+    def _rebuild_redraw_now(self):
+        self._rebuild_redraw_after_id = None
+        self._build_grid()
+        self._redraw()
+        self.schedule_graph_redraw()
+
+    def _toggle_compact_1m(self, value: bool | None = None):
+        if value is None:
+            value = not bool(getattr(self, "compact_1m", False))
+        self.compact_1m = bool(value)
+        try:
+            if getattr(self, "_compact_1m_var", None) is not None and bool(self._compact_1m_var.get()) != self.compact_1m:
+                self._compact_1m_var.set(self.compact_1m)
+        except Exception:
+            pass
+        try:
+            if getattr(self, "ribbon_view", None):
+                self.ribbon_view.set_compact_1m(self.compact_1m)
+        except Exception:
+            pass
+        self._schedule_rebuild_redraw()
+
+    def _toggle_compact_1m_from_ui(self):
+        self._toggle_compact_1m(bool(getattr(self, "_compact_1m_var", None).get() if getattr(self, "_compact_1m_var", None) is not None else False))
+
     def _build_ui(self):
         self.ribbon_view = None
         # ========= LEGACY TOP BAR =========
@@ -667,7 +746,11 @@ class GeoCanvasEditor(tk.Tk):
         graphs_chk = ttk.Checkbutton(btns, text="Графики", variable=self._show_graphs_var, command=self._toggle_show_graphs_from_ui)
         graphs_chk.grid(row=0, column=4, padx=6)
         ToolTip(graphs_chk, "Показывать графики")
-        make_btn(btns, "➕", "Добавить зондирование", self.add_test).grid(row=0, column=5, padx=4)
+        self._compact_1m_var = tk.BooleanVar(master=self, value=bool(getattr(self, "compact_1m", False)))
+        compact_chk = ttk.Checkbutton(btns, text="Свернуть 1 м", variable=self._compact_1m_var, command=self._toggle_compact_1m_from_ui)
+        compact_chk.grid(row=0, column=5, padx=6)
+        ToolTip(compact_chk, "Свернуть таблицу/графики в интервалы 1 м")
+        make_btn(btns, "➕", "Добавить зондирование", self.add_test).grid(row=0, column=6, padx=4)
 
         # Right: calc params
         right = ttk.Frame(ribbon)
@@ -729,6 +812,7 @@ class GeoCanvasEditor(tk.Tk):
                 "fix_algo": self.fix_by_algorithm,
                 "reduce_step": self.convert_10_to_5,
                 "toggle_graphs": self._toggle_show_graphs,
+                "toggle_compact_1m": self._toggle_compact_1m,
                 "apply_calc": lambda: self._redraw(),
                 "k2k4_30": lambda: messagebox.showinfo("К2→К4", "Режим 30 МПа будет добавлен в следующем шаге."),
                 "k2k4_50": lambda: messagebox.showinfo("К2→К4", "Режим 50 МПа будет добавлен в следующем шаге."),
@@ -737,6 +821,7 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view.pack(side="top", fill="x", before=ribbon)
             self.ribbon_view.set_object_name(self.object_name)
             self.ribbon_view.set_show_graphs(bool(getattr(self, "show_graphs", False)))
+            self.ribbon_view.set_compact_1m(bool(getattr(self, "compact_1m", False)))
             ribbon.pack_forget()
         # ========= Main canvas (fixed header) =========
         mid = ttk.Frame(self)
@@ -3111,7 +3196,7 @@ class GeoCanvasEditor(tk.Tk):
             depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
         return float(depth0 + (idx * step))
 
-    def _draw_graph_lines_for_test(self, ti: int, rect, depths, qc_mpa, fs_kpa, qmax: float, fmax: float):
+    def _draw_graph_lines_for_test(self, ti: int, rect, y_points, qc_mpa, fs_kpa, qmax: float, fmax: float):
         x0, x1, y0, y1 = rect
         tag_axes = ("graph_axes", f"graph_axes_{ti}")
         tag_qc = ("graph_qc", f"graph_qc_{ti}")
@@ -3119,14 +3204,9 @@ class GeoCanvasEditor(tk.Tk):
         tag_nodata = ("graph_nodata", f"graph_nodata_{ti}")
         self.canvas.create_rectangle(x0, y0, x1, y1, fill="#fbfdff", outline=GUI_GRID, tags=tag_axes)
 
-        if not depths:
+        if not y_points:
             self.canvas.create_text((x0 + x1) / 2, (y0 + y1) / 2, text="нет данных", fill="#666", font=("Segoe UI", 8), tags=tag_nodata)
             return
-
-        dmin = min(depths)
-        dmax = max(depths)
-        if dmax <= dmin:
-            dmax = dmin + 0.1
         qmax = max(float(qmax), 0.1)
         fmax = max(float(fmax), 1.0)
 
@@ -3139,8 +3219,7 @@ class GeoCanvasEditor(tk.Tk):
 
         qc_pts = []
         fs_pts = []
-        for dv, qv, fv in zip(depths, qc_mpa, fs_kpa):
-            yy = y0 + ((dv - dmin) / (dmax - dmin)) * (y1 - y0)
+        for yy, qv, fv in zip(y_points, qc_mpa, fs_kpa):
             if yy < y0 - 1e-6 or yy > y1 + 1e-6:
                 continue
             qc_pts.extend([_sx(qv, qmax), yy])
@@ -3168,55 +3247,59 @@ class GeoCanvasEditor(tk.Tk):
                 continue
             x0, x1, y0, y1 = rect
             t = self.tests[ti]
-            last_idx = self._test_last_data_index(t)
-            if last_idx is None:
-                self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
-                self._draw_graph_lines_for_test(ti, (x0, x1, y0, y1), [], [], [], self.graph_qc_max_mpa, self.graph_fs_max_kpa)
-                continue
 
-            row_map = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {}) or {}
-            data_to_grid = {di: gi for gi, di in row_map.items()}
-            first_gi = data_to_grid.get(0)
-            last_gi = data_to_grid.get(last_idx)
-            if first_gi is not None and last_gi is not None:
-                y0 = float(first_gi * self.row_h)
-                y1 = float((last_gi + 1) * self.row_h)
-
-            depth_start = self._depth_at_index(t, 0)
-            depth_end = self._depth_at_index(t, last_idx)
-            if depth_end <= depth_start:
-                depth_end = depth_start + max(float(getattr(self, "step_m", 0.05) or 0.05), 0.01)
-
-            depths = []
+            y_points = []
             qc_vals = []
             fs_vals = []
             qarr = getattr(t, "qc", []) or []
             farr = getattr(t, "fs", []) or []
-            for i in range(last_idx + 1):
-                dv = self._depth_at_index(t, i)
-                if dv is None:
-                    continue
-                q_raw = _parse_cell_int(qarr[i]) if i < len(qarr) else None
-                f_raw = _parse_cell_int(farr[i]) if i < len(farr) else None
-                if q_raw is None and f_raw is None:
-                    continue
-                qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
-                depths.append(float(dv))
-                qc_vals.append(float(qc_mpa))
-                fs_vals.append(float(fs_kpa))
+            units = getattr(self, "_grid_units", []) or []
+            disp_map = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {}) or {}
 
-            if depths:
-                # clamp to factual depth bounds
-                clamped = [(d, q, f) for d, q, f in zip(depths, qc_vals, fs_vals) if depth_start <= d <= depth_end]
-                depths = [x[0] for x in clamped]
-                qc_vals = [x[1] for x in clamped]
-                fs_vals = [x[2] for x in clamped]
+            for disp_r, unit in enumerate(units):
+                y0r = float(disp_r * self.row_h)
+                if unit[0] == "row":
+                    di = disp_map.get(disp_r)
+                    if di is None:
+                        continue
+                    q_raw = _parse_cell_int(qarr[di]) if di < len(qarr) else None
+                    f_raw = _parse_cell_int(farr[di]) if di < len(farr) else None
+                    if q_raw is None and f_raw is None:
+                        continue
+                    qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
+                    y_points.append(y0r + (self.row_h * 0.5))
+                    qc_vals.append(float(qc_mpa))
+                    fs_vals.append(float(fs_kpa))
+                elif unit[0] == "meter":
+                    meter_n = int(unit[1])
+                    for di in range(max(len(qarr), len(farr))):
+                        dv = self._depth_at_index(t, di)
+                        if dv is None or not (meter_n <= dv < (meter_n + 1)):
+                            continue
+                        q_raw = _parse_cell_int(qarr[di]) if di < len(qarr) else None
+                        f_raw = _parse_cell_int(farr[di]) if di < len(farr) else None
+                        if q_raw is None and f_raw is None:
+                            continue
+                        qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
+                        frac = max(0.0, min(0.999, float(dv) - float(meter_n)))
+                        y_points.append(y0r + (frac * self.row_h))
+                        qc_vals.append(float(qc_mpa))
+                        fs_vals.append(float(fs_kpa))
+
+            if not y_points:
+                self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
+                self._draw_graph_lines_for_test(ti, (x0, x1, y0, y1), [], [], [], self.graph_qc_max_mpa, self.graph_fs_max_kpa)
+                continue
+            packed = sorted(zip(y_points, qc_vals, fs_vals), key=lambda x: x[0])
+            y_points = [x[0] for x in packed]
+            qc_vals = [x[1] for x in packed]
+            fs_vals = [x[2] for x in packed]
 
             self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
             self._draw_graph_lines_for_test(
                 ti,
                 (x0, x1, y0, y1),
-                depths,
+                y_points,
                 qc_vals,
                 fs_vals,
                 self.graph_qc_max_mpa,
@@ -3274,6 +3357,15 @@ class GeoCanvasEditor(tk.Tk):
                 self._redraw()
             self._hide_canvas_tip()
             self.schedule_graph_redraw()
+            return
+
+        if kind == "meter_row":
+            meter_n = int(field)
+            if meter_n in self.expanded_meters:
+                self.expanded_meters.discard(meter_n)
+            else:
+                self.expanded_meters.add(meter_n)
+            self._schedule_rebuild_redraw()
             return
 
         # --- Single-click cell edit (ironclad) ---
@@ -3681,18 +3773,9 @@ class GeoCanvasEditor(tk.Tk):
             self._update_scrollregion()
             return
 
-        grid, grid_step, row_maps, start_rows = self._compute_depth_grid()
-        if not grid:
-            max_rows = (len(getattr(self, '_grid', []) or []) or max(len(t.qc) for t in self.tests))
-            grid = [None] * max_rows
-            row_maps = {ti: {r: r for r in range(len(self.tests[ti].qc))} for ti in range(len(self.tests))}
-            start_rows = {ti: 0 for ti in range(len(self.tests))}
-
-        max_rows = len(grid)
-        self._grid = grid
-        self._grid_step = grid_step
-        self._grid_row_maps = row_maps
-        self._grid_start_rows = start_rows
+        self._build_grid()
+        max_rows = len(getattr(self, "_grid", []) or [])
+        grid = getattr(self, "_grid_base", []) or []
 
         self._refresh_display_order()
 
@@ -3784,12 +3867,17 @@ class GeoCanvasEditor(tk.Tk):
             fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set(), set()))
             mp = self._grid_row_maps.get(ti, {})
             start_r = self._grid_start_rows.get(ti, 0)
+            units = getattr(self, "_grid_units", []) or []
 
             for r in range(max_rows):
-                if grid[r] is None:
-                    depth_txt = t.depth[r] if (r < len(getattr(t, "depth", []) or [])) else ""
+                unit = units[r] if r < len(units) else ("row", r)
+                is_meter_row = (unit[0] == "meter")
+                meter_n = int(unit[1]) if is_meter_row else None
+                base_row = int(unit[1]) if unit[0] == "row" else None
+                if base_row is not None and base_row < len(grid) and grid[base_row] is not None:
+                    depth_txt = f"{grid[base_row]:.2f}"
                 else:
-                    depth_txt = f"{grid[r]:.2f}"
+                    depth_txt = ""
 
                 data_i = mp.get(r, None)
                 has_row = (data_i is not None) and (data_i < len(getattr(t, "qc", []) or []))
@@ -3800,6 +3888,13 @@ class GeoCanvasEditor(tk.Tk):
                     incl_list = getattr(t, "incl", None)
                     if has_row and incl_list is not None and data_i < len(incl_list):
                         incl_txt = str(incl_list[data_i])
+
+                if is_meter_row:
+                    depth_txt = f"{meter_n}–{meter_n + 1} м"
+                    qc_txt = "⋯"
+                    fs_txt = "⋯"
+                    if getattr(self, "geo_kind", "K2") == "K4":
+                        incl_txt = "⋯"
 
                 # K4: если канал инклинометра отсутствует/пустой — показываем 0
                 if getattr(self, "geo_kind", "K2") == "K4":
@@ -3812,7 +3907,7 @@ class GeoCanvasEditor(tk.Tk):
 
                 is_blank_row = (qc_txt.strip()=="" and fs_txt.strip()=="" and (incl_txt.strip()=="" if getattr(self, "geo_kind", "K2")=="K4" else True))
 
-                if not has_row:
+                if not has_row and not is_meter_row:
                     depth_txt = ""
 
                 # Если строка данных пустая (оба значения пустые) — скрываем глубину напротив,
@@ -3826,11 +3921,13 @@ class GeoCanvasEditor(tk.Tk):
                             _is_editing_this = True
                 except Exception:
                     _is_editing_this = False
-                if has_row and is_blank_row and not _is_editing_this:
+                if has_row and is_blank_row and not _is_editing_this and not is_meter_row:
                     depth_txt = ""
 
 
-                if r == start_r and has_row:
+                if is_meter_row:
+                    depth_fill = "#f3f6fb"
+                elif r == start_r and has_row:
                     depth_fill = "white"   # editable cell
                 else:
                     depth_fill = (GUI_DEPTH_BG if has_row else "white")
@@ -3849,6 +3946,8 @@ class GeoCanvasEditor(tk.Tk):
                         return (GUI_BLUE_P if getattr(self, '_algo_preview_mode', False) else GUI_BLUE)
 
                     # Далее — обычная логика по существующим/пустым строкам
+                    if is_meter_row:
+                        return "#f3f6fb"
                     if not has_row or is_blank_row:
                         return "white"
 
@@ -3962,6 +4061,10 @@ class GeoCanvasEditor(tk.Tk):
                     field = "qc"
                 else:
                     field = "fs"
+                if bool(getattr(self, "compact_1m", False)):
+                    meter_n = (getattr(self, "_grid_meter_rows", {}) or {}).get(row)
+                    if meter_n is not None:
+                        return ("meter_row", ti, row, int(meter_n))
                 return ("cell", ti, row, field)
 
         return None
@@ -3979,6 +4082,14 @@ class GeoCanvasEditor(tk.Tk):
         if ti is not None:
             self._active_test_idx = int(ti)
             self.schedule_graph_redraw()
+        if kind == "meter_row":
+            meter_n = int(field)
+            if meter_n in self.expanded_meters:
+                self.expanded_meters.discard(meter_n)
+            else:
+                self.expanded_meters.add(meter_n)
+            self._schedule_rebuild_redraw()
+            return
         if kind == "header":
             return
 
