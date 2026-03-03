@@ -177,6 +177,16 @@ class GeoCanvasEditor(tk.Tk):
         self.w_val = 56
         self.pad_x = 8
         self.pad_y = 8
+        self.show_graphs = False
+        self._graph_redraw_after_id = None
+        self._active_test_idx: int | None = None
+
+        try:
+            self.graph_w = int(self.winfo_fpixels("3c"))
+        except Exception:
+            self.graph_w = 120
+        if self.graph_w <= 0:
+            self.graph_w = 120
 
         self._editing = None  # (test_idx,row,field, entry)
         self._ctx_menu = None
@@ -1305,6 +1315,7 @@ class GeoCanvasEditor(tk.Tk):
             common_depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
         common_var = tk.StringVar(master=self, value=f"{common_depth0:g}")
         apply_all_var = tk.BooleanVar(master=self, value=(False if getattr(self, 'geo_kind', 'K2')=='K4' else True))
+        show_graphs_var = tk.BooleanVar(master=self, value=bool(getattr(self, "show_graphs", False)))
 
         # объект (встроено)
         obj_var = tk.StringVar(master=self, value=(getattr(self, "object_code", "") or ""))
@@ -1353,6 +1364,19 @@ class GeoCanvasEditor(tk.Tk):
 
         apply_all_chk = ttk.Checkbutton(frm, text="Применить ко всем", variable=apply_all_var)
         apply_all_chk.grid(row=r, column=2, columnspan=3, sticky="w", padx=(12, 0), pady=2)
+        r += 1
+
+        def _on_toggle_graphs(*_args):
+            try:
+                self.show_graphs = bool(show_graphs_var.get())
+            except Exception:
+                self.show_graphs = False
+            self._redraw()
+            self.schedule_graph_redraw()
+
+        show_graphs_var.trace_add("write", _on_toggle_graphs)
+        graphs_chk = ttk.Checkbutton(frm, text="Показывать графики", variable=show_graphs_var)
+        graphs_chk.grid(row=r, column=0, columnspan=5, sticky="w", pady=(2, 2))
         r += 1
 
         ttk.Separator(frm).grid(row=r, column=0, columnspan=5, sticky="ew", pady=(8, 8))
@@ -2587,7 +2611,9 @@ class GeoCanvasEditor(tk.Tk):
         self.flags[tid] = TestFlags(False, set(), set(), set(), set(), set())
 
         self._end_edit(commit=False)
+        self._active_test_idx = insert_at
         self._redraw()
+        self.schedule_graph_redraw()
 
         # Механика автопрокрутки как при копировании:
         # если добавленное зондирование не помещается — прокручиваем по X к нему,
@@ -2735,6 +2761,7 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
         self._redraw()
+        self.schedule_graph_redraw()
         self.status.config(text="Конвертация 10→5 выполнена. Новые строки помечены зелёным.")
 
     # ---------------- drawing helpers ----------------
@@ -2753,6 +2780,8 @@ class GeoCanvasEditor(tk.Tk):
         col_w = self.w_depth + self.w_val*2 + (self.w_val if getattr(self, "geo_kind", "K2")=="K4" else 0)
         self._last_col_w = col_w
         total_w = self.pad_x * 2 + (col_w * len(self.tests)) + (self.col_gap * max(0, len(self.tests) - 1))
+        if bool(getattr(self, "show_graphs", False)):
+            total_w += int(getattr(self, "graph_w", 120) or 120)
         body_h = max_rows * self.row_h
         header_h = int(self.pad_y + self.hdr_h)  # фиксированная область
         return total_w, body_h, header_h
@@ -2886,6 +2915,116 @@ class GeoCanvasEditor(tk.Tk):
 
         self.display_cols = sorted(range(len(self.tests)), key=_key)
 
+    def schedule_graph_redraw(self):
+        if not bool(getattr(self, "show_graphs", False)):
+            self._clear_graph_layers()
+            return
+        prev = getattr(self, "_graph_redraw_after_id", None)
+        if prev is not None:
+            try:
+                self.after_cancel(prev)
+            except Exception:
+                pass
+        self._graph_redraw_after_id = self.after(60, self._draw_graph_layers)
+
+    def _clear_graph_layers(self):
+        for cnv in (getattr(self, "canvas", None), getattr(self, "hcanvas", None)):
+            if cnv is None:
+                continue
+            for tag in ("graph_axes", "graph_qc", "graph_fs"):
+                try:
+                    cnv.delete(tag)
+                except Exception:
+                    pass
+
+    def _draw_graph_layers(self):
+        self._graph_redraw_after_id = None
+        self._clear_graph_layers()
+        if not bool(getattr(self, "show_graphs", False)):
+            return
+        if not getattr(self, "tests", None):
+            return
+
+        col_w = self.w_depth + self.w_val*2 + (self.w_val if getattr(self, "geo_kind", "K2") == "K4" else 0)
+        xg0 = self.pad_x + (col_w * len(self.tests)) + (self.col_gap * max(0, len(self.tests) - 1))
+        xg1 = xg0 + int(getattr(self, "graph_w", 120) or 120)
+
+        y0 = self.pad_y
+        y1 = y0 + self.hdr_h
+        self.hcanvas.create_rectangle(xg0, y0, xg1, y1, fill="#fbfdff", outline=GUI_GRID, tags=("graph_axes",))
+
+        pad = 8
+        xa0 = xg0 + pad
+        xa1 = xg1 - pad
+        qc_axis_y = y0 + 24
+        fs_axis_y = y0 + 46
+
+        self.hcanvas.create_line(xa0, qc_axis_y, xa1, qc_axis_y, fill=GRAPH_QC_GREEN, width=1, tags=("graph_axes",))
+        self.hcanvas.create_line(xa0, fs_axis_y, xa1, fs_axis_y, fill=GRAPH_FS_BLUE, width=1, tags=("graph_axes",))
+        self.hcanvas.create_text(xa0, qc_axis_y - 10, anchor="w", text="qc, МПа", fill=GRAPH_QC_GREEN, font=("Segoe UI", 8), tags=("graph_axes",))
+        self.hcanvas.create_text(xa0, fs_axis_y - 10, anchor="w", text="fs, кПа", fill=GRAPH_FS_BLUE, font=("Segoe UI", 8), tags=("graph_axes",))
+
+        active_ti = self._active_test_idx
+        if active_ti is None and getattr(self, "_editing", None):
+            active_ti = self._editing[0]
+        if active_ti is None or active_ti < 0 or active_ti >= len(self.tests):
+            self.hcanvas.create_text((xg0 + xg1) / 2, y0 + self.hdr_h / 2, text="нет данных", fill="#666", font=("Segoe UI", 8), tags=("graph_axes",))
+            return
+
+        t = self.tests[active_ti]
+        depths = []
+        qc_vals = []
+        fs_vals = []
+        for i, ds in enumerate(getattr(t, "depth", []) or []):
+            dv = _parse_depth_float(ds)
+            if dv is None:
+                continue
+            q_raw = _parse_cell_int((getattr(t, "qc", []) or [""])[i]) if i < len(getattr(t, "qc", []) or []) else None
+            f_raw = _parse_cell_int((getattr(t, "fs", []) or [""])[i]) if i < len(getattr(t, "fs", []) or []) else None
+            if q_raw is None and f_raw is None:
+                continue
+            qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
+            depths.append(float(dv))
+            qc_vals.append(float(qc_mpa))
+            fs_vals.append(float(fs_kpa))
+
+        if not depths:
+            self.hcanvas.create_text((xg0 + xg1) / 2, y0 + self.hdr_h / 2, text="нет данных", fill="#666", font=("Segoe UI", 8), tags=("graph_axes",))
+            return
+
+        dmin = min(depths)
+        dmax = max(depths)
+        if dmax <= dmin:
+            dmax = dmin + 0.1
+
+        qmax = max(max(qc_vals), 0.1)
+        fmax = max(max(fs_vals), 1.0)
+
+        def _sx_q(v):
+            return xa0 + (max(0.0, min(v, qmax)) / qmax) * (xa1 - xa0)
+
+        def _sx_f(v):
+            return xa0 + (max(0.0, min(v, fmax)) / fmax) * (xa1 - xa0)
+
+        self.hcanvas.create_text(xa1, qc_axis_y - 10, anchor="e", text=f"0..{qmax:.1f}", fill=GRAPH_QC_GREEN, font=("Segoe UI", 7), tags=("graph_axes",))
+        self.hcanvas.create_text(xa1, fs_axis_y - 10, anchor="e", text=f"0..{fmax:.0f}", fill=GRAPH_FS_BLUE, font=("Segoe UI", 7), tags=("graph_axes",))
+
+        yb0 = 0
+        yb1 = len(getattr(self, "_grid", []) or []) * self.row_h
+        self.canvas.create_rectangle(xg0, yb0, xg1, yb1, fill="#fbfdff", outline=GUI_GRID, tags=("graph_axes",))
+
+        qc_pts = []
+        fs_pts = []
+        for dv, qv, fv in zip(depths, qc_vals, fs_vals):
+            y = ((dv - dmin) / (dmax - dmin)) * yb1
+            qc_pts.extend([_sx_q(qv), y])
+            fs_pts.extend([_sx_f(fv), y])
+
+        if len(qc_pts) >= 4:
+            self.canvas.create_line(*qc_pts, fill=GRAPH_QC_GREEN, width=2, smooth=False, tags=("graph_qc",))
+        if len(fs_pts) >= 4:
+            self.canvas.create_line(*fs_pts, fill=GRAPH_FS_BLUE, width=2, smooth=False, tags=("graph_fs",))
+
     def _on_left_click(self, event):
         self._evt_widget = event.widget
         hit = self._hit_test(event.x, event.y)
@@ -2895,6 +3034,9 @@ class GeoCanvasEditor(tk.Tk):
             self._hide_canvas_tip()
             return
         kind, ti, row, field = hit
+        if ti is not None:
+            self._active_test_idx = int(ti)
+            self.schedule_graph_redraw()
 
         # Любой клик по UI (иконки/пустые/глубина) сначала закрывает активную ячейку
         # (кроме случая, когда мы тут же откроем новое редактирование).
@@ -2930,6 +3072,7 @@ class GeoCanvasEditor(tk.Tk):
                 self._update_footer_realtime()
                 self._redraw()
             self._hide_canvas_tip()
+            self.schedule_graph_redraw()
             return
 
         # --- Single-click cell edit (ironclad) ---
@@ -3010,6 +3153,7 @@ class GeoCanvasEditor(tk.Tk):
                         except Exception:
                             pass
                         self._redraw()
+                        self.schedule_graph_redraw()
                         self._begin_edit(ti, 0, field, display_row=row)
                         return
 
@@ -3037,6 +3181,7 @@ class GeoCanvasEditor(tk.Tk):
             # Normal in-range cell → start edit immediately
             if field in ("qc", "fs"):
                 self._begin_edit(ti, data_row, field, display_row=row)
+                self.schedule_graph_redraw()
             return
 
         # otherwise: click ends edit (commit)
@@ -3135,7 +3280,10 @@ class GeoCanvasEditor(tk.Tk):
         pass
         # rebuild flags
         self.flags = {tt.tid: self.flags.get(tt.tid, TestFlags(False, set(), set(), set(), set(), set())) for tt in self.tests}
+        if self._active_test_idx is not None and self._active_test_idx >= len(self.tests):
+            self._active_test_idx = (len(self.tests) - 1) if self.tests else None
         self._redraw()
+        self.schedule_graph_redraw()
         self.status.config(text=f"Опыт {t.tid} удалён.")
 
 
@@ -3551,6 +3699,10 @@ class GeoCanvasEditor(tk.Tk):
                     self.canvas.create_text(tx, (by0 + by1) / 2, text=txt, anchor=anchor, fill=color, font=("Segoe UI", 9))
 
         self._update_scrollregion()
+        if bool(getattr(self, "show_graphs", False)):
+            self._draw_graph_layers()
+        else:
+            self._clear_graph_layers()
     # ---------------- hit test & editing ----------------
 
     def _hit_test(self, x, y):
@@ -3625,6 +3777,9 @@ class GeoCanvasEditor(tk.Tk):
             self._hide_canvas_tip()
             return
         kind, ti, row, field = hit
+        if ti is not None:
+            self._active_test_idx = int(ti)
+            self.schedule_graph_redraw()
         if kind == "header":
             return
 
@@ -3923,6 +4078,7 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
         self._redraw()
+        self.schedule_graph_redraw()
         # если опыт не помещается на экран — прокручиваем по X так, чтобы он попал в видимую область
         try:
             self._ensure_cell_visible(insert_at, 0, 'depth', pad=12)
@@ -4237,6 +4393,7 @@ class GeoCanvasEditor(tk.Tk):
         self._editing = None
         if not commit:
             self._redraw()
+            self.schedule_graph_redraw()
             return
 
         t = self.tests[ti]
@@ -4265,6 +4422,7 @@ class GeoCanvasEditor(tk.Tk):
                 return
         if new0 is None:
             self._redraw()
+            self.schedule_graph_redraw()
             return
         if old0 is None:
             old0 = new0
@@ -4287,6 +4445,7 @@ class GeoCanvasEditor(tk.Tk):
         # Не сбрасываем подсветку/флаги при сдвиге глубины: qc/fs не менялись
         # (иначе пропадает фиолетовая отметка ручных правок и др. подсветки)
         self._redraw()
+        self.schedule_graph_redraw()
     def _end_edit(self, commit: bool):
         if not self._editing:
             return
@@ -4307,6 +4466,7 @@ class GeoCanvasEditor(tk.Tk):
 
         if field == "depth":
             self._redraw()
+            self.schedule_graph_redraw()
             return
 
         if commit and self.tests:
@@ -4336,10 +4496,12 @@ class GeoCanvasEditor(tk.Tk):
                         self._delete_data_row_in_test(t, fl, row)
                         self.flags[t.tid] = fl
                         self._redraw()
+                        self.schedule_graph_redraw()
                         return
                     else:
                         self.status.config(text="Нельзя оставлять пустые значения в середине зондирования.")
                         self._redraw()
+                        self.schedule_graph_redraw()
                         return
 
                 if newv.strip() == "0" and (0 < row < last_filled_before):
@@ -4371,6 +4533,7 @@ class GeoCanvasEditor(tk.Tk):
                 fl.invalid = False
                 self.flags[t.tid] = fl
             self._redraw()
+            self.schedule_graph_redraw()
 
     def _last_filled_row(self, t: TestData) -> int:
         """Последняя строка с данными (qc или fs не пустые)."""
@@ -4451,6 +4614,7 @@ class GeoCanvasEditor(tk.Tk):
         if t.tid not in self.flags:
             self.flags[t.tid] = TestFlags(False, set(), set(), set(), set(), set())
         self._redraw()
+        self.schedule_graph_redraw()
 
     # ---------------- scrolling ----------------
     def _on_mousewheel(self, event):
@@ -4776,6 +4940,7 @@ class GeoCanvasEditor(tk.Tk):
 
         self._end_edit(commit=True)
         self._redraw()
+        self.schedule_graph_redraw()
 
         # После успешной корректировки — синяя строка в подвале
         try:
