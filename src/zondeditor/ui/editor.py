@@ -33,16 +33,12 @@ try:
 except Exception:
     export_excel_file = None
 from src.zondeditor.export.credo_zip import export_credo_zip
-from src.zondeditor.export.geo_export import bundle_geo_filename, prepare_geo_tests
+from src.zondeditor.export.geo_export import bundle_geo_filename, export_bundle_geo, prepare_geo_tests
 from src.zondeditor.export.gxl_export import export_gxl_generated
 from src.zondeditor.export.selection import select_export_tests
 from src.zondeditor.io.geo_reader import load_geo, parse_geo_bytes, GeoParseError
 from src.zondeditor.io.gxl_reader import load_gxl, parse_gxl_file, GxlParseError
-from src.zondeditor.io.geo_writer import (
-    build_geo_from_template_with_diff,
-    save_k2_geo_from_template,
-    build_k2_geo_from_template,
-)
+from src.zondeditor.io.geo_writer import save_geo_as, save_k2_geo_from_template, build_k2_geo_from_template
 from src.zondeditor.domain.models import TestData, GeoBlockInfo, TestFlags
 
 from src.zondeditor.ui.consts import *
@@ -3458,6 +3454,15 @@ class GeoCanvasEditor(tk.Tk):
                     if has_row and incl_list is not None and data_i < len(incl_list):
                         incl_txt = str(incl_list[data_i])
 
+                # K4: если канал инклинометра отсутствует/пустой — показываем 0
+                if getattr(self, "geo_kind", "K2") == "K4":
+                    try:
+                        if has_row and (incl_txt is None or str(incl_txt).strip() == ""):
+                            incl_txt = "0"
+                    except Exception:
+                        pass
+
+
                 is_blank_row = (qc_txt.strip()=="" and fs_txt.strip()=="" and (incl_txt.strip()=="" if getattr(self, "geo_kind", "K2")=="K4" else True))
 
                 if not has_row:
@@ -3826,6 +3831,16 @@ class GeoCanvasEditor(tk.Tk):
         while len(t.depth) < n: t.depth.append('')
         while len(t.qc) < n: t.qc.append('')
         while len(t.fs) < n: t.fs.append('')
+        # K4: поддерживаем список инклинометра (U) синхронно с qc/fs
+        if getattr(self, "geo_kind", "K2") == "K4":
+            try:
+                if getattr(t, "incl", None) is None:
+                    t.incl = []
+                while len(t.incl) < n:
+                    t.incl.append('0')
+            except Exception:
+                pass
+
 
 
         self._push_undo()
@@ -3858,8 +3873,50 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
         del t.depth[r0:r1+1]
+
+        # K4: если удаляем "выше" (с нулевой строки), сдвигаем начальную глубину на k*step
+        # чтобы окно "Параметры GEO" подхватило новую начальную глубину.
+        if getattr(self, "geo_kind", "K2") == "K4":
+            try:
+                if int(r0) == 0:
+                    tid = int(getattr(t, "tid", 0) or 0)
+                    step_m = float(getattr(self, "step_m", 0.05) or 0.05)
+                    if tid:
+                        self.depth0_by_tid[tid] = float(self.depth0_by_tid.get(tid, 0.0)) + float((r1 - r0 + 1) * step_m)
+            except Exception:
+                pass
+
         del t.qc[r0:r1+1]
         del t.fs[r0:r1+1]
+
+        # K4: удаляем U синхронно, если есть
+        if getattr(self, "geo_kind", "K2") == "K4":
+            try:
+                incl_list = getattr(t, "incl", None)
+                if incl_list is not None and len(incl_list) >= (r1 + 1):
+                    del incl_list[r0:r1+1]
+            except Exception:
+                pass
+
+        # K4: после удаления строк пересчитываем начальную глубину опыта по первой строке (на всякий случай)
+        try:
+            if getattr(self, "geo_kind", "K2") == "K4":
+                tid = int(getattr(t, "tid", 0) or 0)
+                d0 = None
+                for dv in (getattr(t, "depth", []) or []):
+                    try:
+                        dd = float(str(dv).strip().replace(',', '.'))
+                    except Exception:
+                        dd = None
+                    if dd is not None:
+                        d0 = dd
+                        break
+                if d0 is not None and tid:
+                    self.depth0_by_tid[tid] = float(d0)
+                elif tid and hasattr(self, "depth0_by_tid"):
+                    self.depth0_by_tid.pop(tid, None)
+        except Exception:
+            pass
 
         try:
             self._build_grid()
@@ -5566,15 +5623,12 @@ class GeoCanvasEditor(tk.Tk):
                         if not blocks_info:
                             raise RuntimeError('Не удалось найти блоки опытов в исходном файле.')
 
-                        prepared_bundle = prepare_geo_tests(tests_list)
-                        result_bundle = build_geo_from_template_with_diff(self.original_bytes, blocks_info, prepared_bundle)
-                        if int(result_bundle.diff_count) == 0:
-                            dbg = self._collect_geo_change_debug_info(tests_list)
-                            raise RuntimeError(
-                                "Экспорт с изменениями не содержит изменений (diff=0). "
-                                f"changed_cells={dbg['changed_cells']} tests_with_marks={dbg['tests_with_marks']}"
-                            )
-                        geo_path.write_bytes(result_bundle.payload)
+                        export_bundle_geo(
+                            geo_path,
+                            tests=tests_list,
+                            source_bytes=self.original_bytes,
+                            blocks_info=blocks_info,
+                        )
 
                         # DEBUG: сверка количества/номеров блоков в собранном GEO (ловим "воскресший первый опыт")
                         try:
@@ -5813,27 +5867,6 @@ class GeoCanvasEditor(tk.Tk):
         """Alias для совместимости UI: экспорт GXL всегда через "Сохранить как..."."""
         return self.export_gxl_as()
 
-    def _collect_geo_change_debug_info(self, tests: list[TestData]) -> dict:
-        changed_cells = 0
-        tests_with_marks: list[int] = []
-        tests_with_data: list[int] = []
-        for t in (tests or []):
-            tid = int(getattr(t, "tid", 0) or 0)
-            if (getattr(t, "qc", None) or getattr(t, "fs", None)):
-                tests_with_data.append(tid)
-            fl = (getattr(self, "flags", {}) or {}).get(tid)
-            if not fl:
-                continue
-            marks = set(getattr(fl, "user_cells", set()) or set())
-            if marks:
-                tests_with_marks.append(tid)
-                changed_cells += len(marks)
-        return {
-            "changed_cells": changed_cells,
-            "tests_with_marks": tests_with_marks,
-            "tests_with_data": tests_with_data,
-        }
-
     def export_geo_as(self):
         """Экспорт GEO/GE0 только через "Сохранить как..." и без перезаписи источника."""
         try:
@@ -5874,22 +5907,23 @@ class GeoCanvasEditor(tk.Tk):
             if not blocks_info:
                 messagebox.showerror("Экспорт GEO", "Не найдены блоки опытов для шаблона GEO (block metadata отсутствуют).")
                 return
-
-            result = build_geo_from_template_with_diff(self.original_bytes, blocks_info, prepared)
-            if int(result.diff_count) == 0:
-                dbg = self._collect_geo_change_debug_info(tests_list)
-                print(
-                    "[GEO_EXPORT_NOOP] "
-                    f"diff_count=0 changed_cells={dbg['changed_cells']} "
-                    f"tests_with_marks={dbg['tests_with_marks']} tests_with_data={dbg['tests_with_data']}"
+            # --- GEO EXPORT DISPATCH (split K2/K4, independent) ---
+            if getattr(self, "geo_kind", "K2") == "K4":
+                from src.zondeditor.io.geo_writer_k4 import save_k4_geo_as
+                save_k4_geo_as(
+                    out_file,
+                    prepared,
+                    source_bytes=self.original_bytes,
                 )
-                messagebox.showwarning("Экспорт GEO", "Экспорт с изменениями не содержит изменений (diff=0).")
-                return
-
-            Path(out_file).write_bytes(result.payload)
-
+            else:
+                from src.zondeditor.io.geo_writer_k2 import save_k2_geo_as
+                save_k2_geo_as(
+                    out_file,
+                    prepared,
+                    source_bytes=self.original_bytes,
+                )
             try:
-                self.status.set(f"Сохранено: {out_file} | опытов: {len(tests_list)} | diff: {result.diff_count}")
+                self.status.set(f"Сохранено: {out_file} | опытов: {len(tests_list)}")
             except Exception:
                 pass
         except Exception:
