@@ -13,6 +13,7 @@ class RibbonView(ttk.Frame):
         self.commands = commands
         self.icon_font = icon_font
         self.object_name_var = tk.StringVar(value="")
+        self.show_graphs_var = tk.BooleanVar(value=False)
         self._buttons: dict[str, ttk.Button] = {}
 
         qat = ttk.Frame(self, padding=(8, 4))
@@ -84,6 +85,14 @@ class RibbonView(ttk.Frame):
         tab = ttk.Frame(self.tabs, padding=8)
         self.tabs.add(tab, text="Параметры")
         self._add_btn(tab, "geo_params", f"{ICON_SETTINGS} Параметры зондирований (GEO)", "Открыть параметры GEO")
+        graphs_chk = ttk.Checkbutton(
+            tab,
+            text="Графики",
+            variable=self.show_graphs_var,
+            command=lambda: self.commands.get("toggle_graphs", lambda *_: None)(bool(self.show_graphs_var.get())),
+        )
+        graphs_chk.pack(side="top", anchor="w", pady=(8, 0))
+        ToolTip(graphs_chk, "Показывать графики")
 
     def _build_processing_tab(self):
         tab = ttk.Frame(self.tabs, padding=8)
@@ -116,3 +125,6 @@ class RibbonView(ttk.Frame):
         btn.configure(state=("normal" if enabled else "disabled"))
         if reason:
             ToolTip(btn, reason)
+
+    def set_show_graphs(self, value: bool):
+        self.show_graphs_var.set(bool(value))
