@@ -170,7 +170,11 @@ class GeoCanvasEditor(tk.Tk):
 
         self.display_cols: list[int] = []  # indices of self.tests in left-to-right order
 
-        self.row_h = 22
+        self.row_h_default = 22
+        # В режиме «Свернуть 1 м» строка-агрегат должна быть визуально выше
+        # (по запросу пользователей ~1 см на типичном DPI).
+        self.row_h_compact_1m = 38
+        self.row_h = self.row_h_default
         self.hdr_h = 64
         self.col_gap = 12
         self.w_depth = 64
@@ -451,6 +455,7 @@ class GeoCanvasEditor(tk.Tk):
             self.compact_1m = bool(snap.get("compact_1m", getattr(self, "compact_1m", False)))
         except Exception:
             self.compact_1m = bool(getattr(self, "compact_1m", False))
+        self.row_h = int(self.row_h_compact_1m if self.compact_1m else self.row_h_default)
         try:
             self.expanded_meters = set(int(x) for x in (snap.get("expanded_meters") or []))
         except Exception:
@@ -664,6 +669,8 @@ class GeoCanvasEditor(tk.Tk):
         if push_undo:
             self._push_undo()
         self.compact_1m = value
+        # При сворачивании 1 м делаем строку выше, чтобы блоки не были «слишком тонкими».
+        self.row_h = int(self.row_h_compact_1m if self.compact_1m else self.row_h_default)
         try:
             if getattr(self, "_compact_1m_var", None) is not None and bool(self._compact_1m_var.get()) != self.compact_1m:
                 self._compact_1m_var.set(self.compact_1m)
@@ -672,6 +679,11 @@ class GeoCanvasEditor(tk.Tk):
         try:
             if getattr(self, "ribbon_view", None):
                 self.ribbon_view.set_compact_1m(self.compact_1m)
+        except Exception:
+            pass
+        # Избегаем визуального «разрыва» между шапкой и данными после смены режима.
+        try:
+            self.canvas.yview_moveto(0.0)
         except Exception:
             pass
         self._schedule_rebuild_redraw()
