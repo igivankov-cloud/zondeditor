@@ -426,6 +426,8 @@ class GeoCanvasEditor(tk.Tk):
             "flags": flags_snap,
             "step_m": float(getattr(self, "step_m", 0.05) or 0.05),
             "depth0_by_tid": dict(getattr(self, "depth0_by_tid", {}) or {}),
+            "compact_1m": bool(getattr(self, "compact_1m", False)),
+            "expanded_meters": sorted(int(x) for x in (getattr(self, "expanded_meters", set()) or set())),
             "project_ops": copy.deepcopy(list(getattr(self, "project_ops", []) or [])),
         }
 
@@ -444,6 +446,25 @@ class GeoCanvasEditor(tk.Tk):
             self.depth0_by_tid = dict((snap.get("depth0_by_tid") or {}))
         except Exception:
             self.depth0_by_tid = {}
+
+        try:
+            self.compact_1m = bool(snap.get("compact_1m", getattr(self, "compact_1m", False)))
+        except Exception:
+            self.compact_1m = bool(getattr(self, "compact_1m", False))
+        try:
+            self.expanded_meters = set(int(x) for x in (snap.get("expanded_meters") or []))
+        except Exception:
+            self.expanded_meters = set()
+        try:
+            if getattr(self, "_compact_1m_var", None) is not None:
+                self._compact_1m_var.set(bool(self.compact_1m))
+        except Exception:
+            pass
+        try:
+            if getattr(self, "ribbon_view", None):
+                self.ribbon_view.set_compact_1m(bool(self.compact_1m))
+        except Exception:
+            pass
 
         try:
             self.project_ops = copy.deepcopy(list(snap.get("project_ops", []) or []))
@@ -634,10 +655,15 @@ class GeoCanvasEditor(tk.Tk):
         self._redraw()
         self.schedule_graph_redraw()
 
-    def _toggle_compact_1m(self, value: bool | None = None):
+    def _toggle_compact_1m(self, value: bool | None = None, *, push_undo: bool = True):
         if value is None:
             value = not bool(getattr(self, "compact_1m", False))
-        self.compact_1m = bool(value)
+        value = bool(value)
+        if bool(getattr(self, "compact_1m", False)) == value:
+            return
+        if push_undo:
+            self._push_undo()
+        self.compact_1m = value
         try:
             if getattr(self, "_compact_1m_var", None) is not None and bool(self._compact_1m_var.get()) != self.compact_1m:
                 self._compact_1m_var.set(self.compact_1m)
@@ -649,6 +675,35 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
         self._schedule_rebuild_redraw()
+
+    def _toggle_meter_expanded(self, meter_n: int, *, push_undo: bool = True):
+        meter_n = int(meter_n)
+        if push_undo:
+            self._push_undo()
+        if meter_n in self.expanded_meters:
+            self.expanded_meters.discard(meter_n)
+        else:
+            self.expanded_meters.add(meter_n)
+        self._schedule_rebuild_redraw()
+
+    def _expanded_meter_for_depth_cell(self, ti: int, display_row: int) -> int | None:
+        if not bool(getattr(self, "compact_1m", False)):
+            return None
+        try:
+            mp = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {}) or {}
+            data_row = mp.get(display_row)
+            if data_row is None:
+                return None
+            t = self.tests[ti]
+            dv = self._depth_at_index(t, int(data_row))
+            if dv is None:
+                return None
+            meter_n = int(math.floor(float(dv)))
+            if meter_n in (getattr(self, "expanded_meters", set()) or set()):
+                return meter_n
+        except Exception:
+            return None
+        return None
 
     def _toggle_compact_1m_from_ui(self):
         self._toggle_compact_1m(bool(getattr(self, "_compact_1m_var", None).get() if getattr(self, "_compact_1m_var", None) is not None else False))
@@ -3360,12 +3415,7 @@ class GeoCanvasEditor(tk.Tk):
             return
 
         if kind == "meter_row":
-            meter_n = int(field)
-            if meter_n in self.expanded_meters:
-                self.expanded_meters.discard(meter_n)
-            else:
-                self.expanded_meters.add(meter_n)
-            self._schedule_rebuild_redraw()
+            self._toggle_meter_expanded(int(field), push_undo=True)
             return
 
         # --- Single-click cell edit (ironclad) ---
@@ -3375,6 +3425,10 @@ class GeoCanvasEditor(tk.Tk):
 
             # Depth: single click on the first depth cell opens "start depth" editor
             if field == "depth":
+                meter_n = self._expanded_meter_for_depth_cell(ti, row)
+                if meter_n is not None:
+                    self._toggle_meter_expanded(meter_n, push_undo=True)
+                    return
                 if row == start_r:
                     self._begin_edit_depth0(ti, display_row=row)
                 return
@@ -3889,12 +3943,29 @@ class GeoCanvasEditor(tk.Tk):
                     if has_row and incl_list is not None and data_i < len(incl_list):
                         incl_txt = str(incl_list[data_i])
 
+                meter_qc_max = None
+                meter_fs_max = None
                 if is_meter_row:
                     depth_txt = f"{meter_n}–{meter_n + 1} м"
-                    qc_txt = "⋯"
-                    fs_txt = "⋯"
+                    qarr = getattr(t, "qc", []) or []
+                    farr = getattr(t, "fs", []) or []
+                    for di in range(max(len(qarr), len(farr))):
+                        dv = self._depth_at_index(t, di)
+                        if dv is None or not (meter_n <= dv < (meter_n + 1)):
+                            continue
+                        q_raw = _parse_cell_int(qarr[di]) if di < len(qarr) else None
+                        f_raw = _parse_cell_int(farr[di]) if di < len(farr) else None
+                        if q_raw is None and f_raw is None:
+                            continue
+                        qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
+                        if q_raw is not None:
+                            meter_qc_max = float(qc_mpa) if meter_qc_max is None else max(float(meter_qc_max), float(qc_mpa))
+                        if f_raw is not None:
+                            meter_fs_max = float(fs_kpa) if meter_fs_max is None else max(float(meter_fs_max), float(fs_kpa))
+                    qc_txt = "" if meter_qc_max is None else (f"{meter_qc_max:.2f}".rstrip("0").rstrip("."))
+                    fs_txt = "" if meter_fs_max is None else str(int(round(float(meter_fs_max))))
                     if getattr(self, "geo_kind", "K2") == "K4":
-                        incl_txt = "⋯"
+                        incl_txt = ""
 
                 # K4: если канал инклинометра отсутствует/пустой — показываем 0
                 if getattr(self, "geo_kind", "K2") == "K4":
@@ -3994,6 +4065,8 @@ class GeoCanvasEditor(tk.Tk):
                         tx, anchor, color = bx1 - 4, "e", "#555"
                     else:
                         tx, anchor, color = bx1 - 4, "e", "#000"
+                        if is_meter_row and field in ("qc", "fs"):
+                            color = "#666"
                     self.canvas.create_text(tx, (by0 + by1) / 2, text=txt, anchor=anchor, fill=color, font=("Segoe UI", 9))
 
         self._update_scrollregion()
@@ -4083,12 +4156,7 @@ class GeoCanvasEditor(tk.Tk):
             self._active_test_idx = int(ti)
             self.schedule_graph_redraw()
         if kind == "meter_row":
-            meter_n = int(field)
-            if meter_n in self.expanded_meters:
-                self.expanded_meters.discard(meter_n)
-            else:
-                self.expanded_meters.add(meter_n)
-            self._schedule_rebuild_redraw()
+            self._toggle_meter_expanded(int(field), push_undo=True)
             return
         if kind == "header":
             return
@@ -4097,6 +4165,10 @@ class GeoCanvasEditor(tk.Tk):
         start_r = (getattr(self, "_grid_start_rows", {}) or {}).get(ti, 0)
 
         if field == "depth":
+            meter_n = self._expanded_meter_for_depth_cell(ti, row)
+            if meter_n is not None:
+                self._toggle_meter_expanded(meter_n, push_undo=True)
+                return
             if row == start_r:
                 self._begin_edit_depth0(ti, display_row=row)
             return
