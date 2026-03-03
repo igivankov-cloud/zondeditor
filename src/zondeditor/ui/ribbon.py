@@ -14,6 +14,7 @@ class RibbonView(ttk.Frame):
         self.icon_font = icon_font
         self.object_name_var = tk.StringVar(value="")
         self.show_graphs_var = tk.BooleanVar(value=False)
+        self.compact_1m_var = tk.BooleanVar(value=False)
         self._buttons: dict[str, ttk.Button] = {}
 
         qat = ttk.Frame(self, padding=(8, 4))
@@ -93,6 +94,14 @@ class RibbonView(ttk.Frame):
         )
         graphs_chk.pack(side="top", anchor="w", pady=(8, 0))
         ToolTip(graphs_chk, "Показывать графики")
+        compact_chk = ttk.Checkbutton(
+            tab,
+            text="Свернуть 1 м",
+            variable=self.compact_1m_var,
+            command=lambda: self.commands.get("toggle_compact_1m", lambda *_: None)(bool(self.compact_1m_var.get())),
+        )
+        compact_chk.pack(side="top", anchor="w", pady=(6, 0))
+        ToolTip(compact_chk, "Свернуть таблицу/графики по 1-метровым интервалам")
 
     def _build_processing_tab(self):
         tab = ttk.Frame(self.tabs, padding=8)
@@ -128,3 +137,6 @@ class RibbonView(ttk.Frame):
 
     def set_show_graphs(self, value: bool):
         self.show_graphs_var.set(bool(value))
+
+    def set_compact_1m(self, value: bool):
+        self.compact_1m_var.set(bool(value))
