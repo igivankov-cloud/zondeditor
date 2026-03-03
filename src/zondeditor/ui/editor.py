@@ -182,11 +182,11 @@ class GeoCanvasEditor(tk.Tk):
         self._active_test_idx: int | None = None
 
         try:
-            self.graph_w = int(self.winfo_fpixels("3c"))
+            self.graph_w = int(self.winfo_fpixels("4c"))
         except Exception:
-            self.graph_w = 120
+            self.graph_w = 150
         if self.graph_w <= 0:
-            self.graph_w = 120
+            self.graph_w = 150
 
         self._editing = None  # (test_idx,row,field, entry)
         self._ctx_menu = None
@@ -530,6 +530,27 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
 
+    def _toggle_show_graphs(self, value: bool | None = None):
+        if value is None:
+            value = bool(getattr(self, "show_graphs", False))
+        self.show_graphs = bool(value)
+        try:
+            if getattr(self, "_show_graphs_var", None) is not None and bool(self._show_graphs_var.get()) != self.show_graphs:
+                self._show_graphs_var.set(self.show_graphs)
+        except Exception:
+            pass
+        try:
+            if getattr(self, "ribbon_view", None):
+                self.ribbon_view.set_show_graphs(self.show_graphs)
+        except Exception:
+            pass
+        self._build_grid()
+        self._redraw()
+        self.schedule_graph_redraw()
+
+    def _toggle_show_graphs_from_ui(self):
+        self._toggle_show_graphs(bool(getattr(self, "_show_graphs_var", None).get() if getattr(self, "_show_graphs_var", None) is not None else False))
+
     def _build_ui(self):
         self.ribbon_view = None
         # ========= LEGACY TOP BAR =========
@@ -619,6 +640,10 @@ class GeoCanvasEditor(tk.Tk):
         make_btn(btns, "10→5", "Конвертировать шаг 10 см → 5 см", self.convert_10_to_5, w=5).grid(row=0, column=2, padx=4)  
         
         make_btn(btns, "⚙", "Параметры зондирований (GEO)", self.open_geo_params_dialog, w=3).grid(row=0, column=3, padx=4)
+        self._show_graphs_var = tk.BooleanVar(master=self, value=bool(getattr(self, "show_graphs", False)))
+        graphs_chk = ttk.Checkbutton(btns, text="Графики", variable=self._show_graphs_var, command=self._toggle_show_graphs_from_ui)
+        graphs_chk.grid(row=0, column=4, padx=6)
+        ToolTip(graphs_chk, "Показывать графики")
         make_btn(btns, "➕", "Добавить зондирование", self.add_test).grid(row=0, column=5, padx=4)
 
         # Right: calc params
@@ -680,6 +705,7 @@ class GeoCanvasEditor(tk.Tk):
                 "geo_params": self.open_geo_params_dialog,
                 "fix_algo": self.fix_by_algorithm,
                 "reduce_step": self.convert_10_to_5,
+                "toggle_graphs": self._toggle_show_graphs,
                 "apply_calc": lambda: self._redraw(),
                 "k2k4_30": lambda: messagebox.showinfo("К2→К4", "Режим 30 МПа будет добавлен в следующем шаге."),
                 "k2k4_50": lambda: messagebox.showinfo("К2→К4", "Режим 50 МПа будет добавлен в следующем шаге."),
@@ -687,6 +713,7 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view = RibbonView(self, commands=commands, icon_font=_pick_icon_font(11))
             self.ribbon_view.pack(side="top", fill="x", before=ribbon)
             self.ribbon_view.set_object_name(self.object_name)
+            self.ribbon_view.set_show_graphs(bool(getattr(self, "show_graphs", False)))
             ribbon.pack_forget()
         # ========= Main canvas (fixed header) =========
         mid = ttk.Frame(self)
@@ -749,7 +776,7 @@ class GeoCanvasEditor(tk.Tk):
                 except Exception:
                     n_tests = 0
                 try:
-                    col_w = float(self.w_depth + self.w_val*2 + (self.w_val if getattr(self, 'geo_kind', 'K2')=='K4' else 0))
+                    col_w = float(self._column_block_width())
                 except Exception:
                     col_w = 0.0
                 try:
@@ -1315,7 +1342,6 @@ class GeoCanvasEditor(tk.Tk):
             common_depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
         common_var = tk.StringVar(master=self, value=f"{common_depth0:g}")
         apply_all_var = tk.BooleanVar(master=self, value=(False if getattr(self, 'geo_kind', 'K2')=='K4' else True))
-        show_graphs_var = tk.BooleanVar(master=self, value=bool(getattr(self, "show_graphs", False)))
 
         # объект (встроено)
         obj_var = tk.StringVar(master=self, value=(getattr(self, "object_code", "") or ""))
@@ -1364,19 +1390,6 @@ class GeoCanvasEditor(tk.Tk):
 
         apply_all_chk = ttk.Checkbutton(frm, text="Применить ко всем", variable=apply_all_var)
         apply_all_chk.grid(row=r, column=2, columnspan=3, sticky="w", padx=(12, 0), pady=2)
-        r += 1
-
-        def _on_toggle_graphs(*_args):
-            try:
-                self.show_graphs = bool(show_graphs_var.get())
-            except Exception:
-                self.show_graphs = False
-            self._redraw()
-            self.schedule_graph_redraw()
-
-        show_graphs_var.trace_add("write", _on_toggle_graphs)
-        graphs_chk = ttk.Checkbutton(frm, text="Показывать графики", variable=show_graphs_var)
-        graphs_chk.grid(row=r, column=0, columnspan=5, sticky="w", pady=(2, 2))
         r += 1
 
         ttk.Separator(frm).grid(row=r, column=0, columnspan=5, sticky="ew", pady=(8, 8))
@@ -2765,6 +2778,31 @@ class GeoCanvasEditor(tk.Tk):
         self.status.config(text="Конвертация 10→5 выполнена. Новые строки помечены зелёным.")
 
     # ---------------- drawing helpers ----------------
+    def _table_col_width(self) -> int:
+        return self.w_depth + self.w_val*2 + (self.w_val if getattr(self, "geo_kind", "K2")=="K4" else 0)
+
+    def _column_block_width(self) -> int:
+        graph_w = int(getattr(self, "graph_w", 150) or 150) if bool(getattr(self, "show_graphs", False)) else 0
+        return self._table_col_width() + graph_w
+
+    def _column_x0(self, col: int) -> int:
+        return self.pad_x + col * (self._column_block_width() + self.col_gap)
+
+    def _graph_rect_for_test(self, ti: int, r: int | None = None):
+        try:
+            col = int(self.display_cols.index(ti))
+        except Exception:
+            return None
+        if not bool(getattr(self, "show_graphs", False)):
+            return None
+        x0 = self._column_x0(col) + self._table_col_width()
+        x1 = x0 + int(getattr(self, "graph_w", 150) or 150)
+        if r is None:
+            return x0, x1, 0, len(getattr(self, "_grid", []) or []) * self.row_h
+        y0 = r * self.row_h
+        y1 = y0 + self.row_h
+        return x0, x1, y0, y1
+
     def _content_size(self):
         # Размеры контента для scrollregion.
         # Важно: таблица (цифры) теперь в отдельном canvas и скроллится по Y без шапки.
@@ -2777,11 +2815,9 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             max_rows = max((len(t.qc) for t in self.tests), default=0)
 
-        col_w = self.w_depth + self.w_val*2 + (self.w_val if getattr(self, "geo_kind", "K2")=="K4" else 0)
-        self._last_col_w = col_w
-        total_w = self.pad_x * 2 + (col_w * len(self.tests)) + (self.col_gap * max(0, len(self.tests) - 1))
-        if bool(getattr(self, "show_graphs", False)):
-            total_w += int(getattr(self, "graph_w", 120) or 120)
+        block_w = self._column_block_width()
+        self._last_col_w = block_w
+        total_w = self.pad_x * 2 + (block_w * len(self.tests)) + (self.col_gap * max(0, len(self.tests) - 1))
         body_h = max_rows * self.row_h
         header_h = int(self.pad_y + self.hdr_h)  # фиксированная область
         return total_w, body_h, header_h
@@ -2916,28 +2952,84 @@ class GeoCanvasEditor(tk.Tk):
         self.display_cols = sorted(range(len(self.tests)), key=_key)
 
     def schedule_graph_redraw(self):
-        if not bool(getattr(self, "show_graphs", False)):
-            self._clear_graph_layers()
-            return
         prev = getattr(self, "_graph_redraw_after_id", None)
         if prev is not None:
             try:
                 self.after_cancel(prev)
             except Exception:
                 pass
-        self._graph_redraw_after_id = self.after(60, self._draw_graph_layers)
+        if not bool(getattr(self, "show_graphs", False)):
+            self._clear_graph_layers()
+            self._graph_redraw_after_id = None
+            return
+        self._graph_redraw_after_id = self.after(60, self._redraw_graphs_now)
 
     def _clear_graph_layers(self):
         for cnv in (getattr(self, "canvas", None), getattr(self, "hcanvas", None)):
             if cnv is None:
                 continue
-            for tag in ("graph_axes", "graph_qc", "graph_fs"):
+            for tag in ("graph_axes", "graph_qc", "graph_fs", "graph_nodata"):
                 try:
                     cnv.delete(tag)
                 except Exception:
                     pass
 
-    def _draw_graph_layers(self):
+    def _draw_graph_axes_for_test(self, ti: int, x0: float, x1: float, qmax: float, fmax: float):
+        y0 = self.pad_y
+        y1 = y0 + self.hdr_h
+        tag = ("graph_axes", f"graph_axes_{ti}")
+        self.hcanvas.create_rectangle(x0, y0, x1, y1, fill="#fbfdff", outline=GUI_GRID, tags=tag)
+        pad = 8
+        xa0 = x0 + pad
+        xa1 = x1 - pad
+        qc_axis_y = y0 + 24
+        fs_axis_y = y0 + 46
+        self.hcanvas.create_line(xa0, qc_axis_y, xa1, qc_axis_y, fill=GRAPH_QC_GREEN, width=1, tags=tag)
+        self.hcanvas.create_line(xa0, fs_axis_y, xa1, fs_axis_y, fill=GRAPH_FS_BLUE, width=1, tags=tag)
+        self.hcanvas.create_text(xa0, qc_axis_y - 10, anchor="w", text="qc, МПа", fill=GRAPH_QC_GREEN, font=("Segoe UI", 8), tags=tag)
+        self.hcanvas.create_text(xa0, fs_axis_y - 10, anchor="w", text="fs, кПа", fill=GRAPH_FS_BLUE, font=("Segoe UI", 8), tags=tag)
+        self.hcanvas.create_text(xa1, qc_axis_y - 10, anchor="e", text=f"0..{qmax:.1f}", fill=GRAPH_QC_GREEN, font=("Segoe UI", 7), tags=tag)
+        self.hcanvas.create_text(xa1, fs_axis_y - 10, anchor="e", text=f"0..{fmax:.0f}", fill=GRAPH_FS_BLUE, font=("Segoe UI", 7), tags=tag)
+
+    def _draw_graph_lines_for_test(self, ti: int, rect, depths, qc_mpa, fs_kpa):
+        x0, x1, y0, y1 = rect
+        tag_axes = ("graph_axes", f"graph_axes_{ti}")
+        tag_qc = ("graph_qc", f"graph_qc_{ti}")
+        tag_fs = ("graph_fs", f"graph_fs_{ti}")
+        tag_nodata = ("graph_nodata", f"graph_nodata_{ti}")
+        self.canvas.create_rectangle(x0, y0, x1, y1, fill="#fbfdff", outline=GUI_GRID, tags=tag_axes)
+
+        if not depths:
+            self.canvas.create_text((x0 + x1) / 2, (y0 + y1) / 2, text="нет данных", fill="#666", font=("Segoe UI", 8), tags=tag_nodata)
+            return
+
+        dmin = min(depths)
+        dmax = max(depths)
+        if dmax <= dmin:
+            dmax = dmin + 0.1
+        qmax = max(max(qc_mpa), 0.1)
+        fmax = max(max(fs_kpa), 1.0)
+
+        pad = 8
+        xa0 = x0 + pad
+        xa1 = x1 - pad
+
+        def _sx(v, vmax):
+            return xa0 + (max(0.0, min(v, vmax)) / vmax) * (xa1 - xa0)
+
+        qc_pts = []
+        fs_pts = []
+        for dv, qv, fv in zip(depths, qc_mpa, fs_kpa):
+            yy = y0 + ((dv - dmin) / (dmax - dmin)) * (y1 - y0)
+            qc_pts.extend([_sx(qv, qmax), yy])
+            fs_pts.extend([_sx(fv, fmax), yy])
+
+        if len(qc_pts) >= 4:
+            self.canvas.create_line(*qc_pts, fill=GRAPH_QC_GREEN, width=2, smooth=False, tags=tag_qc)
+        if len(fs_pts) >= 4:
+            self.canvas.create_line(*fs_pts, fill=GRAPH_FS_BLUE, width=2, smooth=False, tags=tag_fs)
+
+    def _redraw_graphs_now(self):
         self._graph_redraw_after_id = None
         self._clear_graph_layers()
         if not bool(getattr(self, "show_graphs", False)):
@@ -2945,85 +3037,39 @@ class GeoCanvasEditor(tk.Tk):
         if not getattr(self, "tests", None):
             return
 
-        col_w = self.w_depth + self.w_val*2 + (self.w_val if getattr(self, "geo_kind", "K2") == "K4" else 0)
-        xg0 = self.pad_x + (col_w * len(self.tests)) + (self.col_gap * max(0, len(self.tests) - 1))
-        xg1 = xg0 + int(getattr(self, "graph_w", 120) or 120)
-
-        y0 = self.pad_y
-        y1 = y0 + self.hdr_h
-        self.hcanvas.create_rectangle(xg0, y0, xg1, y1, fill="#fbfdff", outline=GUI_GRID, tags=("graph_axes",))
-
-        pad = 8
-        xa0 = xg0 + pad
-        xa1 = xg1 - pad
-        qc_axis_y = y0 + 24
-        fs_axis_y = y0 + 46
-
-        self.hcanvas.create_line(xa0, qc_axis_y, xa1, qc_axis_y, fill=GRAPH_QC_GREEN, width=1, tags=("graph_axes",))
-        self.hcanvas.create_line(xa0, fs_axis_y, xa1, fs_axis_y, fill=GRAPH_FS_BLUE, width=1, tags=("graph_axes",))
-        self.hcanvas.create_text(xa0, qc_axis_y - 10, anchor="w", text="qc, МПа", fill=GRAPH_QC_GREEN, font=("Segoe UI", 8), tags=("graph_axes",))
-        self.hcanvas.create_text(xa0, fs_axis_y - 10, anchor="w", text="fs, кПа", fill=GRAPH_FS_BLUE, font=("Segoe UI", 8), tags=("graph_axes",))
-
-        active_ti = self._active_test_idx
-        if active_ti is None and getattr(self, "_editing", None):
-            active_ti = self._editing[0]
-        if active_ti is None or active_ti < 0 or active_ti >= len(self.tests):
-            self.hcanvas.create_text((xg0 + xg1) / 2, y0 + self.hdr_h / 2, text="нет данных", fill="#666", font=("Segoe UI", 8), tags=("graph_axes",))
-            return
-
-        t = self.tests[active_ti]
-        depths = []
-        qc_vals = []
-        fs_vals = []
-        for i, ds in enumerate(getattr(t, "depth", []) or []):
-            dv = _parse_depth_float(ds)
-            if dv is None:
+        body_h = len(getattr(self, "_grid", []) or []) * self.row_h
+        self._refresh_display_order()
+        for ti in self.display_cols:
+            rect = self._graph_rect_for_test(ti)
+            if not rect:
                 continue
-            q_raw = _parse_cell_int((getattr(t, "qc", []) or [""])[i]) if i < len(getattr(t, "qc", []) or []) else None
-            f_raw = _parse_cell_int((getattr(t, "fs", []) or [""])[i]) if i < len(getattr(t, "fs", []) or []) else None
-            if q_raw is None and f_raw is None:
-                continue
-            qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
-            depths.append(float(dv))
-            qc_vals.append(float(qc_mpa))
-            fs_vals.append(float(fs_kpa))
+            x0, x1, y0, y1 = rect
+            if body_h > 0:
+                y1 = body_h
+            t = self.tests[ti]
+            depths = []
+            qc_vals = []
+            fs_vals = []
+            for i, ds in enumerate(getattr(t, "depth", []) or []):
+                dv = _parse_depth_float(ds)
+                if dv is None:
+                    continue
+                q_raw = _parse_cell_int((getattr(t, "qc", []) or [""])[i]) if i < len(getattr(t, "qc", []) or []) else None
+                f_raw = _parse_cell_int((getattr(t, "fs", []) or [""])[i]) if i < len(getattr(t, "fs", []) or []) else None
+                if q_raw is None and f_raw is None:
+                    continue
+                qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
+                depths.append(float(dv))
+                qc_vals.append(float(qc_mpa))
+                fs_vals.append(float(fs_kpa))
 
-        if not depths:
-            self.hcanvas.create_text((xg0 + xg1) / 2, y0 + self.hdr_h / 2, text="нет данных", fill="#666", font=("Segoe UI", 8), tags=("graph_axes",))
-            return
+            qmax = max(max(qc_vals), 0.1) if qc_vals else 0.1
+            fmax = max(max(fs_vals), 1.0) if fs_vals else 1.0
+            self._draw_graph_axes_for_test(ti, x0, x1, qmax, fmax)
+            self._draw_graph_lines_for_test(ti, (x0, x1, y0, y1), depths, qc_vals, fs_vals)
 
-        dmin = min(depths)
-        dmax = max(depths)
-        if dmax <= dmin:
-            dmax = dmin + 0.1
-
-        qmax = max(max(qc_vals), 0.1)
-        fmax = max(max(fs_vals), 1.0)
-
-        def _sx_q(v):
-            return xa0 + (max(0.0, min(v, qmax)) / qmax) * (xa1 - xa0)
-
-        def _sx_f(v):
-            return xa0 + (max(0.0, min(v, fmax)) / fmax) * (xa1 - xa0)
-
-        self.hcanvas.create_text(xa1, qc_axis_y - 10, anchor="e", text=f"0..{qmax:.1f}", fill=GRAPH_QC_GREEN, font=("Segoe UI", 7), tags=("graph_axes",))
-        self.hcanvas.create_text(xa1, fs_axis_y - 10, anchor="e", text=f"0..{fmax:.0f}", fill=GRAPH_FS_BLUE, font=("Segoe UI", 7), tags=("graph_axes",))
-
-        yb0 = 0
-        yb1 = len(getattr(self, "_grid", []) or []) * self.row_h
-        self.canvas.create_rectangle(xg0, yb0, xg1, yb1, fill="#fbfdff", outline=GUI_GRID, tags=("graph_axes",))
-
-        qc_pts = []
-        fs_pts = []
-        for dv, qv, fv in zip(depths, qc_vals, fs_vals):
-            y = ((dv - dmin) / (dmax - dmin)) * yb1
-            qc_pts.extend([_sx_q(qv), y])
-            fs_pts.extend([_sx_f(fv), y])
-
-        if len(qc_pts) >= 4:
-            self.canvas.create_line(*qc_pts, fill=GRAPH_QC_GREEN, width=2, smooth=False, tags=("graph_qc",))
-        if len(fs_pts) >= 4:
-            self.canvas.create_line(*fs_pts, fill=GRAPH_FS_BLUE, width=2, smooth=False, tags=("graph_fs",))
+    def _draw_graph_layers(self):
+        self._redraw_graphs_now()
 
     def _on_left_click(self, event):
         self._evt_widget = event.widget
@@ -3394,9 +3440,7 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
     def _cell_bbox(self, col: int, row: int, field: str):
-        x0 = self.pad_x
-        col_w = self.w_depth + self.w_val*2 + (self.w_val if getattr(self, "geo_kind", "K2")=="K4" else 0)
-        x0 += col * (col_w + self.col_gap)
+        x0 = self._column_x0(col)
         # Таблица (цифры) рисуется в отдельном canvas и скроллится по Y,
         # поэтому старт по Y = 0 (без hdr_h).
         y0 = row * self.row_h
@@ -3459,8 +3503,8 @@ class GeoCanvasEditor(tk.Tk):
                 pass
 
     def _header_bbox(self, col: int):
-        col_w = self.w_depth + self.w_val*2 + (self.w_val if getattr(self, "geo_kind", "K2")=="K4" else 0)
-        x0 = self.pad_x + col * (col_w + self.col_gap)
+        col_w = self._table_col_width()
+        x0 = self._column_x0(col)
         y0 = self.pad_y
         x1 = x0 + col_w
         y1 = y0 + self.hdr_h
@@ -3700,7 +3744,7 @@ class GeoCanvasEditor(tk.Tk):
 
         self._update_scrollregion()
         if bool(getattr(self, "show_graphs", False)):
-            self._draw_graph_layers()
+            self._redraw_graphs_now()
         else:
             self._clear_graph_layers()
     # ---------------- hit test & editing ----------------
@@ -3712,7 +3756,7 @@ class GeoCanvasEditor(tk.Tk):
         if not self.tests:
             return None
 
-        col_w = self.w_depth + self.w_val*2 + (self.w_val if getattr(self, "geo_kind", "K2")=="K4" else 0)
+        col_w = self._table_col_width()
 
         if w is getattr(self, "hcanvas", None):
             cx = self.hcanvas.canvasx(x)
@@ -3721,7 +3765,7 @@ class GeoCanvasEditor(tk.Tk):
 
             self._refresh_display_order()
             for col, ti in enumerate(self.display_cols):
-                x0 = self.pad_x + col * (col_w + self.col_gap)
+                x0 = self._column_x0(col)
                 x1 = x0 + col_w
                 if x0 <= cx <= x1 and (y0 <= cy <= y0 + self.hdr_h):
                     # export checkbox (left)
@@ -3751,7 +3795,7 @@ class GeoCanvasEditor(tk.Tk):
 
         self._refresh_display_order()
         for col, ti in enumerate(self.display_cols):
-            x0 = self.pad_x + col * (col_w + self.col_gap)
+            x0 = self._column_x0(col)
             x1 = x0 + col_w
             if x0 <= cx <= x1:
                 # which field
@@ -4661,8 +4705,8 @@ class GeoCanvasEditor(tk.Tk):
             direction = 1 if direction > 0 else -1
         except Exception:
             direction = 1
-        # ширина одной колонки (Depth + qc + fs) + зазор между колонками
-        col_block = int(self.w_depth + self.w_val + self.w_val + self.col_gap)
+        # ширина одной колонки (таблица + график при включении) + зазор между колонками
+        col_block = int(self._column_block_width() + self.col_gap)
         try:
             w = float(getattr(self, "_scroll_w", 0) or 0)
         except Exception:
