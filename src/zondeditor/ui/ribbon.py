@@ -19,11 +19,11 @@ class RibbonView(ttk.Frame):
 
         try:
             style = ttk.Style(self)
-            style.configure("RibbonCompact.TButton", padding=(6, 2))
+            style.configure("RibbonCompact.TButton", padding=(4, 1))
         except Exception:
             pass
 
-        qat = ttk.Frame(self, padding=(6, 2))
+        qat = ttk.Frame(self, padding=(4, 1))
         qat.pack(side="top", fill="x")
         self._add_qat_btn(qat, "undo", ICON_UNDO, "Undo")
         self._add_qat_btn(qat, "redo", ICON_REDO, "Redo")
@@ -51,22 +51,22 @@ class RibbonView(ttk.Frame):
         self._buttons[key] = btn
 
     def _add_btn(self, parent, key: str, text: str, tip: str):
-        btn = ttk.Button(parent, text=text, command=self.commands.get(key), style="RibbonCompact.TButton")
+        btn = ttk.Button(parent, text=text, command=self.commands.get(key), style="RibbonCompact.TButton", width=12)
         btn.pack(side="top", fill="x", pady=1)
         ToolTip(btn, tip)
         self._buttons[key] = btn
 
     def _add_btn_grid(self, parent, key: str, text: str, tip: str, row: int, col: int):
-        btn = ttk.Button(parent, text=text, command=self.commands.get(key), style="RibbonCompact.TButton", width=14)
+        btn = ttk.Button(parent, text=text, command=self.commands.get(key), style="RibbonCompact.TButton", width=12)
         btn.grid(row=row, column=col, sticky="ew", padx=2, pady=1)
         ToolTip(btn, tip)
         self._buttons[key] = btn
 
     def _build_file_tab(self):
-        tab = ttk.Frame(self.tabs, padding=4)
+        tab = ttk.Frame(self.tabs, padding=2)
         self.tabs.add(tab, text="Файл")
 
-        project = ttk.LabelFrame(tab, text="Проект", padding=4)
+        project = ttk.LabelFrame(tab, text="Проект", padding=3)
         project.pack(side="left", fill="y", padx=4)
         project.columnconfigure(0, weight=1)
         project.columnconfigure(1, weight=1)
@@ -75,7 +75,7 @@ class RibbonView(ttk.Frame):
         self._add_btn_grid(project, "save_project", "💾 Сохранить", "Сохранить *.zproj", 1, 0)
         self._add_btn_grid(project, "save_project_as", "💾 Как…", "Сохранить *.zproj как новый", 1, 1)
 
-        obj = ttk.LabelFrame(tab, text="Объект", padding=4)
+        obj = ttk.LabelFrame(tab, text="Объект", padding=3)
         obj.pack(side="left", fill="y", padx=4)
         ttk.Label(obj, text="Название объекта:").pack(anchor="w")
         ent = ttk.Entry(obj, textvariable=self.object_name_var, width=28)
@@ -83,18 +83,18 @@ class RibbonView(ttk.Frame):
         ent.bind("<FocusOut>", lambda _e: self.commands.get("object_name_changed", lambda *_: None)(self.object_name_var.get()))
         ent.bind("<Return>", lambda _e: self.commands.get("object_name_changed", lambda *_: None)(self.object_name_var.get()))
 
-        imp = ttk.LabelFrame(tab, text="Импорт", padding=4)
-        imp.pack(side="left", fill="y", padx=4)
-        self._add_btn(imp, "open_geo", f"{ICON_IMPORT} GEO", "Открыть GEO/GE0")
-        self._add_btn(imp, "open_gxl", f"{ICON_IMPORT} GXL", "Открыть GXL")
-
-        exp = ttk.LabelFrame(tab, text="Экспорт", padding=4)
-        exp.pack(side="left", fill="y", padx=4)
-        self._add_btn(exp, "export_geo", f"{ICON_EXPORT} GEO", "Экспорт GEO только через Сохранить как")
-        self._add_btn(exp, "export_gxl", f"{ICON_EXPORT} GXL", "Экспорт GXL только через Сохранить как")
-        self._add_btn(exp, "export_excel", f"{ICON_EXPORT} Excel", "Экспорт Excel")
-        self._add_btn(exp, "export_credo", f"{ICON_EXPORT} CREDO", "Экспорт CREDO")
-        self._add_btn(exp, "export_archive", "🗜 Архив", "Собрать ZIP с выбранными файлами")
+        actions = ttk.LabelFrame(tab, text="Импорт / Экспорт", padding=3)
+        actions.pack(side="left", fill="y", padx=4)
+        actions.columnconfigure(0, weight=1)
+        actions.columnconfigure(1, weight=1)
+        self._add_btn_grid(actions, "open_geo", f"{ICON_IMPORT} GEO", "Открыть GEO/GE0", 0, 0)
+        self._add_btn_grid(actions, "export_geo", f"{ICON_EXPORT} GEO", "Экспорт GEO только через Сохранить как", 0, 1)
+        self._add_btn_grid(actions, "open_gxl", f"{ICON_IMPORT} GXL", "Открыть GXL", 1, 0)
+        self._add_btn_grid(actions, "export_gxl", f"{ICON_EXPORT} GXL", "Экспорт GXL только через Сохранить как", 1, 1)
+        self._add_btn_grid(actions, "export_excel", f"{ICON_EXPORT} Excel", "Экспорт Excel", 2, 0)
+        self._add_btn_grid(actions, "export_credo", f"{ICON_EXPORT} CREDO", "Экспорт CREDO", 2, 1)
+        self._add_btn_grid(actions, "export_archive", "🗜 Архив", "Собрать ZIP с выбранными файлами", 3, 0)
+        self._add_btn_grid(actions, "export_dxf", f"{ICON_EXPORT} DXF", "Экспорт графиков в DXF (заглушка)", 3, 1)
 
     def _build_params_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)

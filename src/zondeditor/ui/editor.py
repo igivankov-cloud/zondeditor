@@ -926,6 +926,7 @@ class GeoCanvasEditor(tk.Tk):
                 "export_excel": self.export_excel,
                 "export_credo": self.export_credo_zip,
                 "export_archive": self.export_bundle,
+                "export_dxf": self.export_dxf,
                 "geo_params": self.open_geo_params_dialog,
                 "fix_algo": self.fix_by_algorithm,
                 "reduce_step": self.convert_10_to_5,
@@ -3099,6 +3100,25 @@ class GeoCanvasEditor(tk.Tk):
 
         # scroll по Y только для таблицы
         self.canvas.configure(scrollregion=(0, 0, w_total, body_h))
+        try:
+            view_h = int(self.canvas.winfo_height() or 1)
+        except Exception:
+            view_h = 1
+        need_v = body_h > max(1, view_h)
+        if not need_v:
+            try:
+                self.canvas.yview_moveto(0.0)
+            except Exception:
+                pass
+            try:
+                self.vbar.state(["disabled"])
+            except Exception:
+                pass
+        else:
+            try:
+                self.vbar.state(["!disabled"])
+            except Exception:
+                pass
         # шапка: только X-сдвиг, Y фиксирован
         try:
             self.hcanvas.configure(scrollregion=(0, 0, w_total, header_h))
@@ -5499,6 +5519,12 @@ class GeoCanvasEditor(tk.Tk):
             messagebox.showinfo("Готово", f"Excel сохранён:\n{out}")
         except Exception as e:
             messagebox.showerror("Ошибка", str(e))
+
+    def export_dxf(self):
+        messagebox.showinfo(
+            "Экспорт DXF",
+            "Кнопка экспорта графиков в DXF добавлена. Логика экспорта будет реализована следующим шагом.",
+        )
 
     def export_credo_zip(self):
         """Export each test into two CSV (depth;qc_MPa and depth;fs_kPa) without headers, pack into ZIP.
