@@ -9,6 +9,7 @@ import tkinter.font as tkfont
 # stdlib
 import random
 import re
+import bisect
 import os
 import sys
 import math
@@ -382,6 +383,56 @@ class GeoCanvasEditor(tk.Tk):
         self._grid_meter_rows = meter_rows
         self._grid_base = grid
         self._grid_base_row_maps = row_maps
+        self._rebuild_row_geometry()
+
+    def _row_height_for(self, row: int) -> int:
+        units = getattr(self, "_grid_units", []) or []
+        if 0 <= int(row) < len(units):
+            unit = units[int(row)]
+            if bool(getattr(self, "compact_1m", False)) and unit[0] == "meter":
+                return int(self.row_h_compact_1m)
+        return int(self.row_h_default)
+
+    def _rebuild_row_geometry(self):
+        units = getattr(self, "_grid_units", []) or []
+        tops = [0]
+        y = 0
+        for r in range(len(units)):
+            y += self._row_height_for(r)
+            tops.append(y)
+        self._row_tops = tops
+
+    def _row_y_bounds(self, row: int) -> tuple[float, float]:
+        tops = getattr(self, "_row_tops", None)
+        if not tops:
+            self._rebuild_row_geometry()
+            tops = getattr(self, "_row_tops", [0])
+        row = int(max(0, row))
+        if row >= len(tops) - 1:
+            y0 = float(tops[-1])
+            return y0, y0 + float(self.row_h_default)
+        return float(tops[row]), float(tops[row + 1])
+
+    def _total_body_height(self) -> int:
+        tops = getattr(self, "_row_tops", None)
+        if not tops:
+            self._rebuild_row_geometry()
+            tops = getattr(self, "_row_tops", [0])
+        return int(tops[-1] if tops else 0)
+
+    def _row_from_y(self, y: float) -> int:
+        tops = getattr(self, "_row_tops", None)
+        if not tops:
+            self._rebuild_row_geometry()
+            tops = getattr(self, "_row_tops", [0])
+        if y < 0:
+            return -1
+        idx = bisect.bisect_right(tops, float(y)) - 1
+        if idx < 0:
+            return -1
+        if idx >= len(tops) - 1:
+            return len(tops) - 2
+        return idx
 
     def _snapshot(self) -> dict:
         """Снимок состояния для Undo/Redo: данные + раскраска."""
@@ -2984,9 +3035,8 @@ class GeoCanvasEditor(tk.Tk):
         x0 = self._column_x0(col) + self._table_col_width()
         x1 = x0 + int(getattr(self, "graph_w", 150) or 150)
         if r is None:
-            return x0, x1, 0, len(getattr(self, "_grid", []) or []) * self.row_h
-        y0 = r * self.row_h
-        y1 = y0 + self.row_h
+            return x0, x1, 0, self._total_body_height()
+        y0, y1 = self._row_y_bounds(r)
         return x0, x1, y0, y1
 
     def _content_size(self):
@@ -3004,7 +3054,7 @@ class GeoCanvasEditor(tk.Tk):
         block_w = self._column_block_width()
         self._last_col_w = block_w
         total_w = self.pad_x * 2 + (block_w * len(self.tests)) + (self.col_gap * max(0, len(self.tests) - 1))
-        body_h = max_rows * self.row_h
+        body_h = self._total_body_height() if max_rows > 0 else 0
         header_h = int(self.pad_y + self.hdr_h)  # фиксированная область
         return total_w, body_h, header_h
 
@@ -3335,7 +3385,8 @@ class GeoCanvasEditor(tk.Tk):
             disp_map = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {}) or {}
 
             for disp_r, unit in enumerate(units):
-                y0r = float(disp_r * self.row_h)
+                y0r, y1r = self._row_y_bounds(disp_r)
+                row_h_cur = max(1.0, float(y1r - y0r))
                 if unit[0] == "row":
                     di = disp_map.get(disp_r)
                     if di is None:
@@ -3345,7 +3396,7 @@ class GeoCanvasEditor(tk.Tk):
                     if q_raw is None and f_raw is None:
                         continue
                     qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
-                    y_points.append(y0r + (self.row_h * 0.5))
+                    y_points.append(y0r + (row_h_cur * 0.5))
                     qc_vals.append(float(qc_mpa))
                     fs_vals.append(float(fs_kpa))
                 elif unit[0] == "meter":
@@ -3360,7 +3411,7 @@ class GeoCanvasEditor(tk.Tk):
                             continue
                         qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
                         frac = max(0.0, min(0.999, float(dv) - float(meter_n)))
-                        y_points.append(y0r + (frac * self.row_h))
+                        y_points.append(y0r + (frac * row_h_cur))
                         qc_vals.append(float(qc_mpa))
                         fs_vals.append(float(fs_kpa))
 
@@ -3767,16 +3818,16 @@ class GeoCanvasEditor(tk.Tk):
         x0 = self._column_x0(col)
         # Таблица (цифры) рисуется в отдельном canvas и скроллится по Y,
         # поэтому старт по Y = 0 (без hdr_h).
-        y0 = row * self.row_h
+        y0, y1 = self._row_y_bounds(row)
 
         if field == "depth":
-            return x0, y0, x0 + self.w_depth, y0 + self.row_h
+            return x0, y0, x0 + self.w_depth, y1
         if field == "qc":
-            return x0 + self.w_depth, y0, x0 + self.w_depth + self.w_val, y0 + self.row_h
+            return x0 + self.w_depth, y0, x0 + self.w_depth + self.w_val, y1
         if field == "fs":
-            return x0 + self.w_depth + self.w_val, y0, x0 + self.w_depth + self.w_val + self.w_val, y0 + self.row_h
+            return x0 + self.w_depth + self.w_val, y0, x0 + self.w_depth + self.w_val + self.w_val, y1
         if field == "incl":
-            return x0 + self.w_depth + self.w_val*2, y0, x0 + self.w_depth + self.w_val*3, y0 + self.row_h
+            return x0 + self.w_depth + self.w_val*2, y0, x0 + self.w_depth + self.w_val*3, y1
         raise ValueError("bad field")
 
     def _ensure_cell_visible(self, col: int, row: int, field: str, pad: int = 6):
@@ -4139,7 +4190,7 @@ class GeoCanvasEditor(tk.Tk):
         if cy < 0:
             return None
 
-        row = int(cy // self.row_h)
+        row = self._row_from_y(cy)
         if row < 0:
             return None
 

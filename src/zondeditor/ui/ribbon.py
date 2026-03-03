@@ -17,13 +17,19 @@ class RibbonView(ttk.Frame):
         self.compact_1m_var = tk.BooleanVar(value=False)
         self._buttons: dict[str, ttk.Button] = {}
 
-        qat = ttk.Frame(self, padding=(8, 4))
+        try:
+            style = ttk.Style(self)
+            style.configure("RibbonCompact.TButton", padding=(6, 2))
+        except Exception:
+            pass
+
+        qat = ttk.Frame(self, padding=(6, 2))
         qat.pack(side="top", fill="x")
         self._add_qat_btn(qat, "undo", ICON_UNDO, "Undo")
         self._add_qat_btn(qat, "redo", ICON_REDO, "Redo")
 
         self.tabs = ttk.Notebook(self)
-        self.tabs.pack(side="top", fill="x", padx=4, pady=(0, 4))
+        self.tabs.pack(side="top", fill="x", padx=2, pady=(0, 2))
 
         self._build_file_tab()
         self._build_params_tab()
@@ -45,45 +51,53 @@ class RibbonView(ttk.Frame):
         self._buttons[key] = btn
 
     def _add_btn(self, parent, key: str, text: str, tip: str):
-        btn = ttk.Button(parent, text=text, command=self.commands.get(key))
-        btn.pack(side="top", fill="x", pady=2)
+        btn = ttk.Button(parent, text=text, command=self.commands.get(key), style="RibbonCompact.TButton")
+        btn.pack(side="top", fill="x", pady=1)
+        ToolTip(btn, tip)
+        self._buttons[key] = btn
+
+    def _add_btn_grid(self, parent, key: str, text: str, tip: str, row: int, col: int):
+        btn = ttk.Button(parent, text=text, command=self.commands.get(key), style="RibbonCompact.TButton", width=14)
+        btn.grid(row=row, column=col, sticky="ew", padx=2, pady=1)
         ToolTip(btn, tip)
         self._buttons[key] = btn
 
     def _build_file_tab(self):
-        tab = ttk.Frame(self.tabs, padding=8)
+        tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Файл")
 
-        project = ttk.LabelFrame(tab, text="Проект", padding=6)
+        project = ttk.LabelFrame(tab, text="Проект", padding=4)
         project.pack(side="left", fill="y", padx=4)
-        self._add_btn(project, "new_project", "Создать проект…", "Создать новый проект")
-        self._add_btn(project, "open_project", "Открыть проект…", "Открыть *.zproj")
-        self._add_btn(project, "save_project", "Сохранить проект", "Сохранить *.zproj")
-        self._add_btn(project, "save_project_as", "Сохранить проект как…", "Сохранить *.zproj как новый")
+        project.columnconfigure(0, weight=1)
+        project.columnconfigure(1, weight=1)
+        self._add_btn_grid(project, "new_project", "🆕 Новый", "Создать новый проект", 0, 0)
+        self._add_btn_grid(project, "open_project", "📂 Открыть", "Открыть *.zproj", 0, 1)
+        self._add_btn_grid(project, "save_project", "💾 Сохранить", "Сохранить *.zproj", 1, 0)
+        self._add_btn_grid(project, "save_project_as", "💾 Как…", "Сохранить *.zproj как новый", 1, 1)
 
-        obj = ttk.LabelFrame(tab, text="Объект", padding=6)
+        obj = ttk.LabelFrame(tab, text="Объект", padding=4)
         obj.pack(side="left", fill="y", padx=4)
         ttk.Label(obj, text="Название объекта:").pack(anchor="w")
         ent = ttk.Entry(obj, textvariable=self.object_name_var, width=28)
-        ent.pack(fill="x", pady=(4, 0))
+        ent.pack(fill="x", pady=(2, 0))
         ent.bind("<FocusOut>", lambda _e: self.commands.get("object_name_changed", lambda *_: None)(self.object_name_var.get()))
         ent.bind("<Return>", lambda _e: self.commands.get("object_name_changed", lambda *_: None)(self.object_name_var.get()))
 
-        imp = ttk.LabelFrame(tab, text="Импорт", padding=6)
+        imp = ttk.LabelFrame(tab, text="Импорт", padding=4)
         imp.pack(side="left", fill="y", padx=4)
-        self._add_btn(imp, "open_geo", f"{ICON_IMPORT} Открыть GEO…", "Открыть GEO/GE0")
-        self._add_btn(imp, "open_gxl", f"{ICON_IMPORT} Открыть GXL…", "Открыть GXL")
+        self._add_btn(imp, "open_geo", f"{ICON_IMPORT} GEO", "Открыть GEO/GE0")
+        self._add_btn(imp, "open_gxl", f"{ICON_IMPORT} GXL", "Открыть GXL")
 
-        exp = ttk.LabelFrame(tab, text="Экспорт", padding=6)
+        exp = ttk.LabelFrame(tab, text="Экспорт", padding=4)
         exp.pack(side="left", fill="y", padx=4)
-        self._add_btn(exp, "export_geo", f"{ICON_EXPORT} Экспорт GEO…", "Экспорт GEO только через Сохранить как")
-        self._add_btn(exp, "export_gxl", f"{ICON_EXPORT} Экспорт GXL…", "Экспорт GXL только через Сохранить как")
-        self._add_btn(exp, "export_excel", f"{ICON_EXPORT} Экспорт Excel…", "Экспорт Excel")
-        self._add_btn(exp, "export_credo", f"{ICON_EXPORT} Экспорт CREDO/ZIP…", "Экспорт CREDO")
-        self._add_btn(exp, "export_archive", "Сохранить архивом…", "Собрать ZIP с выбранными файлами")
+        self._add_btn(exp, "export_geo", f"{ICON_EXPORT} GEO", "Экспорт GEO только через Сохранить как")
+        self._add_btn(exp, "export_gxl", f"{ICON_EXPORT} GXL", "Экспорт GXL только через Сохранить как")
+        self._add_btn(exp, "export_excel", f"{ICON_EXPORT} Excel", "Экспорт Excel")
+        self._add_btn(exp, "export_credo", f"{ICON_EXPORT} CREDO", "Экспорт CREDO")
+        self._add_btn(exp, "export_archive", "🗜 Архив", "Собрать ZIP с выбранными файлами")
 
     def _build_params_tab(self):
-        tab = ttk.Frame(self.tabs, padding=8)
+        tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Параметры")
         self._add_btn(tab, "geo_params", f"{ICON_SETTINGS} Параметры зондирований (GEO)", "Открыть параметры GEO")
         graphs_chk = ttk.Checkbutton(
@@ -92,7 +106,7 @@ class RibbonView(ttk.Frame):
             variable=self.show_graphs_var,
             command=lambda: self.commands.get("toggle_graphs", lambda *_: None)(bool(self.show_graphs_var.get())),
         )
-        graphs_chk.pack(side="top", anchor="w", pady=(8, 0))
+        graphs_chk.pack(side="top", anchor="w", pady=(4, 0))
         ToolTip(graphs_chk, "Показывать графики")
         compact_chk = ttk.Checkbutton(
             tab,
@@ -100,26 +114,26 @@ class RibbonView(ttk.Frame):
             variable=self.compact_1m_var,
             command=lambda: self.commands.get("toggle_compact_1m", lambda *_: None)(bool(self.compact_1m_var.get())),
         )
-        compact_chk.pack(side="top", anchor="w", pady=(6, 0))
+        compact_chk.pack(side="top", anchor="w", pady=(2, 0))
         ToolTip(compact_chk, "Свернуть таблицу/графики по 1-метровым интервалам")
 
     def _build_processing_tab(self):
-        tab = ttk.Frame(self.tabs, padding=8)
+        tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Обработка")
 
-        fix = ttk.LabelFrame(tab, text="Исправление", padding=6)
+        fix = ttk.LabelFrame(tab, text="Исправление", padding=4)
         fix.pack(side="left", fill="y", padx=4)
         self._add_btn(fix, "fix_algo", "Исправить (алгоритм)", "Автоматическая корректировка")
 
-        step = ttk.LabelFrame(tab, text="Шаг", padding=6)
+        step = ttk.LabelFrame(tab, text="Шаг", padding=4)
         step.pack(side="left", fill="y", padx=4)
         self._add_btn(step, "reduce_step", "Уменьшить шаг…", "Преобразовать шаг")
 
-        calc = ttk.LabelFrame(tab, text="Параметры пересчёта", padding=6)
+        calc = ttk.LabelFrame(tab, text="Параметры пересчёта", padding=4)
         calc.pack(side="left", fill="y", padx=4)
         self._add_btn(calc, "apply_calc", "Применить", "Применить параметры пересчёта")
 
-        k2k4 = ttk.LabelFrame(tab, text="К2 → К4", padding=6)
+        k2k4 = ttk.LabelFrame(tab, text="К2 → К4", padding=4)
         k2k4.pack(side="left", fill="y", padx=4)
         self._add_btn(k2k4, "k2k4_30", "Пересчитать К2→К4 (30 МПа)", "Режим 30 МПа")
         self._add_btn(k2k4, "k2k4_50", "Пересчитать К2→К4 (50 МПа)", "Режим 50 МПа")
