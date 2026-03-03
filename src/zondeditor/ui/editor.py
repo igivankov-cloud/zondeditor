@@ -311,6 +311,27 @@ class GeoCanvasEditor(tk.Tk):
 
         return grid, step, row_maps, start_rows
 
+    def _build_grid(self):
+        """Backward-compatible grid cache builder used by legacy callbacks."""
+        if not getattr(self, "tests", None):
+            self._grid = []
+            self._grid_step = None
+            self._grid_row_maps = {}
+            self._grid_start_rows = {}
+            return
+
+        grid, grid_step, row_maps, start_rows = self._compute_depth_grid()
+        if not grid:
+            max_rows = max((len(getattr(t, "qc", []) or []) for t in self.tests), default=0)
+            grid = [None] * max_rows
+            row_maps = {ti: {r: r for r in range(len(getattr(self.tests[ti], "qc", []) or []))} for ti in range(len(self.tests))}
+            start_rows = {ti: 0 for ti in range(len(self.tests))}
+
+        self._grid = grid
+        self._grid_step = grid_step
+        self._grid_row_maps = row_maps
+        self._grid_start_rows = start_rows
+
     def _snapshot(self) -> dict:
         """Снимок состояния для Undo/Redo: данные + раскраска."""
         tests_snap: list[dict] = []
