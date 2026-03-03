@@ -935,24 +935,9 @@ class GeoCanvasEditor(tk.Tk):
 
                 # вычислим максимально допустимую позицию X, при которой последняя колонка видна полностью
                 try:
-                    n_tests = len(self.tests)
+                    last_right_px = float(self._last_column_right_px())
                 except Exception:
-                    n_tests = 0
-                try:
-                    col_w = float(self._column_block_width())
-                except Exception:
-                    col_w = 0.0
-                try:
-                    gap = float(self.col_gap)
-                except Exception:
-                    gap = 0.0
-                try:
-                    pad = float(self.pad_x)
-                except Exception:
-                    pad = 0.0
-
-                last_left_px = pad + (col_w + gap) * max(0, n_tests - 1)
-                last_right_px = last_left_px + col_w
+                    last_right_px = 0.0
                 max_px = max(0.0, w - max(1.0, view_w))
                 allow_px = min(max_px, max(0.0, last_right_px - max(1.0, view_w)))
 
@@ -2950,6 +2935,32 @@ class GeoCanvasEditor(tk.Tk):
 
     def _column_x0(self, col: int) -> int:
         return self.pad_x + col * (self._column_block_width() + self.col_gap)
+
+    def _last_column_right_px(self) -> float:
+        """Правая граница последнего блока в пикселях (с учетом графиков)."""
+        try:
+            n_cols = len(getattr(self, "display_cols", []) or [])
+        except Exception:
+            n_cols = 0
+        if n_cols <= 0:
+            try:
+                n_cols = len(getattr(self, "tests", []) or [])
+            except Exception:
+                n_cols = 0
+        try:
+            col_w = float(self._column_block_width())
+        except Exception:
+            col_w = 0.0
+        try:
+            gap = float(self.col_gap)
+        except Exception:
+            gap = 0.0
+        try:
+            pad = float(self.pad_x)
+        except Exception:
+            pad = 0.0
+        last_left_px = pad + (col_w + gap) * max(0, n_cols - 1)
+        return last_left_px + col_w
 
     def _graph_rect_for_test(self, ti: int, r: int | None = None):
         try:
@@ -5074,24 +5085,9 @@ class GeoCanvasEditor(tk.Tk):
         # блокируем дальнейший шаг вправо. Это убирает «последний лишний скролл»,
         # который и вызывает смещение шапки на самом правом краю.
         try:
-            n_tests = len(self.tests)
+            last_right_px = float(self._last_column_right_px())
         except Exception:
-            n_tests = 0
-        try:
-            col_w = float(self.w_depth + self.w_val*2 + (self.w_val if getattr(self, 'geo_kind', 'K2')=='K4' else 0))
-        except Exception:
-            col_w = 0.0
-        try:
-            gap = float(self.col_gap)
-        except Exception:
-            gap = 0.0
-        try:
-            pad = float(self.pad_x)
-        except Exception:
-            pad = 0.0
-        # левая/правая границы последней колонки (без учета правого паддинга)
-        last_left_px = pad + (col_w + gap) * max(0, n_tests - 1)
-        last_right_px = last_left_px + col_w
+            last_right_px = 0.0
         view_right_px = x0_px + max(1.0, view_w)
         # Блокируем шаг вправо ТОЛЬКО когда последняя колонка ВИДНА ПОЛНОСТЬЮ.
         if direction > 0 and view_right_px >= (last_right_px - 0.5):
