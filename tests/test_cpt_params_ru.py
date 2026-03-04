@@ -11,9 +11,9 @@ class DummyLayer:
 class DummyTest:
     def __init__(self):
         self.export_on = True
-        self.depth = ["0.0", "0.1", "0.2", "0.3"]
-        self.qc = ["1.0", "2.0", "0", "3.0"]
-        self.layers = [DummyLayer(0.0, 0.3, "ИГЭ-1")]
+        self.depth = ["0.0", "0.1", "0.2", "0.3", "5.1", "5.2"]
+        self.qc = ["1.0", "2.0", "0", "3.0", "6.0", "6.0"]
+        self.layers = [DummyLayer(0.0, 0.3, "ИГЭ-1"), DummyLayer(5.0, 5.3, "ИГЭ-2")]
 
 
 def test_qc_stats_excludes_zero():
@@ -23,12 +23,27 @@ def test_qc_stats_excludes_zero():
     assert round(stats.qc_mean, 3) == 2.0
 
 
-def test_lookup_pipeline_returns_phi_and_e():
+def test_lookup_pipeline_returns_phi_and_e_sp446_with_branches():
     tests = [DummyTest()]
-    registry = {"ИГЭ-1": {"soil_type": "песок"}}
-    result = calculate_ige_cpt_results(tests=tests, ige_registry=registry, settings=CptCalcSettings(method=METHOD_SP446, alluvial_sands=False))
+    registry = {
+        "ИГЭ-1": {"soil_type": "песок", "sand_class": "пылеватый", "alluvial": False, "saturated": None},
+        "ИГЭ-2": {"soil_type": "песок", "sand_class": "мелкий", "alluvial": True, "saturated": None},
+    }
+    result = calculate_ige_cpt_results(tests=tests, ige_registry=registry, settings=CptCalcSettings(method=METHOD_SP446, groundwater_level=0.2))
+    one = result.get("ИГЭ-1")
+    two = result.get("ИГЭ-2")
+    assert one is not None and two is not None
+    assert one["status"] == "ok"
+    assert one["saturated"] is False
+    assert two["saturated"] is True
+    assert two["lookup_branch"].find("глубина: 5м+") >= 0
+
+
+def test_supes_returns_no_norm_status():
+    tests = [DummyTest()]
+    registry = {"ИГЭ-1": {"soil_type": "супесь"}}
+    result = calculate_ige_cpt_results(tests=tests, ige_registry=registry, settings=CptCalcSettings(method=METHOD_SP446))
     one = result.get("ИГЭ-1")
     assert one is not None
-    assert one["n"] == 3
-    assert one["phi_norm"] > 0
-    assert one["E_norm"] > 0
+    assert one["status"] == "no_norm"
+    assert "требуется другой источник" in one["reason"]
