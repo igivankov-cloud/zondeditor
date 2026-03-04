@@ -6,6 +6,7 @@ from typing import Any
 
 MIN_LAYER_THICKNESS_M = 0.20
 SNAP_STEP_M = 0.10
+INSERT_LAYER_THICKNESS_M = 1.00
 
 
 class CalcMode(str, Enum):
@@ -203,11 +204,12 @@ def insert_layer_between(layers: list[Layer], boundary_index: int) -> list[Layer
         raise ValueError("Layers overlap")
     # contiguous layers; split the upper part if possible
     available = next_l.bot_m - prev_l.bot_m
-    if available < MIN_LAYER_THICKNESS_M * 2 - 1e-9:
-        raise ValueError("Not enough thickness to insert a new layer")
+    required = INSERT_LAYER_THICKNESS_M + MIN_LAYER_THICKNESS_M
+    if available < required - 1e-9:
+        raise ValueError("Not enough thickness to insert a 1 m layer")
 
     new_top = prev_l.bot_m
-    new_bot = snap_depth(new_top + MIN_LAYER_THICKNESS_M)
+    new_bot = snap_depth(new_top + INSERT_LAYER_THICKNESS_M)
     if new_bot > next_l.bot_m - MIN_LAYER_THICKNESS_M:
         new_bot = next_l.bot_m - MIN_LAYER_THICKNESS_M
     soil = SoilType.SANDY_LOAM

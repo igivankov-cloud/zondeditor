@@ -47,6 +47,7 @@ from src.zondeditor.domain.layers import (
     SoilType,
     CalcMode,
     Layer,
+    INSERT_LAYER_THICKNESS_M,
     SOIL_STYLE,
     build_default_layers,
     calc_mode_for_soil,
@@ -4240,6 +4241,20 @@ class GeoCanvasEditor(tk.Tk):
         x0, x1, _y0, _y1 = rect
         handle_x = x1 + 10
         plus_x = x0 + 10
+
+        def _draw_plus(tag: str, y_pos: float, boundary: int, kind: str):
+            self.canvas.create_rectangle(plus_x - 6, y_pos - 6, plus_x + 6, y_pos + 6, fill="#ffffff", outline="#8f8f8f", width=1, tags=("layer_handles", "layer_plus_box", tag))
+            self.canvas.create_text(plus_x, y_pos, text="+", fill="#1d4f7c", font=("Segoe UI", 9, "bold"), tags=("layer_handles", "layer_plus", tag))
+            self._layer_handle_hitbox.append({"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (plus_x - 10, y_pos - 10, plus_x + 10, y_pos + 10)})
+
+        if layers:
+            top_y = self._depth_to_canvas_y(float(layers[0].top_m))
+            bot_y = self._depth_to_canvas_y(float(layers[-1].bot_m))
+            if top_y is not None:
+                _draw_plus(f"layer_plus_top_{ti}", top_y, 0, "plus_top")
+            if bot_y is not None:
+                _draw_plus(f"layer_plus_bottom_{ti}", bot_y, len(layers), "plus_bottom")
+
         for bi in range(1, len(layers)):
             boundary = layers[bi].top_m
             y = self._depth_to_canvas_y(boundary)
@@ -4253,11 +4268,9 @@ class GeoCanvasEditor(tk.Tk):
             bx1 = handle_x - 14
             self.canvas.create_rectangle(bx0, y - 8, bx1, y + 8, fill="#ffffff", outline="#555", tags=("layer_handles", "layer_depth_box", h_tag))
             self.canvas.create_text((bx0 + bx1) / 2, y, text=f"{float(boundary):.2f}", fill="#3f3f3f", font=("Segoe UI", 7), tags=("layer_handles", "layer_depth_label", h_tag))
-            self.canvas.create_rectangle(plus_x - 6, y - 6, plus_x + 6, y + 6, fill="#ffffff", outline="#8f8f8f", width=1, tags=("layer_handles", "layer_plus_box", p_tag))
-            self.canvas.create_text(plus_x, y, text="+", fill="#1d4f7c", font=("Segoe UI", 9, "bold"), tags=("layer_handles", "layer_plus", p_tag))
             self._layer_handle_hitbox.append({"kind": "boundary", "ti": ti, "boundary": bi, "tag": h_tag, "bbox": (handle_x - 6, y - 6, handle_x + 6, y + 6)})
             self._layer_depth_box_hitbox.append({"kind": "boundary_depth_edit", "ti": ti, "boundary": bi, "bbox": (bx0, y - 9, bx1, y + 9)})
-            self._layer_handle_hitbox.append({"kind": "plus", "ti": ti, "boundary": bi, "tag": p_tag, "bbox": (plus_x - 10, y - 10, plus_x + 10, y + 10)})
+            _draw_plus(p_tag, y, bi, "plus")
 
     def _draw_graph_layers(self):
         self._redraw_graphs_now()
@@ -4329,6 +4342,20 @@ class GeoCanvasEditor(tk.Tk):
                 return
             self._push_undo()
             self._insert_layer_at_boundary(ti, row)
+            return
+        if kind == "layer_plus_top":
+            if self._is_test_locked(int(ti)):
+                self._set_status("Опыт заблокирован")
+                return
+            self._push_undo()
+            self._insert_layer_from_top(ti)
+            return
+        if kind == "layer_plus_bottom":
+            if self._is_test_locked(int(ti)):
+                self._set_status("Опыт заблокирован")
+                return
+            self._push_undo()
+            self._insert_layer_from_bottom(ti)
             return
         if kind == "layer_boundary":
             if self._is_test_locked(int(ti)):
@@ -4742,6 +4769,56 @@ class GeoCanvasEditor(tk.Tk):
         except Exception as exc:
             self.status.set(f"Невозможно вставить слой: {exc}")
 
+    def _insert_layer_from_top(self, ti: int):
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return
+        t = self.tests[ti]
+        layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
+        if not layers:
+            return
+        first = layers[0]
+        new_top = float(first.top_m)
+        new_bot = round((new_top + INSERT_LAYER_THICKNESS_M) / 0.1) * 0.1
+        if new_bot > float(first.bot_m) - 0.2 + 1e-9:
+            self.status.set("Недостаточно толщины для добавления верхнего слоя 1.00 м")
+            return
+        new_ige_id = self._find_unassigned_ige_id() or self._next_free_ige_id()
+        soil = SoilType.SANDY_LOAM
+        first.top_m = new_bot
+        layers.insert(0, Layer(top_m=new_top, bot_m=new_bot, ige_id=new_ige_id, soil_type=soil, calc_mode=calc_mode_for_soil(soil), style=dict(SOIL_STYLE.get(soil, {})), ige_num=self._ige_id_to_num(new_ige_id)))
+        t.layers = normalize_layers(layers)
+        self.ige_registry[new_ige_id] = {"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}}
+        self._apply_ige_to_layer(t.layers[0])
+        self._calc_layer_params_for_test(int(ti))
+        self._sync_layers_panel()
+        self._redraw()
+        self.schedule_graph_redraw()
+
+    def _insert_layer_from_bottom(self, ti: int):
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return
+        t = self.tests[ti]
+        layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
+        if not layers:
+            return
+        last = layers[-1]
+        new_bot = float(last.bot_m)
+        new_top = round((new_bot - INSERT_LAYER_THICKNESS_M) / 0.1) * 0.1
+        if new_top < float(last.top_m) + 0.2 - 1e-9:
+            self.status.set("Недостаточно толщины для добавления нижнего слоя 1.00 м")
+            return
+        new_ige_id = self._find_unassigned_ige_id() or self._next_free_ige_id()
+        soil = SoilType.SANDY_LOAM
+        last.bot_m = new_top
+        layers.append(Layer(top_m=new_top, bot_m=new_bot, ige_id=new_ige_id, soil_type=soil, calc_mode=calc_mode_for_soil(soil), style=dict(SOIL_STYLE.get(soil, {})), ige_num=self._ige_id_to_num(new_ige_id)))
+        t.layers = normalize_layers(layers)
+        self.ige_registry[new_ige_id] = {"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}}
+        self._apply_ige_to_layer(t.layers[-1])
+        self._calc_layer_params_for_test(int(ti))
+        self._sync_layers_panel()
+        self._redraw()
+        self.schedule_graph_redraw()
+
     def _on_layer_drag_motion(self, event):
         drag = getattr(self, "_layer_drag", None)
         if not drag:
@@ -4834,10 +4911,14 @@ class GeoCanvasEditor(tk.Tk):
                 ex_on = True
             tip_text = "Исключить из экспорта" if ex_on else "Экспортировать"
             self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=1000)
-        elif kind in ("layer_boundary", "layer_plus", "layer_interval", "layer_boundary_depth_edit"):
+        elif kind in ("layer_boundary", "layer_plus", "layer_plus_top", "layer_plus_bottom", "layer_interval", "layer_boundary_depth_edit"):
             self._set_hover(None)
             if kind == "layer_plus":
-                tip_text = "Добавить слой 0.20 м"
+                tip_text = "Добавить средний слой 1.00 м"
+            elif kind == "layer_plus_top":
+                tip_text = "Добавить верхний слой 1.00 м вниз"
+            elif kind == "layer_plus_bottom":
+                tip_text = "Добавить нижний слой 1.00 м вверх"
             elif kind == "layer_interval":
                 tip_text = "Выбрать ИГЭ"
             elif kind == "layer_boundary_depth_edit":
@@ -5396,6 +5477,10 @@ class GeoCanvasEditor(tk.Tk):
                     return ("layer_boundary", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
                 if hit.get("kind") == "plus":
                     return ("layer_plus", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
+                if hit.get("kind") == "plus_top":
+                    return ("layer_plus_top", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
+                if hit.get("kind") == "plus_bottom":
+                    return ("layer_plus_bottom", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
 
         for hit in (getattr(self, "_layer_plot_hitbox", []) or []):
             bx0, by0, bx1, by1 = hit.get("bbox", (0, 0, 0, 0))
@@ -6813,13 +6898,48 @@ class GeoCanvasEditor(tk.Tk):
         self.cpt_calc_settings = dict(settings)
         calc = CptCalcSettings(method=str(settings.get("method") or METHOD_SP446), alluvial_sands=bool(settings.get("alluvial_sands", True)), groundwater_level=settings.get("groundwater_level"))
         results = calculate_ige_cpt_results(tests=list(self.tests or []), ige_registry=self.ige_registry, settings=calc)
+        missing: list[str] = []
+        ok_count = 0
         for ige_id in sorted(self.ige_registry.keys(), key=self._ige_id_to_num):
             ent = self._ensure_ige_entry(ige_id)
-            ent["cpt_result"] = results.get(ige_id)
+            cpt = results.get(ige_id)
+            ent["cpt_result"] = cpt
+            if not cpt:
+                missing.append(f"{ige_id}: нет данных qc в интервалах слоя")
+                continue
+            if str(cpt.get("status") or "") == "ok":
+                ok_count += 1
+            else:
+                missing.append(f"{ige_id}: {cpt.get('reason') or cpt.get('status_text') or 'не хватает данных'}")
         self._sync_layers_panel()
         self._dirty = True
         self._update_window_title()
-        messagebox.showinfo("Расчёт CPT", f"Расчёт завершён. ИГЭ с результатами: {len(results)}")
+        self._show_cpt_calc_result_dialog(ok_count=ok_count, missing=missing)
+
+    def _show_cpt_calc_result_dialog(self, *, ok_count: int, missing: list[str]):
+        dlg = tk.Toplevel(self)
+        if missing:
+            dlg.title("Расчёт CPT: нужны дополнительные данные")
+        else:
+            dlg.title("Расчёт CPT: готово")
+        dlg.transient(self)
+        dlg.grab_set()
+        frm = ttk.Frame(dlg, padding=10)
+        frm.pack(fill="both", expand=True)
+        if missing:
+            ttk.Label(frm, text="Для части ИГЭ не хватает данных. Заполните параметры и повторите расчёт:", foreground="#8a3d00").pack(anchor="w")
+            box = tk.Text(frm, height=min(12, max(4, len(missing))), width=90, wrap="word")
+            box.pack(fill="both", expand=True, pady=(6, 0))
+            box.insert("1.0", "\n".join([f"• {line}" for line in missing]))
+            box.configure(state="disabled")
+        else:
+            ttk.Label(frm, text=f"Расчёт завершён успешно. ИГЭ с результатами: {ok_count}", foreground="#1a5e1a").pack(anchor="w")
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x", pady=(10, 0))
+        ttk.Button(btns, text="Сформировать отчёт", command=lambda: self.export_cpt_protocol()).pack(side="left")
+        ttk.Button(btns, text="Закрыть", command=dlg.destroy).pack(side="right")
+        self.wait_window(dlg)
 
     def export_cpt_protocol(self):
         if not (self.ige_registry or {}):
