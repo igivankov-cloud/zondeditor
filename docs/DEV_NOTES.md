@@ -46,3 +46,12 @@
 - В опыте с небольшой глубиной линия графика заканчивается на последней фактической глубине и не уходит вниз.
 - После удаления строк/применения алгоритма глобальная `fs`-шкала пересчитывается для всего файла (без различий между колонками).
 - Экспорт GEO (K2/K4 split) должен работать без изменений.
+
+## Geo layers (MVP-1)
+- Доменная модель слоёв вынесена в `src/zondeditor/domain/layers.py`.
+- Слои хранятся в `TestData.layers` и попадают в snapshot проекта (`editor._snapshot/_restore`).
+- UI-точки интеграции:
+  - подложка и штриховка в графиках: `GeoCanvasEditor._draw_layers_background_for_test`;
+  - режим редактирования слоёв и drag границ: `GeoCanvasEditor._toggle_layer_edit_mode`, `_on_layer_drag_motion`;
+  - табличная панель в Ribbon: вкладка `Слои` в `src/zondeditor/ui/ribbon.py`.
+- Минимальная проверка целостности: `python tools/selfcheck_layers.py`.

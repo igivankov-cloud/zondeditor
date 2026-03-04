@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from src.zondeditor.domain.layers import Layer
+
 
 @dataclass
 class Row:
@@ -68,6 +70,7 @@ class TestData:
     header_pos: str = ""                # binding to original GEO (for save-back)
     orig_id: Optional[int] = None
     block: Optional[GeoBlockInfo] = None
+    layers: list[Layer] = field(default_factory=list)
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
