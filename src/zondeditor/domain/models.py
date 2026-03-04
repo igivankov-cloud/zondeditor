@@ -26,6 +26,7 @@ class TestSeries:
     header_pos: str = ""
     orig_id: Optional[int] = None
     block: Optional[Any] = None
+    locked: bool = False
 
 
 @dataclass
@@ -71,6 +72,7 @@ class TestData:
     orig_id: Optional[int] = None
     block: Optional[GeoBlockInfo] = None
     layers: list[Layer] = field(default_factory=list)
+    locked: bool = False
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -117,6 +119,7 @@ def testdata_to_series(test: TestData) -> TestSeries:
         header_pos=str(getattr(test, "header_pos", "") or ""),
         orig_id=getattr(test, "orig_id", None),
         block=getattr(test, "block", None),
+        locked=bool(getattr(test, "locked", False)),
     )
 
 
@@ -139,4 +142,5 @@ def series_to_testdata(series: TestSeries) -> TestData:
         header_pos=str(getattr(series, "header_pos", "") or ""),
         orig_id=getattr(series, "orig_id", None),
         block=getattr(series, "block", None),
+        locked=bool(getattr(series, "locked", False)),
     )

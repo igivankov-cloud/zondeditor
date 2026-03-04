@@ -213,6 +213,7 @@ class GeoCanvasEditor(tk.Tk):
         self._layer_ige_picker = None
         self._boundary_depth_editor = None
         self._editor_just_opened = False
+        self._inline_edit_active = False
         self.ige_registry: dict[str, dict[str, object]] = {
             "ИГЭ-1": {"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {}))},
             "ИГЭ-2": {"soil_type": SoilType.SAND.value, "calc_mode": calc_mode_for_soil(SoilType.SAND).value, "style": dict(SOIL_STYLE.get(SoilType.SAND, {}))},
@@ -479,6 +480,7 @@ class GeoCanvasEditor(tk.Tk):
                 "orig_id": t.orig_id,
                 "layers": [layer_to_dict(x) for x in (getattr(t, "layers", []) or [])],
                 "export_on": bool(getattr(t, "export_on", True)),
+                "locked": bool(getattr(t, "locked", False)),
                 "block": None if t.block is None else {
                     "order_index": t.block.order_index,
                     "header_start": t.block.header_start,
@@ -601,6 +603,10 @@ class GeoCanvasEditor(tk.Tk):
                 t.export_on = bool(d.get('export_on', True))
             except Exception:
                 pass
+            try:
+                t.locked = bool(d.get('locked', False))
+            except Exception:
+                t.locked = False
             # создать флаги для восстановленного зондирования
             try:
                 self.flags[t.tid] = TestFlags(False, set(), set(), set(), set(), set())
@@ -4031,6 +4037,8 @@ class GeoCanvasEditor(tk.Tk):
                 self.canvas.create_text(x0 + 4, y0 + 4, anchor="nw", text=dbg, fill="#8a3d00", font=("Segoe UI", 8, "bold"), tags=("layers_overlay", f"layers_overlay_{ti}"))
 
     def _draw_layer_handles_for_test(self, ti: int, rect):
+        if self._is_test_locked(ti):
+            return
         t = self.tests[ti]
         layers = self._ensure_test_layers(t)
         x0, x1, _y0, _y1 = rect
@@ -4089,6 +4097,10 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
 
+        if kind == "lock":
+            self._toggle_test_lock(int(ti))
+            return
+
         # --- Header controls (icons / checkbox) ---
         if kind == "edit":
             self._edit_header(ti)
@@ -4116,20 +4128,35 @@ class GeoCanvasEditor(tk.Tk):
             return
 
         if kind == "layer_plus":
+            if self._is_test_locked(int(ti)):
+                self._set_status("Опыт заблокирован")
+                return
             self._push_undo()
             self._insert_layer_at_boundary(ti, row)
             return
         if kind == "layer_boundary":
+            if self._is_test_locked(int(ti)):
+                self._set_status("Опыт заблокирован")
+                return
             self._push_undo()
             self._layer_drag = {"ti": int(ti), "boundary": int(row)}
             return
         if kind == "layer_boundary_depth_edit":
+            if self._is_test_locked(int(ti)):
+                self._set_status("Опыт заблокирован")
+                return
             self._open_boundary_depth_editor(int(ti), int(row))
             return "break"
         if kind == "layer_interval":
+            if self._is_test_locked(int(ti)):
+                self._set_status("Опыт заблокирован")
+                return
             self._show_ige_picker_at_click(event, int(ti), float(field if field is not None else 0.0))
             return
         if kind == "meter_row":
+            if self._is_test_locked(int(ti)):
+                self._set_status("Опыт заблокирован")
+                return
             self._toggle_meter_expanded(int(field), push_undo=True)
             return
 
@@ -4139,6 +4166,10 @@ class GeoCanvasEditor(tk.Tk):
             start_r = (getattr(self, "_grid_start_rows", {}) or {}).get(ti, 0)
 
             # Depth: single click on the first depth cell opens "start depth" editor
+            if self._is_test_locked(int(ti)):
+                self._set_status("Опыт заблокирован")
+                return
+
             if field == "depth":
                 meter_n = self._expanded_meter_for_depth_cell(ti, row)
                 if meter_n is not None:
@@ -4242,6 +4273,9 @@ class GeoCanvasEditor(tk.Tk):
 
             # Normal in-range cell → start edit immediately
             if field in ("qc", "fs"):
+                if self._is_test_locked(int(ti)):
+                    self._set_status("Опыт заблокирован")
+                    return
                 self._begin_edit(ti, data_row, field, display_row=row)
                 self.schedule_graph_redraw()
             return
@@ -4253,6 +4287,15 @@ class GeoCanvasEditor(tk.Tk):
     def _on_global_click(self, event):
         """Закрывает активную ячейку при клике вне зондирования/ячейки."""
         try:
+            if bool(getattr(self, "_inline_edit_active", False)):
+                editor_widget = (self._boundary_depth_editor or {}).get("entry") if isinstance(self._boundary_depth_editor, dict) else None
+                if event.widget is editor_widget:
+                    return
+                if bool(getattr(self, "_editor_just_opened", False)):
+                    return
+                if event.widget not in (getattr(self, "canvas", None), getattr(self, "hcanvas", None)):
+                    self._close_boundary_depth_editor(commit=False)
+                    return
             if getattr(self, "_boundary_depth_editor", None):
                 editor_widget = (self._boundary_depth_editor or {}).get("entry") if isinstance(self._boundary_depth_editor, dict) else self._boundary_depth_editor
                 if event.widget is editor_widget:
@@ -4275,6 +4318,8 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
     def _set_hover(self, hover):
+        if bool(getattr(self, "_inline_edit_active", False)):
+            return
         # hover: ("dup"/"trash", test_index) or None
         if getattr(self, "_hover", None) == hover:
             return
@@ -4371,29 +4416,27 @@ class GeoCanvasEditor(tk.Tk):
     def _open_boundary_depth_editor(self, ti: int, boundary: int):
         if ti < 0 or ti >= len(self.tests):
             return
+        if self._is_test_locked(ti):
+            self._set_status("Опыт заблокирован")
+            return
         self._close_boundary_depth_editor()
         self._editor_just_opened = True
+        self._inline_edit_active = True
         target = None
         for hit in (self._layer_depth_box_hitbox or []):
             if int(hit.get("ti", -1)) == int(ti) and int(hit.get("boundary", -1)) == int(boundary):
                 target = hit
                 break
         if not target:
+            self._inline_edit_active = False
             return
         bx0, by0, bx1, by1 = target.get("bbox", (0, 0, 0, 0))
-        entry = ttk.Entry(self.canvas, width=6)
+        entry = ttk.Entry(self, width=6)
         t = self.tests[ti]
         layers = self._ensure_test_layers(t)
         cur = float(layers[boundary].top_m) if 0 <= boundary < len(layers) else 0.0
         entry.insert(0, f"{cur:.2f}")
-        win_id = self.canvas.create_window(
-            (bx0 + bx1) * 0.5,
-            (by0 + by1) * 0.5,
-            window=entry,
-            width=max(24, int(bx1 - bx0)),
-            height=max(16, int(by1 - by0)),
-            tags=("layer_handles", "layer_depth_editor"),
-        )
+        self._place_boundary_depth_editor(entry, bx0, by0, bx1, by1)
 
         prev_depth = float(layers[boundary - 1].top_m) if boundary - 1 >= 0 else float(layers[0].top_m)
         next_depth = float(layers[boundary + 1].top_m) if boundary + 1 < len(layers) else float(layers[-1].bot_m)
@@ -4411,29 +4454,64 @@ class GeoCanvasEditor(tk.Tk):
             t.layers = move_layer_boundary(cloned, int(boundary), snapped)
             self._calc_layer_params_for_test(int(ti))
             self.redraw_all()
-            self._close_boundary_depth_editor()
+            self._close_boundary_depth_editor(commit=True)
 
         def _cancel(_ev=None):
-            self._close_boundary_depth_editor()
+            self._close_boundary_depth_editor(commit=False)
 
         entry.bind("<Return>", _apply)
         entry.bind("<Escape>", _cancel)
+        entry.bind("<Button-1>", lambda _e: "break")
         entry.focus_set()
         entry.selection_range(0, tk.END)
-        self._boundary_depth_editor = {"entry": entry, "window_id": win_id}
+        self._boundary_depth_editor = {"entry": entry, "ti": int(ti), "boundary": int(boundary)}
         self.after_idle(lambda: setattr(self, "_editor_just_opened", False))
         self.after(50, lambda: setattr(self, "_editor_just_opened", False))
 
-    def _close_boundary_depth_editor(self):
+    def _place_boundary_depth_editor(self, entry, bx0: float, by0: float, bx1: float, by1: float):
+        try:
+            vx0 = float(bx0) - float(self.canvas.canvasx(0))
+            vy0 = float(by0) - float(self.canvas.canvasy(0))
+            root_x = int(self.canvas.winfo_rootx() - self.winfo_rootx() + vx0)
+            root_y = int(self.canvas.winfo_rooty() - self.winfo_rooty() + vy0)
+            entry.place(
+                x=root_x,
+                y=root_y,
+                width=max(24, int(bx1 - bx0)),
+                height=max(16, int(by1 - by0)),
+            )
+        except Exception:
+            pass
+
+    def _reposition_boundary_depth_editor(self):
+        ed = getattr(self, "_boundary_depth_editor", None)
+        if not isinstance(ed, dict):
+            return
+        entry = ed.get("entry")
+        ti = ed.get("ti")
+        boundary = ed.get("boundary")
+        if entry is None or ti is None or boundary is None:
+            return
+        target = None
+        for hit in (self._layer_depth_box_hitbox or []):
+            if int(hit.get("ti", -1)) == int(ti) and int(hit.get("boundary", -1)) == int(boundary):
+                target = hit
+                break
+        if target:
+            bx0, by0, bx1, by1 = target.get("bbox", (0, 0, 0, 0))
+            self._place_boundary_depth_editor(entry, bx0, by0, bx1, by1)
+
+    def _close_boundary_depth_editor(self, *, commit: bool = False):
         ed = getattr(self, "_boundary_depth_editor", None)
         if ed is not None:
             try:
                 if isinstance(ed, dict):
                     entry = ed.get("entry")
-                    win_id = ed.get("window_id")
-                    if win_id:
-                        self.canvas.delete(win_id)
                     if entry is not None:
+                        try:
+                            entry.place_forget()
+                        except Exception:
+                            pass
                         entry.destroy()
                 else:
                     ed.destroy()
@@ -4441,9 +4519,12 @@ class GeoCanvasEditor(tk.Tk):
                 pass
         self._boundary_depth_editor = None
         self._editor_just_opened = False
+        self._inline_edit_active = False
 
     def _insert_layer_at_boundary(self, ti: int, boundary: int):
         if ti is None or ti < 0 or ti >= len(self.tests):
+            return
+        if self._is_test_locked(int(ti)):
             return
         t = self.tests[ti]
         layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
@@ -4470,6 +4551,8 @@ class GeoCanvasEditor(tk.Tk):
         if not drag:
             return
         ti = int(drag.get("ti", -1))
+        if self._is_test_locked(ti):
+            return
         boundary = int(drag.get("boundary", 0))
         if ti < 0 or ti >= len(self.tests):
             return
@@ -4543,9 +4626,9 @@ class GeoCanvasEditor(tk.Tk):
             self.canvas.configure(cursor="")
             return
         kind, ti, row, field = hit
-        if kind in ("edit", "dup", "trash"):
+        if kind in ("lock", "edit", "dup", "trash"):
             self._set_hover((kind, ti))
-            tip_text = "Редактировать" if kind == "edit" else ("Копировать" if kind == "dup" else "Удалить")
+            tip_text = "Блокировать/разблокировать" if kind == "lock" else ("Редактировать" if kind == "edit" else ("Копировать" if kind == "dup" else "Удалить"))
             self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=1000)
         elif kind == "export":
             self._set_hover((kind, ti))
@@ -4555,17 +4638,39 @@ class GeoCanvasEditor(tk.Tk):
                 ex_on = True
             tip_text = "Исключить из экспорта" if ex_on else "Экспортировать"
             self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=1000)
-        elif kind in ("layer_boundary", "layer_plus"):
+        elif kind in ("layer_boundary", "layer_plus", "layer_interval", "layer_boundary_depth_edit"):
             self._set_hover(None)
-            tip_text = "Перетащить границу слоя" if kind == "layer_boundary" else "Добавить слой 0.20 м"
-            self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=700)
             if kind == "layer_plus":
-                self.canvas.configure(cursor="hand2")
+                tip_text = "Добавить слой 0.20 м"
+            elif kind == "layer_interval":
+                tip_text = "Выбрать ИГЭ"
+            elif kind == "layer_boundary_depth_edit":
+                tip_text = "Ввести глубину границы"
             else:
-                self.canvas.configure(cursor="")
+                tip_text = "Перетащить границу слоя"
+            self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=700)
+            self.canvas.configure(cursor="hand2")
         else:
             self._set_hover(None)
             self.canvas.configure(cursor="")
+
+    def _is_test_locked(self, ti: int) -> bool:
+        try:
+            return bool(getattr(self.tests[int(ti)], "locked", False))
+        except Exception:
+            return False
+
+    def _toggle_test_lock(self, ti: int):
+        if ti < 0 or ti >= len(self.tests):
+            return
+        self._push_undo()
+        t = self.tests[ti]
+        t.locked = not bool(getattr(t, "locked", False))
+        self._hide_layer_ige_picker()
+        self._close_boundary_depth_editor(commit=False)
+        self._end_edit(commit=False)
+        self._redraw()
+        self.schedule_graph_redraw()
 
 
     def _delete_test(self, ti: int):
@@ -4847,10 +4952,14 @@ class GeoCanvasEditor(tk.Tk):
             ico_y = y0 + 14
             ico_font = _pick_icon_font(12)
 
-            edit_x, dup_x, trash_x = (x1 - 66), (x1 - 40), (x1 - 14)
+            lock_on = bool(getattr(t, "locked", False))
+            lock_x, edit_x, dup_x, trash_x = (x1 - 92), (x1 - 66), (x1 - 40), (x1 - 14)
             box_w, box_h = 22, 20
 
             # hover background (только для иконок, не для галочки)
+            if getattr(self, "_hover", None) == ("lock", ti):
+                self.hcanvas.create_rectangle(lock_x - box_w/2, ico_y - box_h/2, lock_x + box_w/2, ico_y + box_h/2,
+                                              fill="#e9e9e9", outline="")
             if getattr(self, "_hover", None) == ("edit", ti):
                 self.hcanvas.create_rectangle(edit_x - box_w/2, ico_y - box_h/2, edit_x + box_w/2, ico_y + box_h/2,
                                               fill="#e9e9e9", outline="")
@@ -4861,6 +4970,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.hcanvas.create_rectangle(trash_x - box_w/2, ico_y - box_h/2, trash_x + box_w/2, ico_y + box_h/2,
                                               fill="#e9e9e9", outline="")
 
+            self.hcanvas.create_text(lock_x, ico_y, text=("🔒" if lock_on else "🔓"), font=("Segoe UI", 10), fill=hdr_icon, anchor="center")
             self.hcanvas.create_text(edit_x, ico_y, text=ICON_CALENDAR, font=ico_font, fill=hdr_icon, anchor="center")
             self.hcanvas.create_text(dup_x, ico_y, text=ICON_COPY, font=ico_font, fill=hdr_icon, anchor="center")
             self.hcanvas.create_text(trash_x, ico_y, text=ICON_DELETE, font=ico_font, fill=hdr_icon, anchor="center")
@@ -5025,11 +5135,19 @@ class GeoCanvasEditor(tk.Tk):
                             color = "#666"
                     self.canvas.create_text(tx, (by0 + by1) / 2, text=txt, anchor=anchor, fill=color, font=("Segoe UI", 9))
 
+            if bool(getattr(t, "locked", False)):
+                body_h = float(self._total_body_height())
+                if body_h > 0:
+                    self.canvas.create_rectangle(x0, 0, x1, body_h, fill="#d0d0d0", outline="", stipple="gray50")
+                self.hcanvas.create_rectangle(x0, y0, x1, y1, fill="#d0d0d0", outline="", stipple="gray50")
+
         self._update_scrollregion()
         if bool(getattr(self, "show_graphs", False)):
             self._redraw_graphs_now()
         else:
             self._clear_graph_layers()
+        if bool(getattr(self, "_inline_edit_active", False)):
+            self._reposition_boundary_depth_editor()
     # ---------------- hit test & editing ----------------
 
     def _hit_test(self, x, y):
@@ -5055,6 +5173,8 @@ class GeoCanvasEditor(tk.Tk):
                     if (x0 + 6) <= cx <= (x0 + 20) and (y0 + 8) <= cy <= (y0 + 22):
                         return ("export", ti, None, None)
                     # icons
+                    if (x1 - 104) <= cx <= (x1 - 80) and y0 <= cy <= (y0 + 24):
+                        return ("lock", ti, None, None)
                     if (x1 - 78) <= cx <= (x1 - 54) and y0 <= cy <= (y0 + 24):
                         return ("edit", ti, None, None)
                     if (x1 - 52) <= cx <= (x1 - 28) and y0 <= cy <= (y0 + 24):
@@ -5130,6 +5250,9 @@ class GeoCanvasEditor(tk.Tk):
             self._active_test_idx = int(ti)
             self.schedule_graph_redraw()
         if kind == "meter_row":
+            if self._is_test_locked(int(ti)):
+                self._set_status("Опыт заблокирован")
+                return
             self._toggle_meter_expanded(int(field), push_undo=True)
             return
         if kind == "header":
@@ -5212,6 +5335,9 @@ class GeoCanvasEditor(tk.Tk):
             return
         kind, ti, row, field = hit
         if kind != "cell" or ti is None or row is None:
+            return
+        if self._is_test_locked(int(ti)):
+            self._set_status("Опыт заблокирован")
             return
 
         # Не показываем меню на пустых ячейках
@@ -5640,6 +5766,9 @@ class GeoCanvasEditor(tk.Tk):
 
     def _begin_edit(self, ti: int, row: int, field: str, display_row: int | None = None):
         """Edit qc/fs cell. row is data index, display_row is grid index."""
+        if self._is_test_locked(int(ti)):
+            self._set_status("Опыт заблокирован")
+            return
         self._end_edit(commit=True)
         t = self.tests[ti]
         # Не даём вводить значения "после конца" зондирования.
@@ -5704,6 +5833,9 @@ class GeoCanvasEditor(tk.Tk):
 
     def _begin_edit_depth0(self, ti: int, display_row: int = 0):
         """Редактирование первой глубины (depth[0]) с автопересчётом всей колонки depth."""
+        if self._is_test_locked(int(ti)):
+            self._set_status("Опыт заблокирован")
+            return
         self._end_edit(commit=True)
         t = self.tests[ti]
         if not getattr(t, "depth", None):
@@ -5947,6 +6079,9 @@ class GeoCanvasEditor(tk.Tk):
 
 
     def _append_row(self, ti: int):
+        if self._is_test_locked(int(ti)):
+            self._set_status("Опыт заблокирован")
+            return
         if self.depth_start is None or self.step_m is None:
             return
         t = self.tests[ti]
@@ -7096,6 +7231,10 @@ class GeoCanvasEditor(tk.Tk):
                         "acon": self.acon_var.get() if hasattr(self, "acon_var") else "",
                         "asleeve": self.asl_var.get() if hasattr(self, "asl_var") else "",
                     },
+                    "tests": [
+                        {"tid": int(getattr(t, "tid", 0) or 0), "locked": bool(getattr(t, "locked", False))}
+                        for t in (self.tests or [])
+                    ],
                 }
                 meta_path.write_text(json.dumps(meta_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
