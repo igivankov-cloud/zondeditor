@@ -126,12 +126,12 @@ class RibbonView(ttk.Frame):
 
         tbl = ttk.Frame(tab)
         tbl.pack(fill="x", expand=False)
-        ttk.Label(tbl, text="ИГЭ", width=12, anchor="w").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        ttk.Label(tbl, text="Грунт", width=26, anchor="w").grid(row=0, column=1, sticky="w")
-        ttk.Label(tbl, text="Источник", width=10, anchor="w").grid(row=0, column=2, sticky="w", padx=(8, 0))
-        ttk.Label(tbl, text="φ (CPT)", width=10, anchor="w").grid(row=0, column=3, sticky="w")
-        ttk.Label(tbl, text="E (CPT)", width=10, anchor="w").grid(row=0, column=4, sticky="w")
-        ttk.Label(tbl, text="Статус", width=14, anchor="w").grid(row=0, column=5, sticky="w")
+        ttk.Label(tbl, text="Параметр", width=12, anchor="w").grid(row=1, column=0, sticky="w", padx=(0, 8))
+        ttk.Label(tbl, text="Грунт", width=12, anchor="w").grid(row=2, column=0, sticky="w", padx=(0, 8))
+        ttk.Label(tbl, text="Источник", width=12, anchor="w").grid(row=3, column=0, sticky="w", padx=(0, 8))
+        ttk.Label(tbl, text="φ (CPT)", width=12, anchor="w").grid(row=4, column=0, sticky="w", padx=(0, 8))
+        ttk.Label(tbl, text="E (CPT)", width=12, anchor="w").grid(row=5, column=0, sticky="w", padx=(0, 8))
+        ttk.Label(tbl, text="Статус", width=12, anchor="w").grid(row=6, column=0, sticky="w", padx=(0, 8))
         self.layers_table = tbl
 
     def _build_processing_tab(self):
@@ -188,20 +188,21 @@ class RibbonView(ttk.Frame):
         if not hasattr(self, "layers_table"):
             return
         for child in self.layers_table.grid_slaves():
-            if int(child.grid_info().get("row", 0)) > 0:
+            if int(child.grid_info().get("column", 0)) > 0:
                 child.destroy()
 
         for idx, row in enumerate(self._layer_rows, start=1):
             ige_id = str(row.get("ige", "") or "")
             soil_var = tk.StringVar(value=str(row.get("soil", "") or ""))
-            lbl = ttk.Label(self.layers_table, text=ige_id, anchor="w", width=12)
-            lbl.grid(row=idx, column=0, sticky="w", padx=(0, 8), pady=1)
-            cb = ttk.Combobox(self.layers_table, state="readonly", width=24, textvariable=soil_var, values=list(soil_values or []))
-            cb.grid(row=idx, column=1, sticky="w", pady=1)
-            ttk.Label(self.layers_table, text=str(row.get("source", "")), width=10, anchor="w").grid(row=idx, column=2, sticky="w", padx=(8, 0), pady=1)
-            ttk.Label(self.layers_table, text=str(row.get("phi", "")), width=10, anchor="w").grid(row=idx, column=3, sticky="w", pady=1)
-            ttk.Label(self.layers_table, text=str(row.get("e", "")), width=10, anchor="w").grid(row=idx, column=4, sticky="w", pady=1)
-            ttk.Label(self.layers_table, text=str(row.get("status", "")), width=14, anchor="w").grid(row=idx, column=5, sticky="w", pady=1)
+            self.layers_table.columnconfigure(idx, weight=0)
+            lbl = ttk.Label(self.layers_table, text=ige_id, anchor="center", width=18)
+            lbl.grid(row=1, column=idx, sticky="ew", padx=2, pady=(0, 1))
+            cb = ttk.Combobox(self.layers_table, state="readonly", width=16, textvariable=soil_var, values=list(soil_values or []))
+            cb.grid(row=2, column=idx, sticky="ew", padx=2, pady=1)
+            ttk.Label(self.layers_table, text=str(row.get("source", "")), width=18, anchor="center").grid(row=3, column=idx, sticky="ew", padx=2, pady=1)
+            ttk.Label(self.layers_table, text=str(row.get("phi", "")), width=18, anchor="center").grid(row=4, column=idx, sticky="ew", padx=2, pady=1)
+            ttk.Label(self.layers_table, text=str(row.get("e", "")), width=18, anchor="center").grid(row=5, column=idx, sticky="ew", padx=2, pady=1)
+            ttk.Label(self.layers_table, text=str(row.get("status", "")), width=18, anchor="center").grid(row=6, column=idx, sticky="ew", padx=2, pady=1)
             cb.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, sv=soil_var: self._apply_ige_edit(ig, sv))
             lbl.bind("<Button-1>", lambda _e, ig=ige_id: self._select_ige(ig))
             cb.bind("<Button-1>", lambda _e, ig=ige_id: self._select_ige(ig), add="+")
