@@ -54,6 +54,7 @@ DEFAULT_LAYER_STYLE = SOIL_STYLE
 class Layer:
     top_m: float
     bot_m: float
+    ige_id: str = "ИГЭ-1"
     soil_type: SoilType = SoilType.SANDY_LOAM
     ige_num: int = 1
     calc_mode: CalcMode = CalcMode.VALID
@@ -80,6 +81,7 @@ def layer_to_dict(layer: Layer) -> dict[str, Any]:
     return {
         "top_m": float(layer.top_m),
         "bot_m": float(layer.bot_m),
+        "ige_id": str(getattr(layer, "ige_id", "") or f"ИГЭ-{int(getattr(layer, 'ige_num', 1) or 1)}"),
         "soil_type": str(layer.soil_type.value),
         "ige_num": int(layer.ige_num),
         "calc_mode": str(layer.calc_mode.value),
@@ -95,9 +97,13 @@ def layer_from_dict(data: dict[str, Any]) -> Layer:
     calc_mode = CalcMode(mode_raw) if mode_raw in {x.value for x in CalcMode} else calc_mode_for_soil(soil)
     style = dict(SOIL_STYLE.get(soil, {}))
     style.update(dict(data.get("style") or {}))
+    raw_ige_id = str(data.get("ige_id") or "").strip()
+    if not raw_ige_id:
+        raw_ige_id = f"ИГЭ-{int(data.get('ige_num', 1) or 1)}"
     return Layer(
         top_m=float(data.get("top_m", 0.0) or 0.0),
         bot_m=float(data.get("bot_m", 0.0) or 0.0),
+        ige_id=raw_ige_id,
         soil_type=soil,
         ige_num=int(data.get("ige_num", 1) or 1),
         calc_mode=calc_mode,
@@ -123,6 +129,7 @@ def build_default_layers(depth_top_m: float, depth_bot_m: float) -> list[Layer]:
         Layer(
             top_m=top,
             bot_m=mid,
+            ige_id="ИГЭ-1",
             soil_type=soil,
             calc_mode=calc_mode_for_soil(soil),
             style=dict(SOIL_STYLE.get(soil, {})),
@@ -131,6 +138,7 @@ def build_default_layers(depth_top_m: float, depth_bot_m: float) -> list[Layer]:
         Layer(
             top_m=mid,
             bot_m=bot,
+            ige_id="ИГЭ-2",
             soil_type=soil,
             calc_mode=calc_mode_for_soil(soil),
             style=dict(SOIL_STYLE.get(soil, {})),
@@ -150,6 +158,8 @@ def normalize_layers(layers: list[Layer]) -> list[Layer]:
             lyr.ige_num = idx
         if lyr.ige_num < 1:
             lyr.ige_num = idx
+        if not str(getattr(lyr, "ige_id", "") or "").strip():
+            lyr.ige_id = f"ИГЭ-{int(lyr.ige_num)}"
         if lyr.bot_m < (lyr.top_m + MIN_LAYER_THICKNESS_M):
             lyr.bot_m = lyr.top_m + MIN_LAYER_THICKNESS_M
         if not lyr.style:
@@ -203,6 +213,7 @@ def insert_layer_between(layers: list[Layer], boundary_index: int) -> list[Layer
     new_layer = Layer(
         top_m=new_top,
         bot_m=new_bot,
+        ige_id=f"ИГЭ-{boundary_index + 1}",
         soil_type=soil,
         calc_mode=calc_mode_for_soil(soil),
         style=dict(SOIL_STYLE.get(soil, {})),
