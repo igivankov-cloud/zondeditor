@@ -212,9 +212,10 @@ class GeoCanvasEditor(tk.Tk):
         self._layer_plot_hitbox = []
         self._layer_ige_picker = None
         self._boundary_depth_editor = None
+        self._editor_just_opened = False
         self.ige_registry: dict[str, dict[str, object]] = {
             "ИГЭ-1": {"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {}))},
-            "ИГЭ-2": {"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {}))},
+            "ИГЭ-2": {"soil_type": SoilType.SAND.value, "calc_mode": calc_mode_for_soil(SoilType.SAND).value, "style": dict(SOIL_STYLE.get(SoilType.SAND, {}))},
         }
         self.layer_store = LayerStore()
         self._debug_layers_overlay = bool(os.environ.get("ZONDEDITOR_DEBUG_LAYERS") == "1")
@@ -563,6 +564,7 @@ class GeoCanvasEditor(tk.Tk):
             self.ige_registry = copy.deepcopy(dict(snap.get("ige_registry", {}) or {}))
         except Exception:
             self.ige_registry = {}
+        self._ensure_default_iges()
 
         for d in snap.get("tests", []):
             blk = None
@@ -869,6 +871,43 @@ class GeoCanvasEditor(tk.Tk):
             n += 1
         return f"ИГЭ-{n}"
 
+    def _find_unassigned_ige_id(self) -> str | None:
+        candidates: list[str] = []
+        for ige_id in (self.ige_registry or {}).keys():
+            ent = self._ensure_ige_entry(str(ige_id or ""))
+            if ent.get("soil_type") is None:
+                candidates.append(str(ige_id))
+        if not candidates:
+            return None
+        return sorted(candidates, key=self._ige_id_to_num)[0]
+
+    def _ensure_default_iges(self):
+        if self.ige_registry:
+            return
+        has_layer_ige = False
+        for t in (self.tests or []):
+            for lyr in (getattr(t, "layers", []) or []):
+                if str(getattr(lyr, "ige_id", "") or "").strip():
+                    has_layer_ige = True
+                    break
+            if has_layer_ige:
+                break
+        if has_layer_ige:
+            return
+        self.ige_registry = {
+            "ИГЭ-1": {"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {}))},
+            "ИГЭ-2": {"soil_type": SoilType.SAND.value, "calc_mode": calc_mode_for_soil(SoilType.SAND).value, "style": dict(SOIL_STYLE.get(SoilType.SAND, {}))},
+        }
+
+    def _add_unassigned_ige_from_ribbon(self):
+        self._push_undo()
+        new_ige_id = self._next_free_ige_id()
+        self.ige_registry[new_ige_id] = {"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}}
+        self._sync_layers_panel()
+        self.schedule_graph_redraw()
+        if getattr(self, "ribbon_view", None):
+            self.ribbon_view.focus_ige_row(new_ige_id)
+
     def _apply_ige_to_layer(self, lyr: Layer):
         ige_id = self._layer_ige_id(lyr)
         ent = self._ensure_ige_entry(ige_id, fallback_soil=getattr(lyr, "soil_type", SoilType.SANDY_LOAM).value, fallback_mode=getattr(lyr, "calc_mode", CalcMode.VALID).value)
@@ -915,6 +954,7 @@ class GeoCanvasEditor(tk.Tk):
         return None
 
     def _sync_layers_panel(self):
+        self._ensure_default_iges()
         if not getattr(self, "ribbon_view", None):
             return
         ti = self._active_layers_test_index()
@@ -1159,6 +1199,7 @@ class GeoCanvasEditor(tk.Tk):
                 "toggle_layer_edit": self._toggle_layer_edit_mode,
                 "edit_ige": self._edit_ige_from_ribbon,
                 "select_ige": self._select_ige_for_ribbon,
+                "add_ige": self._add_unassigned_ige_from_ribbon,
                 "apply_calc": lambda: self._redraw(),
                 "k2k4_30": lambda: messagebox.showinfo("К2→К4", "Режим 30 МПа будет добавлен в следующем шаге."),
                 "k2k4_50": lambda: messagebox.showinfo("К2→К4", "Режим 50 МПа будет добавлен в следующем шаге."),
@@ -4214,7 +4255,9 @@ class GeoCanvasEditor(tk.Tk):
         try:
             if getattr(self, "_boundary_depth_editor", None):
                 editor_widget = (self._boundary_depth_editor or {}).get("entry") if isinstance(self._boundary_depth_editor, dict) else self._boundary_depth_editor
-                if event.widget not in (editor_widget, getattr(self, "canvas", None), getattr(self, "hcanvas", None)):
+                if event.widget is editor_widget:
+                    return
+                if not bool(getattr(self, "_editor_just_opened", False)) and event.widget not in (getattr(self, "canvas", None), getattr(self, "hcanvas", None)):
                     self._close_boundary_depth_editor()
             if not self._editing:
                 return
@@ -4329,6 +4372,7 @@ class GeoCanvasEditor(tk.Tk):
         if ti < 0 or ti >= len(self.tests):
             return
         self._close_boundary_depth_editor()
+        self._editor_just_opened = True
         target = None
         for hit in (self._layer_depth_box_hitbox or []):
             if int(hit.get("ti", -1)) == int(ti) and int(hit.get("boundary", -1)) == int(boundary):
@@ -4369,11 +4413,16 @@ class GeoCanvasEditor(tk.Tk):
             self.redraw_all()
             self._close_boundary_depth_editor()
 
+        def _cancel(_ev=None):
+            self._close_boundary_depth_editor()
+
         entry.bind("<Return>", _apply)
-        entry.bind("<Escape>", lambda _e: self._close_boundary_depth_editor())
+        entry.bind("<Escape>", _cancel)
         entry.focus_set()
         entry.selection_range(0, tk.END)
         self._boundary_depth_editor = {"entry": entry, "window_id": win_id}
+        self.after_idle(lambda: setattr(self, "_editor_just_opened", False))
+        self.after(50, lambda: setattr(self, "_editor_just_opened", False))
 
     def _close_boundary_depth_editor(self):
         ed = getattr(self, "_boundary_depth_editor", None)
@@ -4391,6 +4440,7 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
         self._boundary_depth_editor = None
+        self._editor_just_opened = False
 
     def _insert_layer_at_boundary(self, ti: int, boundary: int):
         if ti is None or ti < 0 or ti >= len(self.tests):
@@ -4399,7 +4449,7 @@ class GeoCanvasEditor(tk.Tk):
         layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
         try:
             t.layers = insert_layer_between(layers, int(boundary))
-            new_ige_id = self._next_free_ige_id()
+            new_ige_id = self._find_unassigned_ige_id() or self._next_free_ige_id()
             if 0 <= int(boundary) < len(t.layers):
                 new_layer = t.layers[int(boundary)]
                 new_layer.ige_id = new_ige_id

@@ -117,6 +117,10 @@ class RibbonView(ttk.Frame):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Слои")
 
+        tools = ttk.Frame(tab)
+        tools.pack(fill="x", expand=False, pady=(0, 4))
+        self._add_btn_grid(tools, "add_ige", "+ ИГЭ", "Добавить ИГЭ без назначенного грунта", 0, 0)
+
         tbl = ttk.Frame(tab)
         tbl.pack(fill="x", expand=False)
         ttk.Label(tbl, text="ИГЭ", width=12, anchor="w").grid(row=0, column=0, sticky="w", padx=(0, 8))

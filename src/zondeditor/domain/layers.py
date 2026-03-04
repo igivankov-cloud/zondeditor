@@ -124,24 +124,25 @@ def build_default_layers(depth_top_m: float, depth_bot_m: float) -> list[Layer]:
         mid = top + MIN_LAYER_THICKNESS_M
     if mid > bot - MIN_LAYER_THICKNESS_M:
         mid = bot - MIN_LAYER_THICKNESS_M
-    soil = SoilType.SANDY_LOAM
+    top_soil = SoilType.SANDY_LOAM
+    bot_soil = SoilType.SAND
     return [
         Layer(
             top_m=top,
             bot_m=mid,
             ige_id="ИГЭ-1",
-            soil_type=soil,
-            calc_mode=calc_mode_for_soil(soil),
-            style=dict(SOIL_STYLE.get(soil, {})),
+            soil_type=top_soil,
+            calc_mode=calc_mode_for_soil(top_soil),
+            style=dict(SOIL_STYLE.get(top_soil, {})),
             ige_num=1,
         ),
         Layer(
             top_m=mid,
             bot_m=bot,
             ige_id="ИГЭ-2",
-            soil_type=soil,
-            calc_mode=calc_mode_for_soil(soil),
-            style=dict(SOIL_STYLE.get(soil, {})),
+            soil_type=bot_soil,
+            calc_mode=calc_mode_for_soil(bot_soil),
+            style=dict(SOIL_STYLE.get(bot_soil, {})),
             ige_num=2,
         ),
     ]
