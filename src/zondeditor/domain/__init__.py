@@ -14,6 +14,7 @@ from .layers import (
     normalize_layers,
     validate_layers,
 )
+from .layer_store import LayerStore
 from .models import (
     GeoBlockInfo,
     Row,
@@ -29,6 +30,7 @@ __all__ = [
     "DEFAULT_LAYER_STYLE",
     "GeoBlockInfo",
     "Layer",
+    "LayerStore",
     "MIN_LAYER_THICKNESS_M",
     "Row",
     "SNAP_STEP_M",

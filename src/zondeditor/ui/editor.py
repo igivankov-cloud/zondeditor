@@ -41,6 +41,7 @@ from src.zondeditor.io.geo_reader import load_geo, parse_geo_bytes, GeoParseErro
 from src.zondeditor.io.gxl_reader import load_gxl, parse_gxl_file, GxlParseError
 from src.zondeditor.io.geo_writer import save_geo_as, save_k2_geo_from_template, build_k2_geo_from_template
 from src.zondeditor.domain.models import TestData, GeoBlockInfo, TestFlags
+from src.zondeditor.domain.layer_store import LayerStore
 from src.zondeditor.domain.layers import (
     SoilType,
     CalcMode,
@@ -206,6 +207,8 @@ class GeoCanvasEditor(tk.Tk):
         self.layer_edit_mode = False
         self._layer_drag = None  # {"ti": int, "boundary": int}
         self._layer_handle_hitbox = []
+        self.layer_store = LayerStore()
+        self._debug_layers_overlay = bool(os.environ.get("ZONDEDITOR_DEBUG_LAYERS") == "1")
 
         try:
             self.graph_w = int(self.winfo_fpixels("4c"))
@@ -605,6 +608,9 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
 
+        self._ensure_layers_defaults_for_all_tests()
+        self._active_test_idx = 0 if self.tests else None
+        self._sync_layers_panel()
         self._end_edit(commit=False)
 
         # После успешной корректировки — синяя строка в подвале
@@ -2190,6 +2196,9 @@ class GeoCanvasEditor(tk.Tk):
 
                 self._end_edit(commit=False)
 
+                self._ensure_layers_defaults_for_all_tests()
+                self._active_test_idx = 0 if self.tests else None
+                self._sync_layers_panel()
                 self._redraw()
 
                 self.undo_stack.clear()
@@ -2297,6 +2306,9 @@ class GeoCanvasEditor(tk.Tk):
                 self.flags[t.tid] = TestFlags(False, set(), set(), set(), set(), set())
 
             self._end_edit(commit=False)
+            self._ensure_layers_defaults_for_all_tests()
+            self._active_test_idx = 0 if self.tests else None
+            self._sync_layers_panel()
             self._redraw()
             self.undo_stack.clear()
             self.redo_stack.clear()
@@ -3452,56 +3464,61 @@ class GeoCanvasEditor(tk.Tk):
         return depth0, depth0 + 1.0
 
     def _ensure_test_layers(self, t) -> list[Layer]:
-        raw = list(getattr(t, "layers", []) or [])
-        layers: list[Layer] = []
-        for item in raw:
-            if isinstance(item, Layer):
-                layers.append(item)
-            elif isinstance(item, dict):
-                layers.append(layer_from_dict(item))
-        if not layers:
-            top, bot = self._test_depth_range(t)
-            layers = build_default_layers(top, bot)
-        try:
-            layers = normalize_layers(layers)
-            validate_layers(layers)
-        except Exception:
-            top, bot = self._test_depth_range(t)
-            layers = build_default_layers(top, bot)
-        t.layers = layers
-        return layers
+        return self.layer_store.get_layers(t, self._test_depth_range)
+
+
+    def _ensure_layers_defaults_for_all_tests(self):
+        self.layer_store.ensure_defaults_for_all_tests(self.tests, self._test_depth_range)
 
     def _depth_to_canvas_y(self, depth_m: float) -> float | None:
+        d = float(depth_m)
         units = getattr(self, "_grid_units", []) or []
         base_grid = getattr(self, "_grid_base", []) or []
-        d = float(depth_m)
 
         points: list[tuple[float, float]] = []
         for disp_r, unit in enumerate(units):
             y0r, y1r = self._row_y_bounds(disp_r)
-            if unit[0] == "row":
-                depth = None
-                try:
-                    gi = int(unit[1])
-                    if 0 <= gi < len(base_grid):
-                        depth = _parse_depth_float(base_grid[gi])
-                except Exception:
-                    depth = None
-                if depth is not None:
-                    points.append((float(depth), y0r + (y1r - y0r) * 0.5))
-            elif unit[0] == "meter":
-                meter_n = int(unit[1])
-                points.append((float(meter_n), y0r))
-                points.append((float(meter_n + 1), y1r))
+            if unit[0] == "meter":
+                meter_n = float(unit[1])
+                points.append((meter_n, y0r))
+                points.append((meter_n + 1.0, y1r))
+                continue
+            if unit[0] != "row":
+                continue
+            try:
+                gi = int(unit[1])
+            except Exception:
+                continue
+            if not (0 <= gi < len(base_grid)):
+                continue
+            cur = _parse_depth_float(base_grid[gi])
+            if cur is None:
+                continue
+            prev = _parse_depth_float(base_grid[gi - 1]) if gi > 0 else None
+            nxt = _parse_depth_float(base_grid[gi + 1]) if gi + 1 < len(base_grid) else None
+            if prev is not None:
+                top_d = (float(prev) + float(cur)) * 0.5
+            elif nxt is not None:
+                top_d = float(cur) - (float(nxt) - float(cur)) * 0.5
+            else:
+                top_d = float(cur) - float(getattr(self, "step_m", 0.05) or 0.05) * 0.5
+            if nxt is not None:
+                bot_d = (float(cur) + float(nxt)) * 0.5
+            elif prev is not None:
+                bot_d = float(cur) + (float(cur) - float(prev)) * 0.5
+            else:
+                bot_d = float(cur) + float(getattr(self, "step_m", 0.05) or 0.05) * 0.5
+            points.append((top_d, y0r))
+            points.append((bot_d, y1r))
 
         if not points:
             return None
         points.sort(key=lambda x: x[0])
+        if d < points[0][0] or d > points[-1][0]:
+            return None
         for dd, yy in points:
             if abs(dd - d) <= 1e-6:
                 return yy
-        if d < points[0][0] or d > points[-1][0]:
-            return None
 
         depths = [p[0] for p in points]
         i = bisect.bisect_left(depths, d)
@@ -3513,6 +3530,7 @@ class GeoCanvasEditor(tk.Tk):
             return y0
         ratio = (d - d0) / (d1 - d0)
         return y0 + (y1 - y0) * ratio
+
 
     def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, color: str, hatch: str, tags):
         def _draw_diag_segment(b: float, slope: int):
@@ -3701,6 +3719,10 @@ class GeoCanvasEditor(tk.Tk):
                 self.graph_fs_max_kpa,
             )
             self._draw_layer_handles_for_test(ti, (x0, x1, y0, y1))
+            if bool(getattr(self, "_debug_layers_overlay", False)) and bool(getattr(self, "compact_1m", False)) and bool(getattr(self, "expanded_meters", set())):
+                t_layers = self._ensure_test_layers(t)
+                dbg = f"LAYERS:{len(t_layers)} EDIT:{bool(getattr(self, 'layer_edit_mode', False))} TEST:{getattr(t, 'tid', ti)}"
+                self.canvas.create_text(x0 + 4, y0 + 4, anchor="nw", text=dbg, fill="#8a3d00", font=("Segoe UI", 8, "bold"), tags=("graph_layers", f"graph_layers_{ti}"))
 
     def _draw_layer_handles_for_test(self, ti: int, rect):
         if not bool(getattr(self, "layer_edit_mode", False)):
@@ -3715,11 +3737,13 @@ class GeoCanvasEditor(tk.Tk):
             y = self._depth_to_canvas_y(boundary)
             if y is None:
                 continue
-            self.canvas.create_line(x0, y, x1, y, fill="#ab9f8a", width=1, dash=(3, 2), tags=("layer_handles",))
-            self.canvas.create_rectangle(handle_x - 5, y - 5, handle_x + 5, y + 5, fill="#fefefe", outline="#555", tags=("layer_handles",))
-            self.canvas.create_text(plus_x, y, text="+", fill="#0f6fb2", font=("Segoe UI", 10, "bold"), tags=("layer_handles",))
-            self._layer_handle_hitbox.append({"kind": "boundary", "ti": ti, "boundary": bi, "bbox": (handle_x - 6, y - 6, handle_x + 6, y + 6)})
-            self._layer_handle_hitbox.append({"kind": "plus", "ti": ti, "boundary": bi, "bbox": (plus_x - 8, y - 8, plus_x + 8, y + 8)})
+            h_tag = f"layer_handle_{ti}_{bi}"
+            p_tag = f"layer_plus_{ti}_{bi}"
+            self.canvas.create_line(x0, y, x1, y, fill="#ab9f8a", width=1, dash=(3, 2), tags=("layer_handles", "layer_boundary_line"))
+            self.canvas.create_rectangle(handle_x - 5, y - 5, handle_x + 5, y + 5, fill="#fefefe", outline="#555", tags=("layer_handles", "layer_handle", h_tag))
+            self.canvas.create_text(plus_x, y, text="+", fill="#0f6fb2", font=("Segoe UI", 10, "bold"), tags=("layer_handles", "layer_plus", p_tag))
+            self._layer_handle_hitbox.append({"kind": "boundary", "ti": ti, "boundary": bi, "tag": h_tag, "bbox": (handle_x - 6, y - 6, handle_x + 6, y + 6)})
+            self._layer_handle_hitbox.append({"kind": "plus", "ti": ti, "boundary": bi, "tag": p_tag, "bbox": (plus_x - 8, y - 8, plus_x + 8, y + 8)})
 
     def _draw_graph_layers(self):
         self._redraw_graphs_now()
@@ -4003,17 +4027,43 @@ class GeoCanvasEditor(tk.Tk):
 
     def _canvas_y_to_depth(self, y: float) -> float | None:
         units = getattr(self, "_grid_units", []) or []
+        base_grid = getattr(self, "_grid_base", []) or []
         for disp_r, unit in enumerate(units):
             y0r, y1r = self._row_y_bounds(disp_r)
-            if y0r <= y <= y1r:
-                if unit[0] == "row":
-                    dv = _parse_depth_float(unit[2])
-                    return float(dv) if dv is not None else None
-                if unit[0] == "meter":
-                    meter_n = float(unit[1])
-                    frac = (y - y0r) / max(1.0, (y1r - y0r))
-                    return meter_n + frac
+            if not (y0r <= y <= y1r):
+                continue
+            frac = (y - y0r) / max(1.0, (y1r - y0r))
+            if unit[0] == "meter":
+                meter_n = float(unit[1])
+                return meter_n + frac
+            if unit[0] != "row":
+                continue
+            try:
+                gi = int(unit[1])
+            except Exception:
+                continue
+            if not (0 <= gi < len(base_grid)):
+                continue
+            cur = _parse_depth_float(base_grid[gi])
+            if cur is None:
+                continue
+            prev = _parse_depth_float(base_grid[gi - 1]) if gi > 0 else None
+            nxt = _parse_depth_float(base_grid[gi + 1]) if gi + 1 < len(base_grid) else None
+            if prev is not None:
+                top_d = (float(prev) + float(cur)) * 0.5
+            elif nxt is not None:
+                top_d = float(cur) - (float(nxt) - float(cur)) * 0.5
+            else:
+                top_d = float(cur) - float(getattr(self, "step_m", 0.05) or 0.05) * 0.5
+            if nxt is not None:
+                bot_d = (float(cur) + float(nxt)) * 0.5
+            elif prev is not None:
+                bot_d = float(cur) + (float(cur) - float(prev)) * 0.5
+            else:
+                bot_d = float(cur) + float(getattr(self, "step_m", 0.05) or 0.05) * 0.5
+            return top_d + (bot_d - top_d) * frac
         return None
+
 
     def _on_motion(self, event):
         self._evt_widget = event.widget
