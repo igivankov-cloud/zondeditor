@@ -21,6 +21,7 @@ class RibbonView(ttk.Frame):
         self.layer_ige_var = tk.StringVar(value="ИГЭ-1")
         self._buttons: dict[str, ttk.Button] = {}
         self._layer_rows: list[dict] = []
+        self._ige_controls: dict[str, ttk.Combobox] = {}
 
         try:
             style = ttk.Style(self)
@@ -115,26 +116,12 @@ class RibbonView(ttk.Frame):
     def _build_layers_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Слои")
-        head = ttk.Frame(tab)
-        head.pack(fill="x", pady=(0, 4))
-        ttk.Label(head, text="ИГЭ:").pack(side="left")
-        ige_cb = ttk.Combobox(head, state="readonly", width=10, textvariable=self.layer_ige_var, values=[f"ИГЭ-{i}" for i in range(1, 21)])
-        ige_cb.pack(side="left", padx=(4, 8))
-        ttk.Label(head, text="Грунт:").pack(side="left")
-        soil_cb = ttk.Combobox(head, state="readonly", width=22, textvariable=self.layer_soil_var)
-        soil_cb.pack(side="left", padx=(4, 8))
-        ttk.Button(head, text="Применить", width=10, command=self._apply_ige_edit).pack(side="left")
-        self.layer_soil_cb = soil_cb
 
-        cols = ("ige", "top", "bot", "th")
-        tree = ttk.Treeview(tab, columns=cols, show="headings", height=7)
-        tree.pack(fill="x", expand=False)
-        self.layers_tree = tree
-        headings = [("ige", "ИГЭ"), ("top", "От"), ("bot", "До"), ("th", "Толщина")]
-        for key, text in headings:
-            tree.heading(key, text=text)
-            tree.column(key, width=80, anchor="center")
-        tree.bind("<<TreeviewSelect>>", self._on_layer_select)
+        tbl = ttk.Frame(tab)
+        tbl.pack(fill="x", expand=False)
+        ttk.Label(tbl, text="ИГЭ", width=12, anchor="w").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Label(tbl, text="Грунт", width=26, anchor="w").grid(row=0, column=1, sticky="w")
+        self.layers_table = tbl
 
     def _build_processing_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
@@ -153,23 +140,16 @@ class RibbonView(ttk.Frame):
         self._add_btn(k2k4, "k2k4_30", "Пересчитать К2→К4 (30 МПа)", "Режим 30 МПа")
         self._add_btn(k2k4, "k2k4_50", "Пересчитать К2→К4 (50 МПа)", "Режим 50 МПа")
 
-    def _on_layer_select(self, _event=None):
-        sel = self.layers_tree.selection() if hasattr(self, "layers_tree") else []
-        if not sel:
-            return
-        idx = int(sel[0])
-        if 0 <= idx < len(self._layer_rows):
-            row = self._layer_rows[idx]
-            ige_id = str(row.get('ige', 'ИГЭ-1') or 'ИГЭ-1')
-            self.layer_ige_var.set(ige_id)
-            cmd = self.commands.get("select_ige")
-            if callable(cmd):
-                cmd(ige_id)
+    def _select_ige(self, ige_id: str):
+        self.layer_ige_var.set(ige_id)
+        cmd = self.commands.get("select_ige")
+        if callable(cmd):
+            cmd(ige_id)
 
-    def _apply_ige_edit(self):
+    def _apply_ige_edit(self, ige_id: str, soil_var: tk.StringVar):
         cmd = self.commands.get("edit_ige")
         if callable(cmd):
-            cmd(self.layer_ige_var.get().strip(), self.layer_soil_var.get().strip(), self.layer_mode_var.get().strip())
+            cmd(str(ige_id or "").strip(), str(soil_var.get() or "").strip(), "")
 
     def set_object_name(self, value: str):
         self.object_name_var.set(value or "")
@@ -193,17 +173,31 @@ class RibbonView(ttk.Frame):
 
     def set_layers(self, rows: list[dict], soil_values: list[str]):
         self._layer_rows = list(rows or [])
-        if hasattr(self, "layer_soil_cb"):
-            self.layer_soil_cb.configure(values=list(soil_values or []))
-        if not hasattr(self, "layers_tree"):
+        self._ige_controls = {}
+        if not hasattr(self, "layers_table"):
             return
-        tree = self.layers_tree
-        for iid in tree.get_children(""):
-            tree.delete(iid)
-        for idx, row in enumerate(self._layer_rows):
-            tree.insert("", "end", iid=str(idx), values=(
-                row.get("ige", ""),
-                row.get("top", ""),
-                row.get("bot", ""),
-                row.get("th", ""),
-            ))
+        for child in self.layers_table.grid_slaves():
+            if int(child.grid_info().get("row", 0)) > 0:
+                child.destroy()
+
+        for idx, row in enumerate(self._layer_rows, start=1):
+            ige_id = str(row.get("ige", "") or "")
+            soil_var = tk.StringVar(value=str(row.get("soil", "") or ""))
+            lbl = ttk.Label(self.layers_table, text=ige_id, anchor="w", width=12)
+            lbl.grid(row=idx, column=0, sticky="w", padx=(0, 8), pady=1)
+            cb = ttk.Combobox(self.layers_table, state="readonly", width=24, textvariable=soil_var, values=list(soil_values or []))
+            cb.grid(row=idx, column=1, sticky="w", pady=1)
+            cb.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, sv=soil_var: self._apply_ige_edit(ig, sv))
+            lbl.bind("<Button-1>", lambda _e, ig=ige_id: self._select_ige(ig))
+            cb.bind("<Button-1>", lambda _e, ig=ige_id: self._select_ige(ig), add="+")
+            self._ige_controls[ige_id] = cb
+
+    def focus_ige_row(self, ige_id: str):
+        ig = str(ige_id or "").strip()
+        cb = self._ige_controls.get(ig)
+        if cb is not None:
+            try:
+                cb.focus_set()
+            except Exception:
+                pass
+            self._select_ige(ig)
