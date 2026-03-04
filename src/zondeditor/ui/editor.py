@@ -3798,8 +3798,46 @@ class GeoCanvasEditor(tk.Tk):
             hatch_color = style.get("hatch_color") or "#000000"
             self._draw_layer_hatch(x0, ty0, x1, ty1, color=hatch_color, hatch=hatch, tags=tags)
             self._layer_plot_hitbox.append({"kind": "interval", "ti": ti, "ige_id": ige_id, "top": float(lyr.top_m), "bot": float(lyr.bot_m), "bbox": (x0, ty0, x1, ty1)})
-            label_spans.append(((ty0 + ty1) / 2.0, ige_id))
+            label_spans.append({"x0": x0, "x1": x1, "y0": ty0, "y1": ty1, "ige": str(ige_id)})
         return label_spans
+
+    def _draw_layer_label_chip(self, span: dict, tags):
+        x0 = float(span.get("x0", 0.0))
+        x1 = float(span.get("x1", 0.0))
+        y0 = float(span.get("y0", 0.0))
+        y1 = float(span.get("y1", 0.0))
+        text = str(span.get("ige", "") or "")
+        if not text or x1 <= x0 or y1 <= y0:
+            return
+        available_h = y1 - y0
+        if available_h < 8.0:
+            return
+        cx = (x0 + x1) * 0.5
+        cy = (y0 + y1) * 0.5
+        max_w = max(8.0, (x1 - x0) - 8.0)
+        max_h = max(8.0, available_h - 2.0)
+        for font_size in (8, 7, 6):
+            font = ("Segoe UI", font_size, "bold")
+            f = tkfont.Font(font=font)
+            tw = float(f.measure(text))
+            th = float(f.metrics("linespace"))
+            pad_x = 4.0
+            pad_y = 2.0
+            chip_w = tw + pad_x * 2.0
+            chip_h = th + pad_y * 2.0
+            if chip_w <= max_w and chip_h <= max_h:
+                self.canvas.create_rectangle(
+                    cx - chip_w * 0.5,
+                    cy - chip_h * 0.5,
+                    cx + chip_w * 0.5,
+                    cy + chip_h * 0.5,
+                    fill="#ffffff",
+                    outline="#d0d0d0",
+                    width=1,
+                    tags=tags,
+                )
+                self.canvas.create_text(cx, cy, text=text, fill="#4e4335", font=font, tags=tags)
+                return
 
     def _draw_graph_lines_for_test(self, ti: int, rect, y_points, qc_mpa, fs_kpa, qmax: float, fmax: float):
         x0, x1, y0, y1 = rect
@@ -3902,8 +3940,8 @@ class GeoCanvasEditor(tk.Tk):
             if not y_points:
                 self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
                 self._draw_graph_lines_for_test(ti, plot_rect, [], [], [], self.graph_qc_max_mpa, self.graph_fs_max_kpa)
-                for yy, ige in labels:
-                    self.canvas.create_text(x0 + 4, yy, anchor="w", text=str(ige), fill="#5e5140", font=("Segoe UI", 7), tags=tag_overlay)
+                for span in labels:
+                    self._draw_layer_label_chip(span, tag_overlay)
                 self._draw_layer_handles_for_test(ti, plot_rect)
                 continue
             packed = sorted(zip(y_points, qc_vals, fs_vals), key=lambda x: x[0])
@@ -3921,8 +3959,8 @@ class GeoCanvasEditor(tk.Tk):
                 self.graph_qc_max_mpa,
                 self.graph_fs_max_kpa,
             )
-            for yy, ige in labels:
-                self.canvas.create_text(x0 + 4, yy, anchor="w", text=str(ige), fill="#5e5140", font=("Segoe UI", 7), tags=tag_overlay)
+            for span in labels:
+                self._draw_layer_label_chip(span, tag_overlay)
             self._draw_layer_handles_for_test(ti, plot_rect)
             if bool(getattr(self, "_debug_layers_overlay", False)) and bool(getattr(self, "compact_1m", False)) and bool(getattr(self, "expanded_meters", set())):
                 t_layers = self._ensure_test_layers(t)
@@ -3934,7 +3972,7 @@ class GeoCanvasEditor(tk.Tk):
         layers = self._ensure_test_layers(t)
         x0, x1, _y0, _y1 = rect
         handle_x = x1 + 10
-        plus_x = x0 - 8
+        plus_x = x0 + 10
         for bi in range(1, len(layers)):
             boundary = layers[bi].top_m
             y = self._depth_to_canvas_y(boundary)
@@ -3948,10 +3986,11 @@ class GeoCanvasEditor(tk.Tk):
             bx1 = handle_x - 14
             self.canvas.create_rectangle(bx0, y - 8, bx1, y + 8, fill="#ffffff", outline="#555", tags=("layer_handles", "layer_depth_box", h_tag))
             self.canvas.create_text((bx0 + bx1) / 2, y, text=f"{float(boundary):.2f}", fill="#3f3f3f", font=("Segoe UI", 7), tags=("layer_handles", "layer_depth_label", h_tag))
-            self.canvas.create_text(plus_x, y, text="+", fill="#0f6fb2", font=("Segoe UI", 10, "bold"), tags=("layer_handles", "layer_plus", p_tag))
+            self.canvas.create_rectangle(plus_x - 6, y - 6, plus_x + 6, y + 6, fill="#ffffff", outline="#8f8f8f", width=1, tags=("layer_handles", "layer_plus_box", p_tag))
+            self.canvas.create_text(plus_x, y, text="+", fill="#1d4f7c", font=("Segoe UI", 9, "bold"), tags=("layer_handles", "layer_plus", p_tag))
             self._layer_handle_hitbox.append({"kind": "boundary", "ti": ti, "boundary": bi, "tag": h_tag, "bbox": (handle_x - 6, y - 6, handle_x + 6, y + 6)})
             self._layer_depth_box_hitbox.append({"kind": "boundary_depth_edit", "ti": ti, "boundary": bi, "bbox": (bx0, y - 9, bx1, y + 9)})
-            self._layer_handle_hitbox.append({"kind": "plus", "ti": ti, "boundary": bi, "tag": p_tag, "bbox": (plus_x - 8, y - 8, plus_x + 8, y + 8)})
+            self._layer_handle_hitbox.append({"kind": "plus", "ti": ti, "boundary": bi, "tag": p_tag, "bbox": (plus_x - 10, y - 10, plus_x + 10, y + 10)})
 
     def _draw_graph_layers(self):
         self._redraw_graphs_now()
@@ -3959,6 +3998,11 @@ class GeoCanvasEditor(tk.Tk):
     def _on_left_click(self, event):
         self._evt_widget = event.widget
         hit = self._hit_test(event.x, event.y)
+        if getattr(self, "_boundary_depth_editor", None):
+            editor_widget = (self._boundary_depth_editor or {}).get("entry") if isinstance(self._boundary_depth_editor, dict) else self._boundary_depth_editor
+            if not hit or hit[0] != "layer_boundary_depth_edit":
+                if event.widget is not editor_widget:
+                    self._close_boundary_depth_editor()
         if not hit:
             # клик вне ячеек/шапки → закрываем активное редактирование
             self._end_edit(commit=True)
@@ -4266,12 +4310,22 @@ class GeoCanvasEditor(tk.Tk):
         if not target:
             return
         bx0, by0, bx1, by1 = target.get("bbox", (0, 0, 0, 0))
-        entry = ttk.Entry(self, width=6)
+        entry = ttk.Entry(self.canvas, width=6)
         t = self.tests[ti]
         layers = self._ensure_test_layers(t)
         cur = float(layers[boundary].top_m) if 0 <= boundary < len(layers) else 0.0
         entry.insert(0, f"{cur:.2f}")
-        entry.place(x=int(self.canvas.winfo_x() + bx0), y=int(self.canvas.winfo_y() + by0), width=max(20, int(bx1 - bx0)), height=max(16, int(by1 - by0)))
+        win_id = self.canvas.create_window(
+            (bx0 + bx1) * 0.5,
+            (by0 + by1) * 0.5,
+            window=entry,
+            width=max(24, int(bx1 - bx0)),
+            height=max(16, int(by1 - by0)),
+            tags=("layer_handles", "layer_depth_editor"),
+        )
+
+        prev_depth = float(layers[boundary - 1].top_m) if boundary - 1 >= 0 else float(layers[0].top_m)
+        next_depth = float(layers[boundary + 1].top_m) if boundary + 1 < len(layers) else float(layers[-1].bot_m)
 
         def _apply(_ev=None):
             try:
@@ -4279,23 +4333,34 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 self._close_boundary_depth_editor()
                 return
+            snapped = round(val / 0.1) * 0.1
+            snapped = max(prev_depth + 0.2, min(next_depth - 0.2, snapped))
             self._push_undo()
             cloned = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
-            t.layers = move_layer_boundary(cloned, int(boundary), val)
+            t.layers = move_layer_boundary(cloned, int(boundary), snapped)
             self._calc_layer_params_for_test(int(ti))
             self.redraw_all()
             self._close_boundary_depth_editor()
 
         entry.bind("<Return>", _apply)
         entry.bind("<Escape>", lambda _e: self._close_boundary_depth_editor())
+        entry.bind("<FocusOut>", lambda _e: self._close_boundary_depth_editor())
         entry.focus_set()
-        self._boundary_depth_editor = entry
+        self._boundary_depth_editor = {"entry": entry, "window_id": win_id}
 
     def _close_boundary_depth_editor(self):
         ed = getattr(self, "_boundary_depth_editor", None)
         if ed is not None:
             try:
-                ed.destroy()
+                if isinstance(ed, dict):
+                    entry = ed.get("entry")
+                    win_id = ed.get("window_id")
+                    if win_id:
+                        self.canvas.delete(win_id)
+                    if entry is not None:
+                        entry.destroy()
+                else:
+                    ed.destroy()
             except Exception:
                 pass
         self._boundary_depth_editor = None
@@ -4389,6 +4454,7 @@ class GeoCanvasEditor(tk.Tk):
         hit = self._hit_test(event.x, event.y)
         if not hit:
             self._set_hover(None)
+            self.canvas.configure(cursor="")
             return
         kind, ti, row, field = hit
         if kind in ("edit", "dup", "trash"):
@@ -4407,8 +4473,13 @@ class GeoCanvasEditor(tk.Tk):
             self._set_hover(None)
             tip_text = "Перетащить границу слоя" if kind == "layer_boundary" else "Добавить слой 0.20 м"
             self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=700)
+            if kind == "layer_plus":
+                self.canvas.configure(cursor="hand2")
+            else:
+                self.canvas.configure(cursor="")
         else:
             self._set_hover(None)
+            self.canvas.configure(cursor="")
 
 
     def _delete_test(self, ti: int):

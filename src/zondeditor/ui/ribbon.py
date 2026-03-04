@@ -123,10 +123,7 @@ class RibbonView(ttk.Frame):
         ttk.Label(head, text="Грунт:").pack(side="left")
         soil_cb = ttk.Combobox(head, state="readonly", width=22, textvariable=self.layer_soil_var)
         soil_cb.pack(side="left", padx=(4, 8))
-        ttk.Label(head, text="Режим:").pack(side="left")
-        mode_cb = ttk.Combobox(head, state="readonly", width=10, textvariable=self.layer_mode_var, values=["valid", "limited"])
-        mode_cb.pack(side="left", padx=(4, 8))
-        ttk.Button(head, text="Применить", command=self._apply_ige_edit).pack(side="left")
+        ttk.Button(head, text="Применить", width=10, command=self._apply_ige_edit).pack(side="left")
         self.layer_soil_cb = soil_cb
 
         cols = ("ige", "top", "bot", "th")
