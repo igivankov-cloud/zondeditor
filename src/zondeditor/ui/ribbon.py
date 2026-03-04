@@ -122,6 +122,7 @@ class RibbonView(ttk.Frame):
         tools.pack(fill="x", expand=False, pady=(0, 4))
         self._add_btn_grid(tools, "add_ige", "+ ИГЭ", "Добавить ИГЭ без назначенного грунта", 0, 0)
         self._add_btn_grid(tools, "calc_cpt", "Рассчитать CPT", "Рассчитать qc_ср, φнорм и Eнорм по ИГЭ", 0, 1)
+        self._add_btn_grid(tools, "edit_ige_cpt", "Параметры ИГЭ", "Поля СП 446 для выбранного ИГЭ", 0, 2)
 
         tbl = ttk.Frame(tab)
         tbl.pack(fill="x", expand=False)
@@ -130,6 +131,7 @@ class RibbonView(ttk.Frame):
         ttk.Label(tbl, text="Источник", width=10, anchor="w").grid(row=0, column=2, sticky="w", padx=(8, 0))
         ttk.Label(tbl, text="φ (CPT)", width=10, anchor="w").grid(row=0, column=3, sticky="w")
         ttk.Label(tbl, text="E (CPT)", width=10, anchor="w").grid(row=0, column=4, sticky="w")
+        ttk.Label(tbl, text="Статус", width=14, anchor="w").grid(row=0, column=5, sticky="w")
         self.layers_table = tbl
 
     def _build_processing_tab(self):
@@ -199,6 +201,7 @@ class RibbonView(ttk.Frame):
             ttk.Label(self.layers_table, text=str(row.get("source", "")), width=10, anchor="w").grid(row=idx, column=2, sticky="w", padx=(8, 0), pady=1)
             ttk.Label(self.layers_table, text=str(row.get("phi", "")), width=10, anchor="w").grid(row=idx, column=3, sticky="w", pady=1)
             ttk.Label(self.layers_table, text=str(row.get("e", "")), width=10, anchor="w").grid(row=idx, column=4, sticky="w", pady=1)
+            ttk.Label(self.layers_table, text=str(row.get("status", "")), width=14, anchor="w").grid(row=idx, column=5, sticky="w", pady=1)
             cb.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, sv=soil_var: self._apply_ige_edit(ig, sv))
             lbl.bind("<Button-1>", lambda _e, ig=ige_id: self._select_ige(ig))
             cb.bind("<Button-1>", lambda _e, ig=ige_id: self._select_ige(ig), add="+")

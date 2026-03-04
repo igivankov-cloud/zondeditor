@@ -227,7 +227,7 @@ class GeoCanvasEditor(tk.Tk):
         }
         self.layer_store = LayerStore()
         self._debug_layers_overlay = bool(os.environ.get("ZONDEDITOR_DEBUG_LAYERS") == "1")
-        self.cpt_calc_settings = {"method": METHOD_SP446, "alluvial_sands": False}
+        self.cpt_calc_settings = {"method": METHOD_SP446, "alluvial_sands": False, "groundwater_level": None}
 
         try:
             self.graph_w = int(self.winfo_fpixels("4c"))
@@ -576,9 +576,9 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             self.ige_registry = {}
         try:
-            self.cpt_calc_settings = copy.deepcopy(dict(snap.get("cpt_calc_settings", {}) or {})) or {"method": METHOD_SP446, "alluvial_sands": False}
+            self.cpt_calc_settings = copy.deepcopy(dict(snap.get("cpt_calc_settings", {}) or {})) or {"method": METHOD_SP446, "alluvial_sands": False, "groundwater_level": None}
         except Exception:
-            self.cpt_calc_settings = {"method": METHOD_SP446, "alluvial_sands": False}
+            self.cpt_calc_settings = {"method": METHOD_SP446, "alluvial_sands": False, "groundwater_level": None}
         self._ensure_default_iges()
 
         for d in snap.get("tests", []):
@@ -880,7 +880,92 @@ class GeoCanvasEditor(tk.Tk):
             ent["lab_phys"] = {}
         if "cpt_result" not in ent:
             ent["cpt_result"] = None
+        self._ensure_ige_cpt_fields(ent)
         return ent
+
+    def _ensure_ige_cpt_fields(self, ent: dict[str, object]) -> dict[str, object]:
+        ent.setdefault("sand_class", "")
+        ent.setdefault("alluvial", False)
+        if "saturated" not in ent:
+            ent["saturated"] = None
+        ent.setdefault("IL", "")
+        ent.setdefault("consistency", "")
+        ent.setdefault("note", "")
+        ent.setdefault("source_flags", {"CPT": True, "LAB": False, "Stamp": False})
+        return ent
+
+    def _auto_recalculate_cpt(self):
+        settings = dict(getattr(self, "cpt_calc_settings", {}) or {})
+        calc = CptCalcSettings(
+            method=str(settings.get("method") or METHOD_SP446),
+            alluvial_sands=bool(settings.get("alluvial_sands", False)),
+            groundwater_level=settings.get("groundwater_level"),
+        )
+        results = calculate_ige_cpt_results(tests=list(self.tests or []), ige_registry=self.ige_registry, settings=calc)
+        for ige_id in sorted(self.ige_registry.keys(), key=self._ige_id_to_num):
+            self._ensure_ige_entry(ige_id)["cpt_result"] = results.get(ige_id)
+        self._sync_layers_panel()
+
+    def _edit_selected_ige_cpt_params(self):
+        if not getattr(self, "ribbon_view", None):
+            return
+        ige_id = str(self.ribbon_view.layer_ige_var.get() or "ИГЭ-1").strip() or "ИГЭ-1"
+        ent = self._ensure_ige_cpt_fields(self._ensure_ige_entry(ige_id))
+        dlg = tk.Toplevel(self)
+        dlg.title(f"Параметры CPT для {ige_id}")
+        dlg.transient(self)
+        dlg.grab_set()
+        frm = ttk.Frame(dlg, padding=10)
+        frm.pack(fill="both", expand=True)
+
+        sand_class = tk.StringVar(value=str(ent.get("sand_class") or ""))
+        alluvial_var = tk.BooleanVar(value=bool(ent.get("alluvial", False)))
+        sat_mode = tk.StringVar(value=("manual" if ent.get("saturated") is not None else "auto"))
+        sat_var = tk.BooleanVar(value=bool(ent.get("saturated", False)))
+        il_var = tk.StringVar(value=str(ent.get("IL") or ""))
+        cons_var = tk.StringVar(value=str(ent.get("consistency") or ""))
+        note_var = tk.StringVar(value=str(ent.get("note") or ""))
+        sf = dict(ent.get("source_flags") or {})
+        src_cpt = tk.BooleanVar(value=bool(sf.get("CPT", True)))
+        src_lab = tk.BooleanVar(value=bool(sf.get("LAB", False)))
+        src_stamp = tk.BooleanVar(value=bool(sf.get("Stamp", False)))
+
+        ttk.Label(frm, text="sand_class:").grid(row=0, column=0, sticky="w")
+        ttk.Combobox(frm, state="readonly", textvariable=sand_class, width=28, values=["", "крупный", "средней крупности", "мелкий", "пылеватый"]).grid(row=0, column=1, sticky="w")
+        ttk.Checkbutton(frm, text="alluvial", variable=alluvial_var).grid(row=1, column=1, sticky="w")
+        ttk.Radiobutton(frm, text="saturated: auto от УГВ", variable=sat_mode, value="auto").grid(row=2, column=1, sticky="w")
+        ttk.Radiobutton(frm, text="saturated: вручную", variable=sat_mode, value="manual").grid(row=3, column=1, sticky="w")
+        ttk.Checkbutton(frm, text="водонасыщенный", variable=sat_var).grid(row=4, column=1, sticky="w")
+        ttk.Label(frm, text="IL:").grid(row=5, column=0, sticky="w")
+        ttk.Entry(frm, textvariable=il_var, width=12).grid(row=5, column=1, sticky="w")
+        ttk.Label(frm, text="консистенция:").grid(row=6, column=0, sticky="w")
+        ttk.Combobox(frm, textvariable=cons_var, width=28, values=["", "твердая", "полутвердая", "тугопластичная", "твердый", "полутвердый", "тугопластичный"], state="readonly").grid(row=6, column=1, sticky="w")
+        ttk.Label(frm, text="note:").grid(row=7, column=0, sticky="w")
+        ttk.Entry(frm, textvariable=note_var, width=42).grid(row=7, column=1, sticky="w")
+        ttk.Label(frm, text="source flags:").grid(row=8, column=0, sticky="w")
+        src_frm = ttk.Frame(frm)
+        src_frm.grid(row=8, column=1, sticky="w")
+        ttk.Checkbutton(src_frm, text="CPT", variable=src_cpt).pack(side="left")
+        ttk.Checkbutton(src_frm, text="LAB", variable=src_lab).pack(side="left")
+        ttk.Checkbutton(src_frm, text="Stamp", variable=src_stamp).pack(side="left")
+
+        def _save():
+            self._push_undo()
+            ent["sand_class"] = str(sand_class.get() or "")
+            ent["alluvial"] = bool(alluvial_var.get())
+            ent["saturated"] = (bool(sat_var.get()) if sat_mode.get() == "manual" else None)
+            ent["IL"] = str(il_var.get() or "")
+            ent["consistency"] = str(cons_var.get() or "")
+            ent["note"] = str(note_var.get() or "")
+            ent["source_flags"] = {"CPT": bool(src_cpt.get()), "LAB": bool(src_lab.get()), "Stamp": bool(src_stamp.get())}
+            self._auto_recalculate_cpt()
+            dlg.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=9, column=0, columnspan=2, sticky="e", pady=(8, 0))
+        ttk.Button(btns, text="Отмена", command=dlg.destroy).pack(side="right")
+        ttk.Button(btns, text="Сохранить", command=_save).pack(side="right", padx=(0, 8))
+        self.wait_window(dlg)
 
     def _next_free_ige_id(self) -> str:
         used: set[int] = set()
@@ -999,6 +1084,7 @@ class GeoCanvasEditor(tk.Tk):
                     "source": str(cpt.get("source") or "-"),
                     "phi": ("-" if cpt.get("phi_norm") is None else f"{float(cpt.get('phi_norm')):.1f}"),
                     "e": ("-" if cpt.get("E_norm") is None else f"{float(cpt.get('E_norm')):.1f}"),
+                    "status": str(cpt.get("status_text") or "-")
                 }
             )
         self.ribbon_view.set_layers(rows, [x.value for x in SoilType])
@@ -1045,26 +1131,27 @@ class GeoCanvasEditor(tk.Tk):
     def _edit_ige_from_ribbon(self, ige_raw: str, soil_raw: str, mode_raw: str = ""):
         ige_id = str(ige_raw or "").strip() or "ИГЭ-1"
         self._push_undo()
+        base = self._ensure_ige_cpt_fields(self._ensure_ige_entry(ige_id))
         try:
             soil = SoilType(str(soil_raw))
         except Exception:
-            self.ige_registry[ige_id] = {"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}}
+            self.ige_registry[ige_id] = dict(base)
+            self.ige_registry[ige_id].update({"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}})
             for t in (self.tests or []):
                 for lyr in self._ensure_test_layers(t):
                     if self._layer_ige_id(lyr) == ige_id:
                         self._apply_ige_to_layer(lyr)
+            self._auto_recalculate_cpt()
             self.redraw_all()
             return
         mode = calc_mode_for_soil(soil).value
-        self.ige_registry[ige_id] = {
-            "soil_type": soil.value,
-            "calc_mode": mode,
-            "style": dict(SOIL_STYLE.get(soil, {})),
-        }
+        base.update({"soil_type": soil.value, "calc_mode": mode, "style": dict(SOIL_STYLE.get(soil, {}))})
+        self.ige_registry[ige_id] = base
         for t in (self.tests or []):
             for lyr in self._ensure_test_layers(t):
                 if self._layer_ige_id(lyr) == ige_id:
                     self._apply_ige_to_layer(lyr)
+        self._auto_recalculate_cpt()
         self.redraw_all()
 
     def _build_ui(self):
@@ -1234,6 +1321,7 @@ class GeoCanvasEditor(tk.Tk):
                 "select_ige": self._select_ige_for_ribbon,
                 "add_ige": self._add_unassigned_ige_from_ribbon,
                 "calc_cpt": self.calculate_cpt_params,
+                "edit_ige_cpt": self._edit_selected_ige_cpt_params,
                 "apply_calc": lambda: self._redraw(),
                 "k2k4_30": lambda: messagebox.showinfo("К2→К4", "Режим 30 МПа будет добавлен в следующем шаге."),
                 "k2k4_50": lambda: messagebox.showinfo("К2→К4", "Режим 50 МПа будет добавлен в следующем шаге."),
@@ -6580,16 +6668,59 @@ class GeoCanvasEditor(tk.Tk):
         current = dict(getattr(self, "cpt_calc_settings", {}) or {})
         method_var = tk.StringVar(value=str(current.get("method") or METHOD_SP446))
         alluvial_var = tk.BooleanVar(value=bool(current.get("alluvial_sands", False)))
+        gwl_curr = current.get("groundwater_level")
+        gwl_var = tk.StringVar(value=("" if gwl_curr in (None, "") else str(gwl_curr)))
+        gwl_scale_var = tk.DoubleVar(value=float(gwl_curr) if gwl_curr not in (None, "") else 0.0)
+
         ttk.Label(frm, text="Методика:").pack(anchor="w")
         ttk.Radiobutton(frm, text="СП 446.1325800.2019 (Приложение Ж)", variable=method_var, value=METHOD_SP446).pack(anchor="w")
         ttk.Radiobutton(frm, text="СП 11-105-97 (Приложение И)", variable=method_var, value=METHOD_SP11).pack(anchor="w")
-        ttk.Checkbutton(frm, text="Аллювиальные пески", variable=alluvial_var).pack(anchor="w", pady=(6, 0))
+        ttk.Checkbutton(frm, text="Аллювиальные пески (legacy СП11)", variable=alluvial_var).pack(anchor="w", pady=(6, 0))
+
+        gwl_box = ttk.LabelFrame(frm, text="Уровень грунтовых вод (УГВ), м", padding=6)
+        gwl_box.pack(fill="x", pady=(8, 0))
+        ent = ttk.Entry(gwl_box, textvariable=gwl_var, width=10)
+        ent.pack(side="right")
+        ttk.Label(gwl_box, text="числом:").pack(side="right", padx=(0, 4))
+        scl = tk.Scale(gwl_box, from_=0, to=30, orient="horizontal", resolution=0.1, variable=gwl_scale_var, troughcolor="#4f89ff", activebackground="#2b6cff", highlightthickness=0)
+        scl.pack(fill="x")
+
+        def _sync_from_scale(_evt=None):
+            gwl_var.set(f"{float(gwl_scale_var.get()):.2f}")
+
+        def _sync_from_entry(_evt=None):
+            txt = str(gwl_var.get() or "").strip().replace(",", ".")
+            if not txt:
+                return
+            try:
+                gwl_scale_var.set(float(txt))
+            except Exception:
+                pass
+
+        scl.configure(command=lambda _v: _sync_from_scale())
+        ent.bind("<FocusOut>", _sync_from_entry)
+
+        none_var = tk.BooleanVar(value=(gwl_curr in (None, "")))
+
+        def _toggle_none():
+            if bool(none_var.get()):
+                gwl_var.set("")
+
+        ttk.Checkbutton(gwl_box, text="не задан", variable=none_var, command=_toggle_none).pack(anchor="w", pady=(4, 0))
         result: dict[str, object] = {"ok": False}
 
         def _ok():
             result["ok"] = True
             result["method"] = str(method_var.get() or METHOD_SP446)
             result["alluvial_sands"] = bool(alluvial_var.get())
+            txt = str(gwl_var.get() or "").strip().replace(",", ".")
+            if bool(none_var.get()) or not txt:
+                result["groundwater_level"] = None
+            else:
+                try:
+                    result["groundwater_level"] = float(txt)
+                except Exception:
+                    result["groundwater_level"] = None
             dlg.destroy()
 
         btns = ttk.Frame(frm)
@@ -6599,7 +6730,7 @@ class GeoCanvasEditor(tk.Tk):
         self.wait_window(dlg)
         if not bool(result.get("ok")):
             return None
-        return {"method": result["method"], "alluvial_sands": result["alluvial_sands"]}
+        return {"method": result["method"], "alluvial_sands": result["alluvial_sands"], "groundwater_level": result.get("groundwater_level")}
 
     def calculate_cpt_params(self):
         settings = self._ask_cpt_calc_settings()
@@ -6607,7 +6738,7 @@ class GeoCanvasEditor(tk.Tk):
             return
         self._push_undo()
         self.cpt_calc_settings = dict(settings)
-        calc = CptCalcSettings(method=str(settings.get("method") or METHOD_SP446), alluvial_sands=bool(settings.get("alluvial_sands", False)))
+        calc = CptCalcSettings(method=str(settings.get("method") or METHOD_SP446), alluvial_sands=bool(settings.get("alluvial_sands", False)), groundwater_level=settings.get("groundwater_level"))
         results = calculate_ige_cpt_results(tests=list(self.tests or []), ige_registry=self.ige_registry, settings=calc)
         for ige_id in sorted(self.ige_registry.keys(), key=self._ige_id_to_num):
             ent = self._ensure_ige_entry(ige_id)
@@ -6632,12 +6763,25 @@ class GeoCanvasEditor(tk.Tk):
                     "ige_id": ige_id,
                     "soil_type": ent.get("soil_type") or "",
                     "bounds": bounds_txt,
+                    "mid_depth": cpt.get("mid_depth", "-"),
+                    "sand_class": ent.get("sand_class") or "",
+                    "alluvial": bool(ent.get("alluvial", False)),
+                    "saturated": cpt.get("saturated", ent.get("saturated")),
+                    "il": ent.get("IL", ""),
+                    "consistency": cpt.get("consistency", ent.get("consistency", "")),
+                    "note": ent.get("note", ""),
+                    "source_flags": ent.get("source_flags", {"CPT": True, "LAB": False, "Stamp": False}),
                     "qc_mean": cpt.get("qc_mean", "-"),
                     "n": cpt.get("n", "-"),
                     "qc_min": cpt.get("qc_min", "-"),
                     "qc_max": cpt.get("qc_max", "-"),
+                    "std": cpt.get("std", "-"),
                     "variation": cpt.get("variation", "-"),
+                    "lookup_table": cpt.get("lookup_table", "-"),
+                    "lookup_branch": cpt.get("lookup_branch", "-"),
                     "lookup_interval": cpt.get("lookup_interval", "-"),
+                    "status": cpt.get("status_text", "-"),
+                    "reason": cpt.get("reason", ""),
                     "phi_norm": cpt.get("phi_norm", "-"),
                     "E_norm": cpt.get("E_norm", "-"),
                 }
@@ -7139,7 +7283,7 @@ class GeoCanvasEditor(tk.Tk):
             self.fsleeve_var.set(project.settings.fsleeve)
             self.acon_var.set(project.settings.acon)
             self.asl_var.set(project.settings.asleeve)
-        self.cpt_calc_settings = dict((project.settings.extras or {}).get("cpt_calc_settings") or self.cpt_calc_settings or {"method": METHOD_SP446, "alluvial_sands": False})
+        self.cpt_calc_settings = dict((project.settings.extras or {}).get("cpt_calc_settings") or self.cpt_calc_settings or {"method": METHOD_SP446, "alluvial_sands": False, "groundwater_level": None})
         self._dirty = False
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)
