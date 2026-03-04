@@ -844,30 +844,50 @@ class GeoCanvasEditor(tk.Tk):
         key = str(ige_id or "").strip() or "ИГЭ-1"
         ent = self.ige_registry.get(key)
         if ent is None:
-            soil_raw = str(fallback_soil or SoilType.SANDY_LOAM.value)
-            try:
+            soil_raw = str(fallback_soil or "").strip()
+            if soil_raw in (x.value for x in SoilType):
                 soil = SoilType(soil_raw)
-            except Exception:
-                soil = SoilType.SANDY_LOAM
-            mode_raw = str(fallback_mode or calc_mode_for_soil(soil).value)
-            if mode_raw not in (CalcMode.VALID.value, CalcMode.LIMITED.value):
                 mode_raw = calc_mode_for_soil(soil).value
-            ent = {"soil_type": soil.value, "calc_mode": mode_raw, "style": dict(SOIL_STYLE.get(soil, {}))}
+                ent = {"soil_type": soil.value, "calc_mode": mode_raw, "style": dict(SOIL_STYLE.get(soil, {}))}
+            else:
+                mode_raw = str(fallback_mode or CalcMode.LIMITED.value)
+                if mode_raw not in (CalcMode.VALID.value, CalcMode.LIMITED.value):
+                    mode_raw = CalcMode.LIMITED.value
+                ent = {"soil_type": None, "calc_mode": mode_raw, "style": {}}
             self.ige_registry[key] = ent
         return ent
+
+    def _next_free_ige_id(self) -> str:
+        used: set[int] = set()
+        for ige_id in (self.ige_registry or {}).keys():
+            used.add(self._ige_id_to_num(str(ige_id)))
+        for t in (self.tests or []):
+            for lyr in (getattr(t, "layers", []) or []):
+                used.add(self._ige_id_to_num(str(getattr(lyr, "ige_id", "") or "")))
+        n = 1
+        while n in used:
+            n += 1
+        return f"ИГЭ-{n}"
 
     def _apply_ige_to_layer(self, lyr: Layer):
         ige_id = self._layer_ige_id(lyr)
         ent = self._ensure_ige_entry(ige_id, fallback_soil=getattr(lyr, "soil_type", SoilType.SANDY_LOAM).value, fallback_mode=getattr(lyr, "calc_mode", CalcMode.VALID).value)
-        soil_raw = str(ent.get("soil_type") or SoilType.SANDY_LOAM.value)
-        try:
+        soil_raw = str(ent.get("soil_type") or "").strip()
+        if soil_raw in (x.value for x in SoilType):
             soil = SoilType(soil_raw)
-        except Exception:
+            mode = calc_mode_for_soil(soil)
+            style = dict(SOIL_STYLE.get(soil, {}))
+            style.update(dict(ent.get("style") or {}))
+            ent["calc_mode"] = mode.value
+            ent["soil_type"] = soil.value
+            ent["style"] = dict(style)
+        else:
             soil = SoilType.SANDY_LOAM
-        mode_raw = str(ent.get("calc_mode") or calc_mode_for_soil(soil).value)
-        mode = CalcMode(mode_raw) if mode_raw in (CalcMode.VALID.value, CalcMode.LIMITED.value) else calc_mode_for_soil(soil)
-        style = dict(SOIL_STYLE.get(soil, {}))
-        style.update(dict(ent.get("style") or {}))
+            mode = CalcMode.LIMITED
+            style = {}
+            ent["soil_type"] = None
+            ent["calc_mode"] = mode.value
+            ent["style"] = {}
         lyr.soil_type = soil
         lyr.calc_mode = mode
         lyr.style = style
@@ -903,15 +923,12 @@ class GeoCanvasEditor(tk.Tk):
             return
         self._calc_layer_params_for_test(int(ti))
         layers = self._ensure_test_layers(self.tests[ti])
+        ige_ids = {self._layer_ige_id(lyr) for lyr in layers}
+        ige_ids.update(str(x) for x in (self.ige_registry or {}).keys())
         rows = []
-        for lyr in layers:
-            ige_id = self._layer_ige_id(lyr)
-            rows.append({
-                "ige": ige_id,
-                "top": f"{float(lyr.top_m):.2f}",
-                "bot": f"{float(lyr.bot_m):.2f}",
-                "th": f"{float(lyr.thickness_m):.2f}",
-            })
+        for ige_id in sorted(ige_ids, key=self._ige_id_to_num):
+            ent = self._ensure_ige_entry(ige_id)
+            rows.append({"ige": ige_id, "soil": str(ent.get("soil_type") or "")})
         self.ribbon_view.set_layers(rows, [x.value for x in SoilType])
         if rows:
             current_ige = str(rows[0].get("ige") or "ИГЭ-1")
@@ -953,16 +970,20 @@ class GeoCanvasEditor(tk.Tk):
             self._redraw()
             self.schedule_graph_redraw()
 
-    def _edit_ige_from_ribbon(self, ige_raw: str, soil_raw: str, mode_raw: str):
+    def _edit_ige_from_ribbon(self, ige_raw: str, soil_raw: str, mode_raw: str = ""):
         ige_id = str(ige_raw or "").strip() or "ИГЭ-1"
         self._push_undo()
         try:
             soil = SoilType(str(soil_raw))
         except Exception:
-            soil = SoilType.SANDY_LOAM
-        mode = str(mode_raw or "").strip()
-        if mode not in (CalcMode.VALID.value, CalcMode.LIMITED.value):
-            mode = calc_mode_for_soil(soil).value
+            self.ige_registry[ige_id] = {"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}}
+            for t in (self.tests or []):
+                for lyr in self._ensure_test_layers(t):
+                    if self._layer_ige_id(lyr) == ige_id:
+                        self._apply_ige_to_layer(lyr)
+            self.redraw_all()
+            return
+        mode = calc_mode_for_soil(soil).value
         self.ige_registry[ige_id] = {
             "soil_type": soil.value,
             "calc_mode": mode,
@@ -3792,11 +3813,12 @@ class GeoCanvasEditor(tk.Tk):
             ige_id = self._layer_ige_id(lyr)
             ent = self._ensure_ige_entry(ige_id, fallback_soil=lyr.soil_type.value, fallback_mode=lyr.calc_mode.value)
             style = dict(ent.get("style") or {})
-            fill = style.get("color") or "#f5edd8"
-            hatch = style.get("hatch") or "diag_sparse"
+            fill = style.get("color") or "#f2f2f2"
+            hatch = style.get("hatch") or ""
             self.canvas.create_rectangle(x0, ty0, x1, ty1, fill=fill, outline="", tags=tags)
-            hatch_color = style.get("hatch_color") or "#000000"
-            self._draw_layer_hatch(x0, ty0, x1, ty1, color=hatch_color, hatch=hatch, tags=tags)
+            if hatch:
+                hatch_color = style.get("hatch_color") or "#000000"
+                self._draw_layer_hatch(x0, ty0, x1, ty1, color=hatch_color, hatch=hatch, tags=tags)
             self._layer_plot_hitbox.append({"kind": "interval", "ti": ti, "ige_id": ige_id, "top": float(lyr.top_m), "bot": float(lyr.bot_m), "bbox": (x0, ty0, x1, ty1)})
             label_spans.append({"x0": x0, "x1": x1, "y0": ty0, "y1": ty1, "ige": str(ige_id)})
         return label_spans
@@ -4062,7 +4084,7 @@ class GeoCanvasEditor(tk.Tk):
             return
         if kind == "layer_boundary_depth_edit":
             self._open_boundary_depth_editor(int(ti), int(row))
-            return
+            return "break"
         if kind == "layer_interval":
             self._show_ige_picker_at_click(event, int(ti), float(field if field is not None else 0.0))
             return
@@ -4190,6 +4212,10 @@ class GeoCanvasEditor(tk.Tk):
     def _on_global_click(self, event):
         """Закрывает активную ячейку при клике вне зондирования/ячейки."""
         try:
+            if getattr(self, "_boundary_depth_editor", None):
+                editor_widget = (self._boundary_depth_editor or {}).get("entry") if isinstance(self._boundary_depth_editor, dict) else self._boundary_depth_editor
+                if event.widget not in (editor_widget, getattr(self, "canvas", None), getattr(self, "hcanvas", None)):
+                    self._close_boundary_depth_editor()
             if not self._editing:
                 return
             # если клик по текущему Entry — не закрываем
@@ -4271,10 +4297,11 @@ class GeoCanvasEditor(tk.Tk):
         ids = sorted(self.ige_registry.keys(), key=self._ige_id_to_num)
         for ige_id in ids:
             ent = self._ensure_ige_entry(ige_id)
-            values.append(f"{ige_id} ({ent.get('soil_type', '')})")
+            soil_label = str(ent.get("soil_type") or "не назначен")
+            values.append(f"{ige_id} ({soil_label})")
         cb = ttk.Combobox(win, state="readonly", width=26, values=values)
         current_ige = self._layer_ige_id(target)
-        current_soil = self._ensure_ige_entry(current_ige).get("soil_type", "")
+        current_soil = str(self._ensure_ige_entry(current_ige).get("soil_type") or "не назначен")
         current_label = f"{current_ige} ({current_soil})"
         if current_label in values:
             cb.set(current_label)
@@ -4344,8 +4371,8 @@ class GeoCanvasEditor(tk.Tk):
 
         entry.bind("<Return>", _apply)
         entry.bind("<Escape>", lambda _e: self._close_boundary_depth_editor())
-        entry.bind("<FocusOut>", lambda _e: self._close_boundary_depth_editor())
         entry.focus_set()
+        entry.selection_range(0, tk.END)
         self._boundary_depth_editor = {"entry": entry, "window_id": win_id}
 
     def _close_boundary_depth_editor(self):
@@ -4372,10 +4399,19 @@ class GeoCanvasEditor(tk.Tk):
         layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
         try:
             t.layers = insert_layer_between(layers, int(boundary))
+            new_ige_id = self._next_free_ige_id()
+            if 0 <= int(boundary) < len(t.layers):
+                new_layer = t.layers[int(boundary)]
+                new_layer.ige_id = new_ige_id
+                new_layer.ige_num = self._ige_id_to_num(new_ige_id)
+                self.ige_registry[new_ige_id] = {"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}}
+                self._apply_ige_to_layer(new_layer)
             self._calc_layer_params_for_test(int(ti))
             self._sync_layers_panel()
             self._redraw()
             self.schedule_graph_redraw()
+            if getattr(self, "ribbon_view", None):
+                self.ribbon_view.focus_ige_row(new_ige_id)
         except Exception as exc:
             self.status.set(f"Невозможно вставить слой: {exc}")
 
