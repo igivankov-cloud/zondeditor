@@ -621,18 +621,23 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
 
+    def _debug_log(self, msg: str):
+        if bool(getattr(self, "_debug_layers_overlay", False)):
+            try:
+                print(f"[DEBUG] {msg}", file=sys.stderr)
+            except Exception:
+                pass
+
     def _push_undo(self):
         if not self.tests:
             self._sync_layers_panel()
             self._update_scrollregion()
             return
+        self.undo_stack.append(self._snapshot())
         if len(self.undo_stack) > 50:
             self.undo_stack.pop(0)
         self.redo_stack.clear()
         self._dirty = True
-
-
-
 
     def _refresh_after_undo_redo(self) -> None:
         """Bring UI to a fully consistent state after undo/redo."""
@@ -653,6 +658,7 @@ class GeoCanvasEditor(tk.Tk):
                     self._end_edit(commit=True)
             except Exception:
                 pass
+        self._debug_log(f"Undo pressed: undo={len(self.undo_stack)} redo={len(self.redo_stack)}")
         if not self.undo_stack:
             return
         self.redo_stack.append(self._snapshot())
@@ -685,6 +691,7 @@ class GeoCanvasEditor(tk.Tk):
                     self._end_edit(commit=True)
             except Exception:
                 pass
+        self._debug_log(f"Redo pressed: undo={len(self.undo_stack)} redo={len(self.redo_stack)}")
         if not self.redo_stack:
             return
         self.undo_stack.append(self._snapshot())
@@ -835,6 +842,38 @@ class GeoCanvasEditor(tk.Tk):
                 "mode": lyr.calc_mode.value,
             })
         self.ribbon_view.set_layers(rows, [x.value for x in SoilType])
+
+    def _recalc_layers_for_test(self, ti: int, *, push_undo: bool = True) -> bool:
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return False
+        if push_undo:
+            self._push_undo()
+        t = self.tests[ti]
+        top, bot = self._test_depth_range(t)
+        t.layers = build_default_layers(top, bot)
+        return True
+
+    def _recalc_layers_active(self):
+        ti = self._active_layers_test_index()
+        if ti is None:
+            return
+        if self._recalc_layers_for_test(int(ti), push_undo=True):
+            self._sync_layers_panel()
+            self._redraw()
+            self.schedule_graph_redraw()
+
+    def _recalc_layers_enabled(self):
+        targets = [i for i, t in enumerate(self.tests or []) if bool(getattr(t, "export_on", True))]
+        if not targets:
+            return
+        self._push_undo()
+        changed = False
+        for ti in targets:
+            changed = self._recalc_layers_for_test(int(ti), push_undo=False) or changed
+        if changed:
+            self._sync_layers_panel()
+            self._redraw()
+            self.schedule_graph_redraw()
 
     def _edit_layer_row_from_ribbon(self, layer_index: int, soil_raw: str, mode_raw: str):
         ti = self._active_layers_test_index()
@@ -1025,6 +1064,8 @@ class GeoCanvasEditor(tk.Tk):
                 "toggle_compact_1m": self._toggle_compact_1m,
                 "toggle_layer_edit": self._toggle_layer_edit_mode,
                 "edit_layer_row": self._edit_layer_row_from_ribbon,
+                "recalc_layers_active": self._recalc_layers_active,
+                "recalc_layers_enabled": self._recalc_layers_enabled,
                 "apply_calc": lambda: self._redraw(),
                 "k2k4_30": lambda: messagebox.showinfo("К2→К4", "Режим 30 МПа будет добавлен в следующем шаге."),
                 "k2k4_50": lambda: messagebox.showinfo("К2→К4", "Режим 50 МПа будет добавлен в следующем шаге."),
@@ -3393,7 +3434,7 @@ class GeoCanvasEditor(tk.Tk):
         for cnv in (getattr(self, "canvas", None), getattr(self, "hcanvas", None)):
             if cnv is None:
                 continue
-            for tag in ("graph_axes", "graph_qc", "graph_fs", "graph_nodata", "graph_layers", "layer_handles"):
+            for tag in ("graph_axes", "graph_qc", "graph_fs", "graph_nodata", "layers_overlay", "layer_handles"):
                 try:
                     cnv.delete(tag)
                 except Exception:
@@ -3468,7 +3509,10 @@ class GeoCanvasEditor(tk.Tk):
 
 
     def _ensure_layers_defaults_for_all_tests(self):
-        self.layer_store.ensure_defaults_for_all_tests(self.tests, self._test_depth_range)
+        changed = self.layer_store.ensure_defaults_for_all_tests(self.tests, self._test_depth_range)
+        if changed:
+            self._sync_layers_panel()
+            self.schedule_graph_redraw()
 
     def _depth_to_canvas_y(self, depth_m: float) -> float | None:
         d = float(depth_m)
@@ -3585,14 +3629,25 @@ class GeoCanvasEditor(tk.Tk):
         for offs in range(int(y0) - int(x1), int(y1 + x1), spacing):
             _draw_diag_segment(float(offs), +1)
 
-    def _draw_layers_background_for_test(self, ti: int, rect, tags):
+    def _draw_layers_overlay_for_test(self, ti: int, plot_rect, depth_to_y, tags):
         t = self.tests[ti]
         layers = self._ensure_test_layers(t)
-        x0, x1, y0, y1 = rect
+        if plot_rect is None or len(plot_rect) != 4:
+            self._debug_log(f"layers_overlay: invalid plot_rect for ti={ti}: {plot_rect}")
+            return
+        x0, x1, y0, y1 = [float(v) for v in plot_rect]
+        if x1 <= x0 or y1 <= y0:
+            self._debug_log(f"layers_overlay: empty rect for ti={ti}: {plot_rect}")
+            return
+        if not callable(depth_to_y):
+            self._debug_log(f"layers_overlay: invalid depth_to_y for ti={ti}")
+            return
+        label_spans = []
         for lyr in layers:
-            ly0 = self._depth_to_canvas_y(float(lyr.top_m))
-            ly1 = self._depth_to_canvas_y(float(lyr.bot_m))
+            ly0 = depth_to_y(float(lyr.top_m))
+            ly1 = depth_to_y(float(lyr.bot_m))
             if ly0 is None or ly1 is None:
+                self._debug_log(f"layers_overlay: depth_to_y none ti={ti}, layer={lyr.ige_num}, top={lyr.top_m}, bot={lyr.bot_m}")
                 continue
             ty0 = max(y0, min(ly0, ly1))
             ty1 = min(y1, max(ly0, ly1))
@@ -3603,17 +3658,14 @@ class GeoCanvasEditor(tk.Tk):
             hatch = style.get("hatch") or "diag_sparse"
             self.canvas.create_rectangle(x0, ty0, x1, ty1, fill=fill, outline="", tags=tags)
             self._draw_layer_hatch(x0, ty0, x1, ty1, color="#c7baa4", hatch=hatch, tags=tags)
-            self.canvas.create_text(x0 + 4, (ty0 + ty1) / 2, anchor="w", text=f"ИГЭ {lyr.ige_num}", fill="#5e5140", font=("Segoe UI", 7), tags=tags)
+            label_spans.append(((ty0 + ty1) / 2.0, int(lyr.ige_num)))
+        return label_spans
 
     def _draw_graph_lines_for_test(self, ti: int, rect, y_points, qc_mpa, fs_kpa, qmax: float, fmax: float):
         x0, x1, y0, y1 = rect
-        tag_axes = ("graph_axes", f"graph_axes_{ti}")
         tag_qc = ("graph_qc", f"graph_qc_{ti}")
         tag_fs = ("graph_fs", f"graph_fs_{ti}")
         tag_nodata = ("graph_nodata", f"graph_nodata_{ti}")
-        tag_layers = ("graph_layers", f"graph_layers_{ti}")
-        self.canvas.create_rectangle(x0, y0, x1, y1, fill="#fbfdff", outline=GUI_GRID, tags=tag_axes)
-        self._draw_layers_background_for_test(ti, rect, tag_layers)
 
         if not y_points:
             self.canvas.create_text((x0 + x1) / 2, (y0 + y1) / 2, text="нет данных", fill="#666", font=("Segoe UI", 8), tags=tag_nodata)
@@ -3699,9 +3751,17 @@ class GeoCanvasEditor(tk.Tk):
                         qc_vals.append(float(qc_mpa))
                         fs_vals.append(float(fs_kpa))
 
+            plot_rect = (x0, x1, y0, y1)
+            tag_axes = ("graph_axes", f"graph_axes_{ti}")
+            tag_overlay = ("layers_overlay", f"layers_overlay_{ti}")
+            self.canvas.create_rectangle(x0, y0, x1, y1, fill="#fbfdff", outline=GUI_GRID, tags=tag_axes)
+            labels = self._draw_layers_overlay_for_test(ti, plot_rect, self._depth_to_canvas_y, tag_overlay) or []
             if not y_points:
                 self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
-                self._draw_graph_lines_for_test(ti, (x0, x1, y0, y1), [], [], [], self.graph_qc_max_mpa, self.graph_fs_max_kpa)
+                self._draw_graph_lines_for_test(ti, plot_rect, [], [], [], self.graph_qc_max_mpa, self.graph_fs_max_kpa)
+                for yy, ige in labels:
+                    self.canvas.create_text(x0 + 4, yy, anchor="w", text=f"ИГЭ {ige}", fill="#5e5140", font=("Segoe UI", 7), tags=tag_overlay)
+                self._draw_layer_handles_for_test(ti, plot_rect)
                 continue
             packed = sorted(zip(y_points, qc_vals, fs_vals), key=lambda x: x[0])
             y_points = [x[0] for x in packed]
@@ -3711,18 +3771,20 @@ class GeoCanvasEditor(tk.Tk):
             self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
             self._draw_graph_lines_for_test(
                 ti,
-                (x0, x1, y0, y1),
+                plot_rect,
                 y_points,
                 qc_vals,
                 fs_vals,
                 self.graph_qc_max_mpa,
                 self.graph_fs_max_kpa,
             )
-            self._draw_layer_handles_for_test(ti, (x0, x1, y0, y1))
+            for yy, ige in labels:
+                self.canvas.create_text(x0 + 4, yy, anchor="w", text=f"ИГЭ {ige}", fill="#5e5140", font=("Segoe UI", 7), tags=tag_overlay)
+            self._draw_layer_handles_for_test(ti, plot_rect)
             if bool(getattr(self, "_debug_layers_overlay", False)) and bool(getattr(self, "compact_1m", False)) and bool(getattr(self, "expanded_meters", set())):
                 t_layers = self._ensure_test_layers(t)
                 dbg = f"LAYERS:{len(t_layers)} EDIT:{bool(getattr(self, 'layer_edit_mode', False))} TEST:{getattr(t, 'tid', ti)}"
-                self.canvas.create_text(x0 + 4, y0 + 4, anchor="nw", text=dbg, fill="#8a3d00", font=("Segoe UI", 8, "bold"), tags=("graph_layers", f"graph_layers_{ti}"))
+                self.canvas.create_text(x0 + 4, y0 + 4, anchor="nw", text=dbg, fill="#8a3d00", font=("Segoe UI", 8, "bold"), tags=("layers_overlay", f"layers_overlay_{ti}"))
 
     def _draw_layer_handles_for_test(self, ti: int, rect):
         if not bool(getattr(self, "layer_edit_mode", False)):
@@ -3988,7 +4050,7 @@ class GeoCanvasEditor(tk.Tk):
         if ti is None or ti < 0 or ti >= len(self.tests):
             return
         t = self.tests[ti]
-        layers = [Layer(**layer_to_dict(x)) for x in self._ensure_test_layers(t)]
+        layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
         try:
             t.layers = insert_layer_between(layers, int(boundary))
             self._sync_layers_panel()
@@ -4009,7 +4071,7 @@ class GeoCanvasEditor(tk.Tk):
         if depth is None:
             return
         t = self.tests[ti]
-        layers = [Layer(**layer_to_dict(x)) for x in self._ensure_test_layers(t)]
+        layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
         try:
             t.layers = move_layer_boundary(layers, boundary, depth)
             tip = f"Граница: {float(depth):.2f} м"
