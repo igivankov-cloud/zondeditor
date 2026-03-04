@@ -126,26 +126,18 @@ class RibbonView(ttk.Frame):
         ttk.Label(head, text="Режим:").pack(side="left")
         mode_cb = ttk.Combobox(head, state="readonly", width=10, textvariable=self.layer_mode_var, values=["valid", "limited"])
         mode_cb.pack(side="left", padx=(4, 8))
-        ttk.Button(head, text="Применить", command=self._apply_layer_row_edit).pack(side="left")
-        ige_cb.bind("<<ComboboxSelected>>", lambda _e: self._apply_layer_row_edit())
-        soil_cb.bind("<<ComboboxSelected>>", lambda _e: self._apply_layer_row_edit())
-        mode_cb.bind("<<ComboboxSelected>>", lambda _e: self._apply_layer_row_edit())
+        ttk.Button(head, text="Применить", command=self._apply_ige_edit).pack(side="left")
         self.layer_soil_cb = soil_cb
 
-        cols = ("ige", "soil", "top", "bot", "th", "mode")
+        cols = ("ige", "top", "bot", "th")
         tree = ttk.Treeview(tab, columns=cols, show="headings", height=7)
         tree.pack(fill="x", expand=False)
         self.layers_tree = tree
-        headings = [("ige", "ИГЭ"), ("soil", "Грунт"), ("top", "От"), ("bot", "До"), ("th", "Толщ."), ("mode", "Режим")]
+        headings = [("ige", "ИГЭ"), ("top", "От"), ("bot", "До"), ("th", "Толщина")]
         for key, text in headings:
             tree.heading(key, text=text)
-            tree.column(key, width=90 if key in ("soil", "mode") else 62, anchor="center")
+            tree.column(key, width=80, anchor="center")
         tree.bind("<<TreeviewSelect>>", self._on_layer_select)
-
-        recalc = ttk.Frame(tab)
-        recalc.pack(fill="x", pady=(4, 0))
-        ttk.Button(recalc, text="Пересчитать (активный)", command=self.commands.get("recalc_layers_active")).pack(side="left", padx=(0, 4))
-        ttk.Button(recalc, text="Пересчитать (все включенные)", command=self.commands.get("recalc_layers_enabled")).pack(side="left")
 
     def _build_processing_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
@@ -171,18 +163,16 @@ class RibbonView(ttk.Frame):
         idx = int(sel[0])
         if 0 <= idx < len(self._layer_rows):
             row = self._layer_rows[idx]
-            self.layer_soil_var.set(row.get("soil", ""))
-            self.layer_mode_var.set(row.get("mode", ""))
-            self.layer_ige_var.set(f"ИГЭ-{int(row.get('ige', 1) or 1)}")
+            ige_id = str(row.get('ige', 'ИГЭ-1') or 'ИГЭ-1')
+            self.layer_ige_var.set(ige_id)
+            cmd = self.commands.get("select_ige")
+            if callable(cmd):
+                cmd(ige_id)
 
-    def _apply_layer_row_edit(self):
-        sel = self.layers_tree.selection() if hasattr(self, "layers_tree") else []
-        if not sel:
-            return
-        idx = int(sel[0])
-        cmd = self.commands.get("edit_layer_row")
+    def _apply_ige_edit(self):
+        cmd = self.commands.get("edit_ige")
         if callable(cmd):
-            cmd(idx, self.layer_soil_var.get().strip(), self.layer_mode_var.get().strip(), self.layer_ige_var.get().strip())
+            cmd(self.layer_ige_var.get().strip(), self.layer_soil_var.get().strip(), self.layer_mode_var.get().strip())
 
     def set_object_name(self, value: str):
         self.object_name_var.set(value or "")
@@ -216,9 +206,7 @@ class RibbonView(ttk.Frame):
         for idx, row in enumerate(self._layer_rows):
             tree.insert("", "end", iid=str(idx), values=(
                 row.get("ige", ""),
-                row.get("soil", ""),
                 row.get("top", ""),
                 row.get("bot", ""),
                 row.get("th", ""),
-                row.get("mode", ""),
             ))
