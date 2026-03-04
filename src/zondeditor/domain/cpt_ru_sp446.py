@@ -70,6 +70,13 @@ TABLE_J_CLAY: dict[str, dict[str, list[IntervalValue]]] = {
 TABLE_J_CLAY_E: dict[str, dict[str, float]] = {
     "глина": {"твердая": 22.0, "полутвердая": 18.0, "тугопластичная": 14.0},
     "суглинок": {"твердый": 24.0, "полутвердый": 20.0, "тугопластичный": 16.0},
+    "супесь": {"твердая": 24.0, "пластичная": 18.0, "текучая": 12.0},
+}
+
+TABLE_J_CLAY["супесь"] = {
+    "твердая": [IntervalValue(0.0, 1.5, 22.0), IntervalValue(1.5, 3.0, 24.0), IntervalValue(3.0, None, 26.0)],
+    "пластичная": [IntervalValue(0.0, 1.5, 18.0), IntervalValue(1.5, 3.0, 20.0), IntervalValue(3.0, None, 22.0)],
+    "текучая": [IntervalValue(0.0, 1.5, 14.0), IntervalValue(1.5, 3.0, 16.0), IntervalValue(3.0, None, 18.0)],
 }
 
 
@@ -147,6 +154,12 @@ def _soil_group(raw: str) -> str:
 def _consistency_by_il(il: float | None, soil_group: str) -> str:
     if il is None:
         return ""
+    if soil_group == "супесь":
+        if il < 0:
+            return "твердая"
+        if il <= 1.0:
+            return "пластичная"
+        return "текучая"
     if il < 0:
         return "твердая" if soil_group == "глина" else "твердый"
     if il <= 0.25:
@@ -195,9 +208,8 @@ def calculate_ige_sp446(*, tests: list[Any], ige_registry: dict[str, dict[str, A
 
         soil_type = str(ent.get("soil_type") or "")
         soil_group = _soil_group(soil_type)
-        saturated_manual = ent.get("saturated")
         saturated_auto = infer_saturated(mid_depth=mid_depth, groundwater_level=groundwater_level)
-        saturated = bool(saturated_manual) if saturated_manual is not None else saturated_auto
+        saturated = bool(ent.get("saturated", False))
 
         result: dict[str, Any] = {
             "source": "CPT",
@@ -217,9 +229,10 @@ def calculate_ige_sp446(*, tests: list[Any], ige_registry: dict[str, dict[str, A
             "saturated_auto": saturated_auto,
             "saturated": saturated,
             "sand_class": ent.get("sand_class"),
-            "alluvial": bool(ent.get("alluvial", False)),
+            "alluvial": bool(ent.get("alluvial", True)),
             "il": ent.get("IL"),
             "consistency": ent.get("consistency"),
+            "consistency_source": "manual",
             "source_flags": dict(ent.get("source_flags") or {"CPT": True, "LAB": False, "Stamp": False}),
             "note": str(ent.get("note") or ""),
             "phi_norm": None,
@@ -229,13 +242,6 @@ def calculate_ige_sp446(*, tests: list[Any], ige_registry: dict[str, dict[str, A
             "lookup_interval": "-",
             "reason": "",
         }
-
-        if soil_group == "супесь":
-            result["status"] = "no_norm"
-            result["status_text"] = "не рассчитано"
-            result["reason"] = "Автоназначение по СП 446 Прил. Ж для данного типа не выполняется, требуется другой источник"
-            out[ige_id] = result
-            continue
 
         if soil_group == "песок":
             sand_class = _normalize_sand_class(str(ent.get("sand_class") or ""))
@@ -252,7 +258,7 @@ def calculate_ige_sp446(*, tests: list[Any], ige_registry: dict[str, dict[str, A
                 sand_phi_key = "пылеватый_водонасыщенный"
                 branch_parts.append("ветка Ж.1: водонасыщенный")
             phi, phi_interval = _interval_lookup(TABLE_J3_PHI_SAND[sand_phi_key][depth_col], stats.qc_mean)
-            e_branch = "аллювиальные/флювиогляциальные" if bool(ent.get("alluvial", False)) else "обычные"
+            e_branch = "аллювиальные/флювиогляциальные"
             e_val = TABLE_J2_E_SAND[sand_class][e_branch]
             result.update(
                 {
@@ -266,7 +272,7 @@ def calculate_ige_sp446(*, tests: list[Any], ige_registry: dict[str, dict[str, A
             out[ige_id] = result
             continue
 
-        if soil_group in {"глина", "суглинок"}:
+        if soil_group in {"глина", "суглинок", "супесь"}:
             il_raw = ent.get("IL")
             il_val = None
             try:
@@ -275,8 +281,10 @@ def calculate_ige_sp446(*, tests: list[Any], ige_registry: dict[str, dict[str, A
             except Exception:
                 il_val = None
             consistency = str(ent.get("consistency") or "").strip().lower()
-            if not consistency:
+            consistency_source = "manual"
+            if il_val is not None:
                 consistency = _consistency_by_il(il_val, soil_group)
+                consistency_source = "auto_by_il"
             if consistency not in TABLE_J_CLAY.get(soil_group, {}):
                 result["status"] = "no_norm"
                 result["status_text"] = "не рассчитано"
@@ -293,6 +301,7 @@ def calculate_ige_sp446(*, tests: list[Any], ige_registry: dict[str, dict[str, A
                     "lookup_branch": f"{soil_group}, консистенция: {consistency}",
                     "lookup_interval": phi_interval,
                     "consistency": consistency,
+                    "consistency_source": consistency_source,
                 }
             )
             out[ige_id] = result

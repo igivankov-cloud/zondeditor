@@ -27,7 +27,7 @@ def test_lookup_pipeline_returns_phi_and_e_sp446_with_branches():
     tests = [DummyTest()]
     registry = {
         "ИГЭ-1": {"soil_type": "песок", "sand_class": "пылеватый", "alluvial": False, "saturated": None},
-        "ИГЭ-2": {"soil_type": "песок", "sand_class": "мелкий", "alluvial": True, "saturated": None},
+        "ИГЭ-2": {"soil_type": "песок", "sand_class": "мелкий", "saturated": None},
     }
     result = calculate_ige_cpt_results(tests=tests, ige_registry=registry, settings=CptCalcSettings(method=METHOD_SP446, groundwater_level=0.2))
     one = result.get("ИГЭ-1")
@@ -35,15 +35,17 @@ def test_lookup_pipeline_returns_phi_and_e_sp446_with_branches():
     assert one is not None and two is not None
     assert one["status"] == "ok"
     assert one["saturated"] is False
-    assert two["saturated"] is True
+    assert two["saturated"] is False
+    assert two["alluvial"] is True
     assert two["lookup_branch"].find("глубина: 5м+") >= 0
 
 
-def test_supes_returns_no_norm_status():
+def test_supes_uses_il_for_auto_consistency():
     tests = [DummyTest()]
-    registry = {"ИГЭ-1": {"soil_type": "супесь"}}
+    registry = {"ИГЭ-1": {"soil_type": "супесь", "IL": "0.5"}}
     result = calculate_ige_cpt_results(tests=tests, ige_registry=registry, settings=CptCalcSettings(method=METHOD_SP446))
     one = result.get("ИГЭ-1")
     assert one is not None
-    assert one["status"] == "no_norm"
-    assert "требуется другой источник" in one["reason"]
+    assert one["status"] == "ok"
+    assert one["consistency"] == "пластичная"
+    assert one["consistency_source"] == "auto_by_il"

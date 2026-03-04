@@ -38,11 +38,22 @@ def export_cpt_protocol_docx(*, out_path: Path, object_name: str, settings: dict
         doc.add_heading(str(row.get("ige_id") or "ИГЭ"), level=2)
         doc.add_paragraph(f"Границы слоя: {row.get('bounds') or '-'}; mid_depth={row.get('mid_depth', '-')} м")
         doc.add_paragraph(f"Тип грунта: {row.get('soil_type') or '-'}")
-        doc.add_paragraph(
-            f"Признаки: sand_class={row.get('sand_class') or '-'}, alluvial={'да' if row.get('alluvial') else 'нет'}, "
-            f"saturated={row.get('saturated') if row.get('saturated') is not None else 'auto/не задан'}, "
-            f"IL={row.get('il') or '-'}, консистенция={row.get('consistency') or '-'}"
-        )
+        soil = str(row.get("soil_type") or "").lower()
+        doc.add_paragraph(f"УГВ (общее): {'не задан' if gwl in (None, '') else f'{gwl} м'}")
+        if "пес" in soil:
+            doc.add_paragraph(
+                f"Песок: sand_class={row.get('sand_class') or '-'}, saturated={'да' if bool(row.get('saturated')) else 'нет'}, "
+                "alluvial=да"
+            )
+        elif any(x in soil for x in ("глин", "суглин", "супес")):
+            il_txt = str(row.get("il") or "").strip()
+            if il_txt:
+                csrc = "авто по IL" if str(row.get("consistency_source") or "manual") == "auto_by_il" else "вручную"
+                doc.add_paragraph(f"Глинистый: IL={il_txt}, консистенция={row.get('consistency') or '-'} ({csrc})")
+            else:
+                doc.add_paragraph(f"Глинистый: IL не задан, консистенция={row.get('consistency') or '-'} (вручную)")
+        else:
+            doc.add_paragraph("Режим limited: используются note/source flags.")
         sf = dict(row.get("source_flags") or {})
         doc.add_paragraph(f"Источник/флаги: CPT={bool(sf.get('CPT', True))}, LAB={bool(sf.get('LAB', False))}, Stamp={bool(sf.get('Stamp', False))}")
         doc.add_paragraph(
