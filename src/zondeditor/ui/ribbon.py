@@ -18,6 +18,7 @@ class RibbonView(ttk.Frame):
         self.layers_edit_var = tk.BooleanVar(value=False)
         self.layer_soil_var = tk.StringVar(value="")
         self.layer_mode_var = tk.StringVar(value="")
+        self.layer_ige_var = tk.StringVar(value="ИГЭ-1")
         self._buttons: dict[str, ttk.Button] = {}
         self._layer_rows: list[dict] = []
 
@@ -114,12 +115,11 @@ class RibbonView(ttk.Frame):
     def _build_layers_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Слои")
-        edit_chk = ttk.Checkbutton(tab, text="Слои: редактирование", variable=self.layers_edit_var,
-                                   command=lambda: self.commands.get("toggle_layer_edit", lambda *_: None)(bool(self.layers_edit_var.get())))
-        edit_chk.pack(anchor="w", pady=(0, 4))
-
         head = ttk.Frame(tab)
         head.pack(fill="x", pady=(0, 4))
+        ttk.Label(head, text="ИГЭ:").pack(side="left")
+        ige_cb = ttk.Combobox(head, state="readonly", width=10, textvariable=self.layer_ige_var, values=[f"ИГЭ-{i}" for i in range(1, 21)])
+        ige_cb.pack(side="left", padx=(4, 8))
         ttk.Label(head, text="Грунт:").pack(side="left")
         soil_cb = ttk.Combobox(head, state="readonly", width=22, textvariable=self.layer_soil_var)
         soil_cb.pack(side="left", padx=(4, 8))
@@ -127,6 +127,7 @@ class RibbonView(ttk.Frame):
         mode_cb = ttk.Combobox(head, state="readonly", width=10, textvariable=self.layer_mode_var, values=["valid", "limited"])
         mode_cb.pack(side="left", padx=(4, 8))
         ttk.Button(head, text="Применить", command=self._apply_layer_row_edit).pack(side="left")
+        ige_cb.bind("<<ComboboxSelected>>", lambda _e: self._apply_layer_row_edit())
         soil_cb.bind("<<ComboboxSelected>>", lambda _e: self._apply_layer_row_edit())
         mode_cb.bind("<<ComboboxSelected>>", lambda _e: self._apply_layer_row_edit())
         self.layer_soil_cb = soil_cb
@@ -172,6 +173,7 @@ class RibbonView(ttk.Frame):
             row = self._layer_rows[idx]
             self.layer_soil_var.set(row.get("soil", ""))
             self.layer_mode_var.set(row.get("mode", ""))
+            self.layer_ige_var.set(f"ИГЭ-{int(row.get('ige', 1) or 1)}")
 
     def _apply_layer_row_edit(self):
         sel = self.layers_tree.selection() if hasattr(self, "layers_tree") else []
@@ -180,7 +182,7 @@ class RibbonView(ttk.Frame):
         idx = int(sel[0])
         cmd = self.commands.get("edit_layer_row")
         if callable(cmd):
-            cmd(idx, self.layer_soil_var.get().strip(), self.layer_mode_var.get().strip())
+            cmd(idx, self.layer_soil_var.get().strip(), self.layer_mode_var.get().strip(), self.layer_ige_var.get().strip())
 
     def set_object_name(self, value: str):
         self.object_name_var.set(value or "")

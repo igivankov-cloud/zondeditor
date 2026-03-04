@@ -46,6 +46,7 @@ from src.zondeditor.domain.layers import (
     SoilType,
     CalcMode,
     Layer,
+    SOIL_STYLE,
     build_default_layers,
     calc_mode_for_soil,
     insert_layer_between,
@@ -204,7 +205,7 @@ class GeoCanvasEditor(tk.Tk):
         self._active_test_idx: int | None = None
         self.graph_qc_max_mpa: float = 30.0
         self.graph_fs_max_kpa: float = 500.0
-        self.layer_edit_mode = False
+        self.layer_edit_mode = True
         self._layer_drag = None  # {"ti": int, "boundary": int}
         self._layer_handle_hitbox = []
         self.layer_store = LayerStore()
@@ -530,7 +531,7 @@ class GeoCanvasEditor(tk.Tk):
         self.row_h = int(self.row_h_compact_1m if self.compact_1m else self.row_h_default)
         try:
             self.expanded_meters = set(int(x) for x in (snap.get("expanded_meters") or []))
-            self.layer_edit_mode = bool(snap.get("layer_edit_mode", getattr(self, "layer_edit_mode", False)))
+            self.layer_edit_mode = True
         except Exception:
             self.expanded_meters = set()
         try:
@@ -541,7 +542,7 @@ class GeoCanvasEditor(tk.Tk):
         try:
             if getattr(self, "ribbon_view", None):
                 self.ribbon_view.set_compact_1m(bool(self.compact_1m))
-                self.ribbon_view.set_layer_edit_mode(bool(getattr(self, "layer_edit_mode", False)))
+                self.ribbon_view.set_layer_edit_mode(True)
         except Exception:
             pass
 
@@ -806,7 +807,7 @@ class GeoCanvasEditor(tk.Tk):
         self._toggle_compact_1m(bool(getattr(self, "_compact_1m_var", None).get() if getattr(self, "_compact_1m_var", None) is not None else False))
 
     def _toggle_layer_edit_mode(self, value: bool | None = None):
-        self.layer_edit_mode = bool(value)
+        self.layer_edit_mode = True
         try:
             if getattr(self, "ribbon_view", None):
                 self.ribbon_view.set_layer_edit_mode(self.layer_edit_mode)
@@ -830,6 +831,7 @@ class GeoCanvasEditor(tk.Tk):
         if ti is None or ti < 0 or ti >= len(self.tests):
             self.ribbon_view.set_layers([], [x.value for x in SoilType])
             return
+        self._calc_layer_params_for_test(int(ti))
         layers = self._ensure_test_layers(self.tests[ti])
         rows = []
         for lyr in layers:
@@ -851,6 +853,7 @@ class GeoCanvasEditor(tk.Tk):
         t = self.tests[ti]
         top, bot = self._test_depth_range(t)
         t.layers = build_default_layers(top, bot)
+        self._calc_layer_params_for_test(int(ti))
         return True
 
     def _recalc_layers_active(self):
@@ -875,7 +878,7 @@ class GeoCanvasEditor(tk.Tk):
             self._redraw()
             self.schedule_graph_redraw()
 
-    def _edit_layer_row_from_ribbon(self, layer_index: int, soil_raw: str, mode_raw: str):
+    def _edit_layer_row_from_ribbon(self, layer_index: int, soil_raw: str, mode_raw: str, ige_raw: str = ""):
         ti = self._active_layers_test_index()
         if ti is None or ti < 0 or ti >= len(self.tests):
             return
@@ -888,16 +891,22 @@ class GeoCanvasEditor(tk.Tk):
         try:
             soil = SoilType(str(soil_raw))
             lyr.soil_type = soil
+            lyr.style = dict(SOIL_STYLE.get(soil, {}))
             if not str(mode_raw or "").strip():
                 lyr.calc_mode = calc_mode_for_soil(soil)
             elif mode_raw in (CalcMode.VALID.value, CalcMode.LIMITED.value):
                 lyr.calc_mode = CalcMode(mode_raw)
-            lyr.style = dict(lyr.style or {})
         except Exception:
             pass
+        if str(ige_raw or "").strip():
+            try:
+                lyr.ige_num = max(1, int(str(ige_raw).replace("ИГЭ", "").replace("-", "").strip()))
+            except Exception:
+                pass
         if mode_raw in (CalcMode.VALID.value, CalcMode.LIMITED.value):
             lyr.calc_mode = CalcMode(mode_raw)
         t.layers = normalize_layers(layers)
+        self._calc_layer_params_for_test(int(ti))
         self._sync_layers_panel()
         self.schedule_graph_redraw()
 
@@ -1075,7 +1084,7 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view.set_object_name(self.object_name)
             self.ribbon_view.set_show_graphs(bool(getattr(self, "show_graphs", False)))
             self.ribbon_view.set_compact_1m(bool(getattr(self, "compact_1m", False)))
-            self.ribbon_view.set_layer_edit_mode(bool(getattr(self, "layer_edit_mode", False)))
+            self.ribbon_view.set_layer_edit_mode(True)
             ribbon.pack_forget()
         # ========= Main canvas (fixed header) =========
         mid = ttk.Frame(self)
@@ -3514,6 +3523,64 @@ class GeoCanvasEditor(tk.Tk):
             self._sync_layers_panel()
             self.schedule_graph_redraw()
 
+    def _calc_layer_params_for_test(self, ti: int) -> None:
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return
+        t = self.tests[ti]
+        layers = self._ensure_test_layers(t)
+        qarr = list(getattr(t, "qc", []) or [])
+        farr = list(getattr(t, "fs", []) or [])
+
+        samples: list[tuple[float, float, float, float]] = []
+        n = max(len(qarr), len(farr))
+        for i in range(n):
+            dv = self._depth_at_index(t, i)
+            if dv is None:
+                continue
+            q_raw = _parse_cell_int(qarr[i]) if i < len(qarr) else None
+            f_raw = _parse_cell_int(farr[i]) if i < len(farr) else None
+            qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
+            qc_kpa = float(qc_mpa) * 1000.0
+            rf = 0.0 if qc_kpa <= 1e-9 else (float(fs_kpa) / qc_kpa) * 100.0
+            samples.append((float(dv), float(qc_mpa), float(fs_kpa), float(rf)))
+
+        def _stats(vals: list[float]) -> dict[str, float | None]:
+            if not vals:
+                return {"mean": None, "min": None, "max": None, "p10": None, "p50": None, "p90": None}
+            arr = sorted(float(v) for v in vals)
+            def _pct(p: float) -> float:
+                if len(arr) == 1:
+                    return arr[0]
+                pos = (len(arr) - 1) * p
+                lo = int(math.floor(pos))
+                hi = int(math.ceil(pos))
+                if lo == hi:
+                    return arr[lo]
+                w = pos - lo
+                return arr[lo] * (1.0 - w) + arr[hi] * w
+            return {
+                "mean": sum(arr) / len(arr),
+                "min": arr[0],
+                "max": arr[-1],
+                "p10": _pct(0.10),
+                "p50": _pct(0.50),
+                "p90": _pct(0.90),
+            }
+
+        for lyr in layers:
+            top = float(lyr.top_m)
+            bot = float(lyr.bot_m)
+            in_layer = [s for s in samples if top <= s[0] < bot]
+            lyr.params = {
+                "qc": _stats([x[1] for x in in_layer]),
+                "fs": _stats([x[2] for x in in_layer]),
+                "rf": _stats([x[3] for x in in_layer]),
+            }
+
+    def _calc_layer_params_for_all_tests(self) -> None:
+        for ti in range(len(self.tests or [])):
+            self._calc_layer_params_for_test(ti)
+
     def _depth_to_canvas_y(self, depth_m: float) -> float | None:
         d = float(depth_m)
         units = getattr(self, "_grid_units", []) or []
@@ -3657,7 +3724,8 @@ class GeoCanvasEditor(tk.Tk):
             fill = style.get("color") or "#f5edd8"
             hatch = style.get("hatch") or "diag_sparse"
             self.canvas.create_rectangle(x0, ty0, x1, ty1, fill=fill, outline="", tags=tags)
-            self._draw_layer_hatch(x0, ty0, x1, ty1, color="#c7baa4", hatch=hatch, tags=tags)
+            hatch_color = style.get("hatch_color") or "#000000"
+            self._draw_layer_hatch(x0, ty0, x1, ty1, color=hatch_color, hatch=hatch, tags=tags)
             label_spans.append(((ty0 + ty1) / 2.0, int(lyr.ige_num)))
         return label_spans
 
@@ -3701,6 +3769,7 @@ class GeoCanvasEditor(tk.Tk):
         if not getattr(self, "tests", None):
             return
 
+        self._calc_layer_params_for_all_tests()
         self._recompute_graph_scales()
         self._layer_handle_hitbox = []
 
@@ -3783,12 +3852,10 @@ class GeoCanvasEditor(tk.Tk):
             self._draw_layer_handles_for_test(ti, plot_rect)
             if bool(getattr(self, "_debug_layers_overlay", False)) and bool(getattr(self, "compact_1m", False)) and bool(getattr(self, "expanded_meters", set())):
                 t_layers = self._ensure_test_layers(t)
-                dbg = f"LAYERS:{len(t_layers)} EDIT:{bool(getattr(self, 'layer_edit_mode', False))} TEST:{getattr(t, 'tid', ti)}"
+                dbg = f"LAYERS:{len(t_layers)} EDIT:True TEST:{getattr(t, 'tid', ti)}"
                 self.canvas.create_text(x0 + 4, y0 + 4, anchor="nw", text=dbg, fill="#8a3d00", font=("Segoe UI", 8, "bold"), tags=("layers_overlay", f"layers_overlay_{ti}"))
 
     def _draw_layer_handles_for_test(self, ti: int, rect):
-        if not bool(getattr(self, "layer_edit_mode", False)):
-            return
         t = self.tests[ti]
         layers = self._ensure_test_layers(t)
         x0, x1, _y0, _y1 = rect
@@ -3803,6 +3870,7 @@ class GeoCanvasEditor(tk.Tk):
             p_tag = f"layer_plus_{ti}_{bi}"
             self.canvas.create_line(x0, y, x1, y, fill="#ab9f8a", width=1, dash=(3, 2), tags=("layer_handles", "layer_boundary_line"))
             self.canvas.create_rectangle(handle_x - 5, y - 5, handle_x + 5, y + 5, fill="#fefefe", outline="#555", tags=("layer_handles", "layer_handle", h_tag))
+            self.canvas.create_text(handle_x + 10, y, anchor="w", text=f"{float(boundary):.2f} м", fill="#3f3f3f", font=("Segoe UI", 7), tags=("layer_handles", "layer_depth_label", h_tag))
             self.canvas.create_text(plus_x, y, text="+", fill="#0f6fb2", font=("Segoe UI", 10, "bold"), tags=("layer_handles", "layer_plus", p_tag))
             self._layer_handle_hitbox.append({"kind": "boundary", "ti": ti, "boundary": bi, "tag": h_tag, "bbox": (handle_x - 6, y - 6, handle_x + 6, y + 6)})
             self._layer_handle_hitbox.append({"kind": "plus", "ti": ti, "boundary": bi, "tag": p_tag, "bbox": (plus_x - 8, y - 8, plus_x + 8, y + 8)})
@@ -4053,6 +4121,7 @@ class GeoCanvasEditor(tk.Tk):
         layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
         try:
             t.layers = insert_layer_between(layers, int(boundary))
+            self._calc_layer_params_for_test(int(ti))
             self._sync_layers_panel()
             self._redraw()
             self.schedule_graph_redraw()
@@ -4074,10 +4143,12 @@ class GeoCanvasEditor(tk.Tk):
         layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
         try:
             t.layers = move_layer_boundary(layers, boundary, depth)
-            tip = f"Граница: {float(depth):.2f} м"
+            self._calc_layer_params_for_test(int(ti))
+            snapped_depth = float(t.layers[boundary].top_m) if 0 <= boundary < len(t.layers) else float(depth)
+            tip = f"Граница: {snapped_depth:.2f} м"
             self.status.set(tip)
             self._sync_layers_panel()
-            self.schedule_graph_redraw()
+            self._redraw_graphs_now()
         except Exception:
             pass
 
@@ -4654,14 +4725,13 @@ class GeoCanvasEditor(tk.Tk):
         cx = self.canvas.canvasx(x)
         cy = self.canvas.canvasy(y)
 
-        if bool(getattr(self, "layer_edit_mode", False)):
-            for hit in (getattr(self, "_layer_handle_hitbox", []) or []):
-                bx0, by0, bx1, by1 = hit.get("bbox", (0, 0, 0, 0))
-                if bx0 <= cx <= bx1 and by0 <= cy <= by1:
-                    if hit.get("kind") == "boundary":
-                        return ("layer_boundary", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
-                    if hit.get("kind") == "plus":
-                        return ("layer_plus", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
+        for hit in (getattr(self, "_layer_handle_hitbox", []) or []):
+            bx0, by0, bx1, by1 = hit.get("bbox", (0, 0, 0, 0))
+            if bx0 <= cx <= bx1 and by0 <= cy <= by1:
+                if hit.get("kind") == "boundary":
+                    return ("layer_boundary", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
+                if hit.get("kind") == "plus":
+                    return ("layer_plus", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
 
         # row/col by coordinates
         if cy < 0:

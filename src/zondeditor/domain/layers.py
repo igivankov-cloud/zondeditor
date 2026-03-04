@@ -34,18 +34,20 @@ VALID_SOILS = {
     SoilType.PEAT,
 }
 
-DEFAULT_LAYER_STYLE: dict[SoilType, dict[str, str]] = {
-    SoilType.CLAY: {"color": "#f8d8c2", "hatch": "diag_dense"},
-    SoilType.LOAM: {"color": "#f6dfbf", "hatch": "diag_sparse"},
-    SoilType.SANDY_LOAM: {"color": "#f7ebcb", "hatch": "diag_sparse"},
-    SoilType.SAND: {"color": "#f9f4d5", "hatch": "dot"},
-    SoilType.PEAT: {"color": "#e4dccf", "hatch": "cross"},
-    SoilType.GRAVEL: {"color": "#ece9e2", "hatch": "cross"},
-    SoilType.GRAVELLY_SAND: {"color": "#f2edd8", "hatch": "cross"},
-    SoilType.FILL: {"color": "#e8e1d9", "hatch": "diag_dense"},
-    SoilType.ARGILLITE: {"color": "#dfdfe8", "hatch": "diag_dense"},
-    SoilType.SANDSTONE: {"color": "#e3d9d0", "hatch": "diag_sparse"},
+SOIL_STYLE: dict[SoilType, dict[str, str]] = {
+    SoilType.CLAY: {"color": "#b67a52", "hatch": "diag_dense", "hatch_color": "#000000"},
+    SoilType.LOAM: {"color": "#c89b6d", "hatch": "diag_sparse", "hatch_color": "#000000"},
+    SoilType.SANDY_LOAM: {"color": "#d8b88a", "hatch": "diag_sparse", "hatch_color": "#000000"},
+    SoilType.SAND: {"color": "#f0d76a", "hatch": "dot", "hatch_color": "#000000"},
+    SoilType.PEAT: {"color": "#8f8f8f", "hatch": "cross", "hatch_color": "#000000"},
+    SoilType.GRAVEL: {"color": "#c7c3ba", "hatch": "cross", "hatch_color": "#000000"},
+    SoilType.GRAVELLY_SAND: {"color": "#d8cc98", "hatch": "cross", "hatch_color": "#000000"},
+    SoilType.FILL: {"color": "#bda48b", "hatch": "diag_dense", "hatch_color": "#000000"},
+    SoilType.ARGILLITE: {"color": "#9e4f43", "hatch": "diag_dense", "hatch_color": "#000000"},
+    SoilType.SANDSTONE: {"color": "#c58f62", "hatch": "diag_sparse", "hatch_color": "#000000"},
 }
+
+DEFAULT_LAYER_STYLE = SOIL_STYLE
 
 
 @dataclass
@@ -91,7 +93,7 @@ def layer_from_dict(data: dict[str, Any]) -> Layer:
     soil = SoilType(str(data.get("soil_type") or SoilType.SANDY_LOAM.value))
     mode_raw = str(data.get("calc_mode") or "")
     calc_mode = CalcMode(mode_raw) if mode_raw in {x.value for x in CalcMode} else calc_mode_for_soil(soil)
-    style = dict(DEFAULT_LAYER_STYLE.get(soil, {}))
+    style = dict(SOIL_STYLE.get(soil, {}))
     style.update(dict(data.get("style") or {}))
     return Layer(
         top_m=float(data.get("top_m", 0.0) or 0.0),
@@ -123,7 +125,7 @@ def build_default_layers(depth_top_m: float, depth_bot_m: float) -> list[Layer]:
             bot_m=mid,
             soil_type=soil,
             calc_mode=calc_mode_for_soil(soil),
-            style=dict(DEFAULT_LAYER_STYLE.get(soil, {})),
+            style=dict(SOIL_STYLE.get(soil, {})),
             ige_num=1,
         ),
         Layer(
@@ -131,7 +133,7 @@ def build_default_layers(depth_top_m: float, depth_bot_m: float) -> list[Layer]:
             bot_m=bot,
             soil_type=soil,
             calc_mode=calc_mode_for_soil(soil),
-            style=dict(DEFAULT_LAYER_STYLE.get(soil, {})),
+            style=dict(SOIL_STYLE.get(soil, {})),
             ige_num=2,
         ),
     ]
@@ -142,11 +144,16 @@ def normalize_layers(layers: list[Layer]) -> list[Layer]:
     for idx, lyr in enumerate(out, start=1):
         lyr.top_m = snap_depth(float(lyr.top_m))
         lyr.bot_m = snap_depth(float(lyr.bot_m))
-        lyr.ige_num = idx
+        try:
+            lyr.ige_num = int(lyr.ige_num)
+        except Exception:
+            lyr.ige_num = idx
+        if lyr.ige_num < 1:
+            lyr.ige_num = idx
         if lyr.bot_m < (lyr.top_m + MIN_LAYER_THICKNESS_M):
             lyr.bot_m = lyr.top_m + MIN_LAYER_THICKNESS_M
         if not lyr.style:
-            lyr.style = dict(DEFAULT_LAYER_STYLE.get(lyr.soil_type, {}))
+            lyr.style = dict(SOIL_STYLE.get(lyr.soil_type, {}))
     validate_layers(out)
     return out
 
@@ -198,7 +205,7 @@ def insert_layer_between(layers: list[Layer], boundary_index: int) -> list[Layer
         bot_m=new_bot,
         soil_type=soil,
         calc_mode=calc_mode_for_soil(soil),
-        style=dict(DEFAULT_LAYER_STYLE.get(soil, {})),
+        style=dict(SOIL_STYLE.get(soil, {})),
         ige_num=boundary_index + 1,
     )
     next_l.top_m = new_bot
