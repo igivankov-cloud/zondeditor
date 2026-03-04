@@ -16,7 +16,7 @@ class LayerStore:
                 layers.append(item)
             elif isinstance(item, dict):
                 layers.append(layer_from_dict(item))
-        if not layers:
+        if len(layers) <= 1:
             top, bot = depth_range_fn(test)
             layers = build_default_layers(top, bot)
         try:
@@ -31,9 +31,8 @@ class LayerStore:
     def ensure_defaults_for_all_tests(self, tests: Sequence[object], depth_range_fn: Callable[[object], tuple[float, float]]) -> bool:
         changed = False
         for test in tests or []:
-            before = bool(getattr(test, "layers", None))
+            before_count = len(list(getattr(test, "layers", []) or []))
             self.get_layers(test, depth_range_fn)
-            if not before:
+            if before_count <= 1:
                 changed = True
         return changed
-

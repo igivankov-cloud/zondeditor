@@ -108,18 +108,32 @@ def layer_from_dict(data: dict[str, Any]) -> Layer:
 def build_default_layers(depth_top_m: float, depth_bot_m: float) -> list[Layer]:
     top = snap_depth(float(depth_top_m))
     bot = snap_depth(float(depth_bot_m))
-    if bot < top + MIN_LAYER_THICKNESS_M:
-        bot = top + MIN_LAYER_THICKNESS_M
+    min_total = MIN_LAYER_THICKNESS_M * 2.0
+    if bot < top + min_total:
+        bot = top + min_total
+    mid = snap_depth((top + bot) * 0.5)
+    if mid < top + MIN_LAYER_THICKNESS_M:
+        mid = top + MIN_LAYER_THICKNESS_M
+    if mid > bot - MIN_LAYER_THICKNESS_M:
+        mid = bot - MIN_LAYER_THICKNESS_M
     soil = SoilType.SANDY_LOAM
     return [
         Layer(
             top_m=top,
-            bot_m=bot,
+            bot_m=mid,
             soil_type=soil,
             calc_mode=calc_mode_for_soil(soil),
             style=dict(DEFAULT_LAYER_STYLE.get(soil, {})),
             ige_num=1,
-        )
+        ),
+        Layer(
+            top_m=mid,
+            bot_m=bot,
+            soil_type=soil,
+            calc_mode=calc_mode_for_soil(soil),
+            style=dict(DEFAULT_LAYER_STYLE.get(soil, {})),
+            ige_num=2,
+        ),
     ]
 
 

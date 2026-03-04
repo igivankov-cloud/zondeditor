@@ -141,6 +141,11 @@ class RibbonView(ttk.Frame):
             tree.column(key, width=90 if key in ("soil", "mode") else 62, anchor="center")
         tree.bind("<<TreeviewSelect>>", self._on_layer_select)
 
+        recalc = ttk.Frame(tab)
+        recalc.pack(fill="x", pady=(4, 0))
+        ttk.Button(recalc, text="Пересчитать (активный)", command=self.commands.get("recalc_layers_active")).pack(side="left", padx=(0, 4))
+        ttk.Button(recalc, text="Пересчитать (все включенные)", command=self.commands.get("recalc_layers_enabled")).pack(side="left")
+
     def _build_processing_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Обработка")
