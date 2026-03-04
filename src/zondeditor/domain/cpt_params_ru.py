@@ -12,7 +12,7 @@ METHOD_SP11 = "SP11_APP_I"
 @dataclass
 class CptCalcSettings:
     method: str = METHOD_SP446
-    alluvial_sands: bool = False
+    alluvial_sands: bool = True
     groundwater_level: float | None = None
 
 
