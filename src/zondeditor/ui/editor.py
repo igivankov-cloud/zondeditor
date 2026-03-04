@@ -3473,37 +3473,99 @@ class GeoCanvasEditor(tk.Tk):
 
     def _depth_to_canvas_y(self, depth_m: float) -> float | None:
         units = getattr(self, "_grid_units", []) or []
+        base_grid = getattr(self, "_grid_base", []) or []
         d = float(depth_m)
+
+        points: list[tuple[float, float]] = []
         for disp_r, unit in enumerate(units):
             y0r, y1r = self._row_y_bounds(disp_r)
             if unit[0] == "row":
-                sample = _parse_depth_float(unit[2])
-                if sample is None:
-                    continue
-                row_step = float(getattr(self, "step_m", 0.05) or 0.05)
-                if abs(float(sample) - d) <= max(0.05, row_step) * 0.51:
-                    return y0r + (y1r - y0r) * 0.5
+                depth = None
+                try:
+                    gi = int(unit[1])
+                    if 0 <= gi < len(base_grid):
+                        depth = _parse_depth_float(base_grid[gi])
+                except Exception:
+                    depth = None
+                if depth is not None:
+                    points.append((float(depth), y0r + (y1r - y0r) * 0.5))
             elif unit[0] == "meter":
                 meter_n = int(unit[1])
-                if meter_n <= d <= meter_n + 1:
-                    frac = max(0.0, min(1.0, d - meter_n))
-                    return y0r + (y1r - y0r) * frac
-        return None
+                points.append((float(meter_n), y0r))
+                points.append((float(meter_n + 1), y1r))
+
+        if not points:
+            return None
+        points.sort(key=lambda x: x[0])
+        for dd, yy in points:
+            if abs(dd - d) <= 1e-6:
+                return yy
+        if d < points[0][0] or d > points[-1][0]:
+            return None
+
+        depths = [p[0] for p in points]
+        i = bisect.bisect_left(depths, d)
+        if i <= 0 or i >= len(points):
+            return None
+        d0, y0 = points[i - 1]
+        d1, y1 = points[i]
+        if abs(d1 - d0) <= 1e-9:
+            return y0
+        ratio = (d - d0) / (d1 - d0)
+        return y0 + (y1 - y0) * ratio
 
     def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, color: str, hatch: str, tags):
+        def _draw_diag_segment(b: float, slope: int):
+            pts = []
+            if slope > 0:
+                # y = x + b
+                yy = x0 + b
+                if y0 <= yy <= y1:
+                    pts.append((x0, yy))
+                yy = x1 + b
+                if y0 <= yy <= y1:
+                    pts.append((x1, yy))
+                xx = y0 - b
+                if x0 <= xx <= x1:
+                    pts.append((xx, y0))
+                xx = y1 - b
+                if x0 <= xx <= x1:
+                    pts.append((xx, y1))
+            else:
+                # y = -x + b
+                yy = -x0 + b
+                if y0 <= yy <= y1:
+                    pts.append((x0, yy))
+                yy = -x1 + b
+                if y0 <= yy <= y1:
+                    pts.append((x1, yy))
+                xx = b - y0
+                if x0 <= xx <= x1:
+                    pts.append((xx, y0))
+                xx = b - y1
+                if x0 <= xx <= x1:
+                    pts.append((xx, y1))
+            uniq = []
+            for p in pts:
+                if not any(abs(p[0] - q[0]) < 1e-6 and abs(p[1] - q[1]) < 1e-6 for q in uniq):
+                    uniq.append(p)
+            if len(uniq) >= 2:
+                self.canvas.create_line(uniq[0][0], uniq[0][1], uniq[1][0], uniq[1][1], fill=color, width=1, tags=tags)
+
         spacing = 10 if hatch in ("diag_sparse", "dot") else 6
         if hatch == "cross":
-            for offs in range(int(y0) - int(x1 - x0), int(y1), spacing):
-                self.canvas.create_line(x0, offs, x1, offs + (x1 - x0), fill=color, width=1, tags=tags)
-                self.canvas.create_line(x1, offs, x0, offs + (x1 - x0), fill=color, width=1, tags=tags)
+            for offs in range(int(y0) - int(x1), int(y1 + x1), spacing):
+                _draw_diag_segment(float(offs), +1)
+            for offs in range(int(y0) + int(x0), int(y1 + x1), spacing):
+                _draw_diag_segment(float(offs), -1)
             return
         if hatch == "dot":
             for yy in range(int(y0) + 3, int(y1), spacing):
                 for xx in range(int(x0) + 3, int(x1), spacing):
                     self.canvas.create_rectangle(xx, yy, xx + 1, yy + 1, outline=color, fill=color, tags=tags)
             return
-        for offs in range(int(y0) - int(x1 - x0), int(y1), spacing):
-            self.canvas.create_line(x0, offs, x1, offs + (x1 - x0), fill=color, width=1, tags=tags)
+        for offs in range(int(y0) - int(x1), int(y1 + x1), spacing):
+            _draw_diag_segment(float(offs), +1)
 
     def _draw_layers_background_for_test(self, ti: int, rect, tags):
         t = self.tests[ti]
@@ -3673,6 +3735,7 @@ class GeoCanvasEditor(tk.Tk):
         kind, ti, row, field = hit
         if ti is not None:
             self._active_test_idx = int(ti)
+            self._sync_layers_panel()
             self.schedule_graph_redraw()
 
         # Любой клик по UI (иконки/пустые/глубина) сначала закрывает активную ячейку
