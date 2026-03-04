@@ -15,7 +15,11 @@ class RibbonView(ttk.Frame):
         self.object_name_var = tk.StringVar(value="")
         self.show_graphs_var = tk.BooleanVar(value=False)
         self.compact_1m_var = tk.BooleanVar(value=False)
+        self.layers_edit_var = tk.BooleanVar(value=False)
+        self.layer_soil_var = tk.StringVar(value="")
+        self.layer_mode_var = tk.StringVar(value="")
         self._buttons: dict[str, ttk.Button] = {}
+        self._layer_rows: list[dict] = []
 
         try:
             style = ttk.Style(self)
@@ -33,19 +37,18 @@ class RibbonView(ttk.Frame):
 
         self._build_file_tab()
         self._build_params_tab()
+        self._build_layers_tab()
         self._build_processing_tab()
 
     def _add_qat_btn(self, parent, key: str, text: str, tip: str):
         btn = ttk.Button(parent, text=text, width=3, command=self.commands.get(key))
         if self.icon_font:
-            # ttk.Button does not support configure(font=...). Use a style.
-            if self.icon_font:
-                try:
-                    style = ttk.Style(btn)
-                    style.configure('Zond.QAT.TButton', font=self.icon_font)
-                    btn.configure(style='Zond.QAT.TButton')
-                except Exception:
-                    pass
+            try:
+                style = ttk.Style(btn)
+                style.configure('Zond.QAT.TButton', font=self.icon_font)
+                btn.configure(style='Zond.QAT.TButton')
+            except Exception:
+                pass
         btn.pack(side="left", padx=2)
         ToolTip(btn, tip)
         self._buttons[key] = btn
@@ -65,7 +68,6 @@ class RibbonView(ttk.Frame):
     def _build_file_tab(self):
         tab = ttk.Frame(self.tabs, padding=2)
         self.tabs.add(tab, text="Файл")
-
         project = ttk.LabelFrame(tab, text="Проект", padding=3)
         project.pack(side="left", fill="y", padx=4)
         project.columnconfigure(0, weight=1)
@@ -100,43 +102,80 @@ class RibbonView(ttk.Frame):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Параметры")
         self._add_btn(tab, "geo_params", f"{ICON_SETTINGS} Параметры зондирований (GEO)", "Открыть параметры GEO")
-        graphs_chk = ttk.Checkbutton(
-            tab,
-            text="Графики",
-            variable=self.show_graphs_var,
-            command=lambda: self.commands.get("toggle_graphs", lambda *_: None)(bool(self.show_graphs_var.get())),
-        )
+        graphs_chk = ttk.Checkbutton(tab, text="Графики", variable=self.show_graphs_var,
+                                     command=lambda: self.commands.get("toggle_graphs", lambda *_: None)(bool(self.show_graphs_var.get())))
         graphs_chk.pack(side="top", anchor="w", pady=(4, 0))
         ToolTip(graphs_chk, "Показывать графики")
-        compact_chk = ttk.Checkbutton(
-            tab,
-            text="Свернуть 1 м",
-            variable=self.compact_1m_var,
-            command=lambda: self.commands.get("toggle_compact_1m", lambda *_: None)(bool(self.compact_1m_var.get())),
-        )
+        compact_chk = ttk.Checkbutton(tab, text="Свернуть 1 м", variable=self.compact_1m_var,
+                                      command=lambda: self.commands.get("toggle_compact_1m", lambda *_: None)(bool(self.compact_1m_var.get())))
         compact_chk.pack(side="top", anchor="w", pady=(2, 0))
         ToolTip(compact_chk, "Свернуть таблицу/графики по 1-метровым интервалам")
+
+    def _build_layers_tab(self):
+        tab = ttk.Frame(self.tabs, padding=4)
+        self.tabs.add(tab, text="Слои")
+        edit_chk = ttk.Checkbutton(tab, text="Слои: редактирование", variable=self.layers_edit_var,
+                                   command=lambda: self.commands.get("toggle_layer_edit", lambda *_: None)(bool(self.layers_edit_var.get())))
+        edit_chk.pack(anchor="w", pady=(0, 4))
+
+        head = ttk.Frame(tab)
+        head.pack(fill="x", pady=(0, 4))
+        ttk.Label(head, text="Грунт:").pack(side="left")
+        soil_cb = ttk.Combobox(head, state="readonly", width=22, textvariable=self.layer_soil_var)
+        soil_cb.pack(side="left", padx=(4, 8))
+        ttk.Label(head, text="Режим:").pack(side="left")
+        mode_cb = ttk.Combobox(head, state="readonly", width=10, textvariable=self.layer_mode_var, values=["valid", "limited"])
+        mode_cb.pack(side="left", padx=(4, 8))
+        ttk.Button(head, text="Применить", command=self._apply_layer_row_edit).pack(side="left")
+        soil_cb.bind("<<ComboboxSelected>>", lambda _e: self._apply_layer_row_edit())
+        mode_cb.bind("<<ComboboxSelected>>", lambda _e: self._apply_layer_row_edit())
+        self.layer_soil_cb = soil_cb
+
+        cols = ("ige", "soil", "top", "bot", "th", "mode")
+        tree = ttk.Treeview(tab, columns=cols, show="headings", height=7)
+        tree.pack(fill="x", expand=False)
+        self.layers_tree = tree
+        headings = [("ige", "ИГЭ"), ("soil", "Грунт"), ("top", "От"), ("bot", "До"), ("th", "Толщ."), ("mode", "Режим")]
+        for key, text in headings:
+            tree.heading(key, text=text)
+            tree.column(key, width=90 if key in ("soil", "mode") else 62, anchor="center")
+        tree.bind("<<TreeviewSelect>>", self._on_layer_select)
 
     def _build_processing_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Обработка")
-
         fix = ttk.LabelFrame(tab, text="Исправление", padding=4)
         fix.pack(side="left", fill="y", padx=4)
         self._add_btn(fix, "fix_algo", "Исправить (алгоритм)", "Автоматическая корректировка")
-
         step = ttk.LabelFrame(tab, text="Шаг", padding=4)
         step.pack(side="left", fill="y", padx=4)
         self._add_btn(step, "reduce_step", "Уменьшить шаг…", "Преобразовать шаг")
-
         calc = ttk.LabelFrame(tab, text="Параметры пересчёта", padding=4)
         calc.pack(side="left", fill="y", padx=4)
         self._add_btn(calc, "apply_calc", "Применить", "Применить параметры пересчёта")
-
         k2k4 = ttk.LabelFrame(tab, text="К2 → К4", padding=4)
         k2k4.pack(side="left", fill="y", padx=4)
         self._add_btn(k2k4, "k2k4_30", "Пересчитать К2→К4 (30 МПа)", "Режим 30 МПа")
         self._add_btn(k2k4, "k2k4_50", "Пересчитать К2→К4 (50 МПа)", "Режим 50 МПа")
+
+    def _on_layer_select(self, _event=None):
+        sel = self.layers_tree.selection() if hasattr(self, "layers_tree") else []
+        if not sel:
+            return
+        idx = int(sel[0])
+        if 0 <= idx < len(self._layer_rows):
+            row = self._layer_rows[idx]
+            self.layer_soil_var.set(row.get("soil", ""))
+            self.layer_mode_var.set(row.get("mode", ""))
+
+    def _apply_layer_row_edit(self):
+        sel = self.layers_tree.selection() if hasattr(self, "layers_tree") else []
+        if not sel:
+            return
+        idx = int(sel[0])
+        cmd = self.commands.get("edit_layer_row")
+        if callable(cmd):
+            cmd(idx, self.layer_soil_var.get().strip(), self.layer_mode_var.get().strip())
 
     def set_object_name(self, value: str):
         self.object_name_var.set(value or "")
@@ -154,3 +193,25 @@ class RibbonView(ttk.Frame):
 
     def set_compact_1m(self, value: bool):
         self.compact_1m_var.set(bool(value))
+
+    def set_layer_edit_mode(self, value: bool):
+        self.layers_edit_var.set(bool(value))
+
+    def set_layers(self, rows: list[dict], soil_values: list[str]):
+        self._layer_rows = list(rows or [])
+        if hasattr(self, "layer_soil_cb"):
+            self.layer_soil_cb.configure(values=list(soil_values or []))
+        if not hasattr(self, "layers_tree"):
+            return
+        tree = self.layers_tree
+        for iid in tree.get_children(""):
+            tree.delete(iid)
+        for idx, row in enumerate(self._layer_rows):
+            tree.insert("", "end", iid=str(idx), values=(
+                row.get("ige", ""),
+                row.get("soil", ""),
+                row.get("top", ""),
+                row.get("bot", ""),
+                row.get("th", ""),
+                row.get("mode", ""),
+            ))

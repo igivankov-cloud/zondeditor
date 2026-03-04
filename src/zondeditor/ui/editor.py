@@ -41,6 +41,19 @@ from src.zondeditor.io.geo_reader import load_geo, parse_geo_bytes, GeoParseErro
 from src.zondeditor.io.gxl_reader import load_gxl, parse_gxl_file, GxlParseError
 from src.zondeditor.io.geo_writer import save_geo_as, save_k2_geo_from_template, build_k2_geo_from_template
 from src.zondeditor.domain.models import TestData, GeoBlockInfo, TestFlags
+from src.zondeditor.domain.layers import (
+    SoilType,
+    CalcMode,
+    Layer,
+    build_default_layers,
+    calc_mode_for_soil,
+    insert_layer_between,
+    layer_from_dict,
+    layer_to_dict,
+    move_layer_boundary,
+    normalize_layers,
+    validate_layers,
+)
 
 from src.zondeditor.ui.consts import *
 from src.zondeditor.ui.helpers import _apply_win11_style, _setup_shared_logger, _validate_nonneg_float_key, _check_license_or_exit, _parse_depth_float, _try_parse_dt, _pick_icon_font, _validate_tid_key, _validate_depth_0_4_key, _format_date_ru, _format_time_ru, _canvas_view_bbox, _validate_hh_key, _validate_mm_key, _parse_cell_int, _max_zero_run, _noise_around, _interp_with_noise, _resource_path, _open_logs_folder
@@ -190,6 +203,9 @@ class GeoCanvasEditor(tk.Tk):
         self._active_test_idx: int | None = None
         self.graph_qc_max_mpa: float = 30.0
         self.graph_fs_max_kpa: float = 500.0
+        self.layer_edit_mode = False
+        self._layer_drag = None  # {"ti": int, "boundary": int}
+        self._layer_handle_hitbox = []
 
         try:
             self.graph_w = int(self.winfo_fpixels("4c"))
@@ -448,6 +464,7 @@ class GeoCanvasEditor(tk.Tk):
                 "marker": t.marker,
                 "header_pos": t.header_pos,
                 "orig_id": t.orig_id,
+                "layers": [layer_to_dict(x) for x in (getattr(t, "layers", []) or [])],
                 "export_on": bool(getattr(t, "export_on", True)),
                 "block": None if t.block is None else {
                     "order_index": t.block.order_index,
@@ -483,6 +500,7 @@ class GeoCanvasEditor(tk.Tk):
             "depth0_by_tid": dict(getattr(self, "depth0_by_tid", {}) or {}),
             "compact_1m": bool(getattr(self, "compact_1m", False)),
             "expanded_meters": sorted(int(x) for x in (getattr(self, "expanded_meters", set()) or set())),
+            "layer_edit_mode": bool(getattr(self, "layer_edit_mode", False)),
             "project_ops": copy.deepcopy(list(getattr(self, "project_ops", []) or [])),
         }
 
@@ -509,6 +527,7 @@ class GeoCanvasEditor(tk.Tk):
         self.row_h = int(self.row_h_compact_1m if self.compact_1m else self.row_h_default)
         try:
             self.expanded_meters = set(int(x) for x in (snap.get("expanded_meters") or []))
+            self.layer_edit_mode = bool(snap.get("layer_edit_mode", getattr(self, "layer_edit_mode", False)))
         except Exception:
             self.expanded_meters = set()
         try:
@@ -519,6 +538,7 @@ class GeoCanvasEditor(tk.Tk):
         try:
             if getattr(self, "ribbon_view", None):
                 self.ribbon_view.set_compact_1m(bool(self.compact_1m))
+                self.ribbon_view.set_layer_edit_mode(bool(getattr(self, "layer_edit_mode", False)))
         except Exception:
             pass
 
@@ -555,6 +575,7 @@ class GeoCanvasEditor(tk.Tk):
                 header_pos=d.get("header_pos",""),
                 orig_id=d.get("orig_id", None),
                 block=blk,
+                layers=[layer_from_dict(x) for x in (d.get("layers") or [])],
             )
             self.tests.append(t)
             try:
@@ -596,9 +617,9 @@ class GeoCanvasEditor(tk.Tk):
 
     def _push_undo(self):
         if not self.tests:
+            self._sync_layers_panel()
+            self._update_scrollregion()
             return
-        self.undo_stack.append(self._snapshot())
-        # limit
         if len(self.undo_stack) > 50:
             self.undo_stack.pop(0)
         self.redo_stack.clear()
@@ -771,6 +792,70 @@ class GeoCanvasEditor(tk.Tk):
     def _toggle_compact_1m_from_ui(self):
         self._toggle_compact_1m(bool(getattr(self, "_compact_1m_var", None).get() if getattr(self, "_compact_1m_var", None) is not None else False))
 
+    def _toggle_layer_edit_mode(self, value: bool | None = None):
+        self.layer_edit_mode = bool(value)
+        try:
+            if getattr(self, "ribbon_view", None):
+                self.ribbon_view.set_layer_edit_mode(self.layer_edit_mode)
+        except Exception:
+            pass
+        self.schedule_graph_redraw()
+
+    def _active_layers_test_index(self) -> int | None:
+        if getattr(self, "_active_test_idx", None) is not None:
+            return int(self._active_test_idx)
+        if getattr(self, "display_cols", None):
+            return int(self.display_cols[0])
+        if getattr(self, "tests", None):
+            return 0
+        return None
+
+    def _sync_layers_panel(self):
+        if not getattr(self, "ribbon_view", None):
+            return
+        ti = self._active_layers_test_index()
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            self.ribbon_view.set_layers([], [x.value for x in SoilType])
+            return
+        layers = self._ensure_test_layers(self.tests[ti])
+        rows = []
+        for lyr in layers:
+            rows.append({
+                "ige": int(lyr.ige_num),
+                "soil": lyr.soil_type.value,
+                "top": f"{float(lyr.top_m):.2f}",
+                "bot": f"{float(lyr.bot_m):.2f}",
+                "th": f"{float(lyr.thickness_m):.2f}",
+                "mode": lyr.calc_mode.value,
+            })
+        self.ribbon_view.set_layers(rows, [x.value for x in SoilType])
+
+    def _edit_layer_row_from_ribbon(self, layer_index: int, soil_raw: str, mode_raw: str):
+        ti = self._active_layers_test_index()
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return
+        t = self.tests[ti]
+        layers = self._ensure_test_layers(t)
+        if not (0 <= int(layer_index) < len(layers)):
+            return
+        self._push_undo()
+        lyr = layers[int(layer_index)]
+        try:
+            soil = SoilType(str(soil_raw))
+            lyr.soil_type = soil
+            if not str(mode_raw or "").strip():
+                lyr.calc_mode = calc_mode_for_soil(soil)
+            elif mode_raw in (CalcMode.VALID.value, CalcMode.LIMITED.value):
+                lyr.calc_mode = CalcMode(mode_raw)
+            lyr.style = dict(lyr.style or {})
+        except Exception:
+            pass
+        if mode_raw in (CalcMode.VALID.value, CalcMode.LIMITED.value):
+            lyr.calc_mode = CalcMode(mode_raw)
+        t.layers = normalize_layers(layers)
+        self._sync_layers_panel()
+        self.schedule_graph_redraw()
+
     def _build_ui(self):
         self.ribbon_view = None
         # ========= LEGACY TOP BAR =========
@@ -932,6 +1017,8 @@ class GeoCanvasEditor(tk.Tk):
                 "reduce_step": self.convert_10_to_5,
                 "toggle_graphs": self._toggle_show_graphs,
                 "toggle_compact_1m": self._toggle_compact_1m,
+                "toggle_layer_edit": self._toggle_layer_edit_mode,
+                "edit_layer_row": self._edit_layer_row_from_ribbon,
                 "apply_calc": lambda: self._redraw(),
                 "k2k4_30": lambda: messagebox.showinfo("К2→К4", "Режим 30 МПа будет добавлен в следующем шаге."),
                 "k2k4_50": lambda: messagebox.showinfo("К2→К4", "Режим 50 МПа будет добавлен в следующем шаге."),
@@ -941,6 +1028,7 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view.set_object_name(self.object_name)
             self.ribbon_view.set_show_graphs(bool(getattr(self, "show_graphs", False)))
             self.ribbon_view.set_compact_1m(bool(getattr(self, "compact_1m", False)))
+            self.ribbon_view.set_layer_edit_mode(bool(getattr(self, "layer_edit_mode", False)))
             ribbon.pack_forget()
         # ========= Main canvas (fixed header) =========
         mid = ttk.Frame(self)
@@ -1092,6 +1180,8 @@ class GeoCanvasEditor(tk.Tk):
         self.canvas.bind("<Button-3>", self._on_right_click)
         self.canvas.bind("<Control-Button-1>", self._on_right_click)
         self.canvas.bind("<Button-1>", self._on_left_click)
+        self.canvas.bind("<B1-Motion>", self._on_layer_drag_motion)
+        self.canvas.bind("<ButtonRelease-1>", self._on_layer_drag_release)
         # глобальный клик вне canvases закрывает редактирование
         self.bind_all("<Button-1>", self._on_global_click, add="+")
         # Навигация стрелками по активным ячейкам (qc/fs)
@@ -3291,7 +3381,7 @@ class GeoCanvasEditor(tk.Tk):
         for cnv in (getattr(self, "canvas", None), getattr(self, "hcanvas", None)):
             if cnv is None:
                 continue
-            for tag in ("graph_axes", "graph_qc", "graph_fs", "graph_nodata"):
+            for tag in ("graph_axes", "graph_qc", "graph_fs", "graph_nodata", "graph_layers", "layer_handles"):
                 try:
                     cnv.delete(tag)
                 except Exception:
@@ -3344,13 +3434,106 @@ class GeoCanvasEditor(tk.Tk):
             depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
         return float(depth0 + (idx * step))
 
+    def _test_depth_range(self, t) -> tuple[float, float]:
+        dvals = []
+        for ds in (getattr(t, "depth", []) or []):
+            dv = _parse_depth_float(ds)
+            if dv is not None:
+                dvals.append(float(dv))
+        if dvals:
+            top = min(dvals)
+            bot = max(dvals)
+            if len(dvals) >= 2:
+                step = abs(dvals[1] - dvals[0])
+            else:
+                step = float(getattr(self, "step_m", 0.05) or 0.05)
+            return top, bot + max(step, 0.05)
+        depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
+        return depth0, depth0 + 1.0
+
+    def _ensure_test_layers(self, t) -> list[Layer]:
+        raw = list(getattr(t, "layers", []) or [])
+        layers: list[Layer] = []
+        for item in raw:
+            if isinstance(item, Layer):
+                layers.append(item)
+            elif isinstance(item, dict):
+                layers.append(layer_from_dict(item))
+        if not layers:
+            top, bot = self._test_depth_range(t)
+            layers = build_default_layers(top, bot)
+        try:
+            layers = normalize_layers(layers)
+            validate_layers(layers)
+        except Exception:
+            top, bot = self._test_depth_range(t)
+            layers = build_default_layers(top, bot)
+        t.layers = layers
+        return layers
+
+    def _depth_to_canvas_y(self, depth_m: float) -> float | None:
+        units = getattr(self, "_grid_units", []) or []
+        d = float(depth_m)
+        for disp_r, unit in enumerate(units):
+            y0r, y1r = self._row_y_bounds(disp_r)
+            if unit[0] == "row":
+                sample = _parse_depth_float(unit[2])
+                if sample is None:
+                    continue
+                row_step = float(getattr(self, "step_m", 0.05) or 0.05)
+                if abs(float(sample) - d) <= max(0.05, row_step) * 0.51:
+                    return y0r + (y1r - y0r) * 0.5
+            elif unit[0] == "meter":
+                meter_n = int(unit[1])
+                if meter_n <= d <= meter_n + 1:
+                    frac = max(0.0, min(1.0, d - meter_n))
+                    return y0r + (y1r - y0r) * frac
+        return None
+
+    def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, color: str, hatch: str, tags):
+        spacing = 10 if hatch in ("diag_sparse", "dot") else 6
+        if hatch == "cross":
+            for offs in range(int(y0) - int(x1 - x0), int(y1), spacing):
+                self.canvas.create_line(x0, offs, x1, offs + (x1 - x0), fill=color, width=1, tags=tags)
+                self.canvas.create_line(x1, offs, x0, offs + (x1 - x0), fill=color, width=1, tags=tags)
+            return
+        if hatch == "dot":
+            for yy in range(int(y0) + 3, int(y1), spacing):
+                for xx in range(int(x0) + 3, int(x1), spacing):
+                    self.canvas.create_rectangle(xx, yy, xx + 1, yy + 1, outline=color, fill=color, tags=tags)
+            return
+        for offs in range(int(y0) - int(x1 - x0), int(y1), spacing):
+            self.canvas.create_line(x0, offs, x1, offs + (x1 - x0), fill=color, width=1, tags=tags)
+
+    def _draw_layers_background_for_test(self, ti: int, rect, tags):
+        t = self.tests[ti]
+        layers = self._ensure_test_layers(t)
+        x0, x1, y0, y1 = rect
+        for lyr in layers:
+            ly0 = self._depth_to_canvas_y(float(lyr.top_m))
+            ly1 = self._depth_to_canvas_y(float(lyr.bot_m))
+            if ly0 is None or ly1 is None:
+                continue
+            ty0 = max(y0, min(ly0, ly1))
+            ty1 = min(y1, max(ly0, ly1))
+            if ty1 <= ty0:
+                continue
+            style = dict(getattr(lyr, "style", {}) or {})
+            fill = style.get("color") or "#f5edd8"
+            hatch = style.get("hatch") or "diag_sparse"
+            self.canvas.create_rectangle(x0, ty0, x1, ty1, fill=fill, outline="", tags=tags)
+            self._draw_layer_hatch(x0, ty0, x1, ty1, color="#c7baa4", hatch=hatch, tags=tags)
+            self.canvas.create_text(x0 + 4, (ty0 + ty1) / 2, anchor="w", text=f"ИГЭ {lyr.ige_num}", fill="#5e5140", font=("Segoe UI", 7), tags=tags)
+
     def _draw_graph_lines_for_test(self, ti: int, rect, y_points, qc_mpa, fs_kpa, qmax: float, fmax: float):
         x0, x1, y0, y1 = rect
         tag_axes = ("graph_axes", f"graph_axes_{ti}")
         tag_qc = ("graph_qc", f"graph_qc_{ti}")
         tag_fs = ("graph_fs", f"graph_fs_{ti}")
         tag_nodata = ("graph_nodata", f"graph_nodata_{ti}")
+        tag_layers = ("graph_layers", f"graph_layers_{ti}")
         self.canvas.create_rectangle(x0, y0, x1, y1, fill="#fbfdff", outline=GUI_GRID, tags=tag_axes)
+        self._draw_layers_background_for_test(ti, rect, tag_layers)
 
         if not y_points:
             self.canvas.create_text((x0 + x1) / 2, (y0 + y1) / 2, text="нет данных", fill="#666", font=("Segoe UI", 8), tags=tag_nodata)
@@ -3387,6 +3570,7 @@ class GeoCanvasEditor(tk.Tk):
             return
 
         self._recompute_graph_scales()
+        self._layer_handle_hitbox = []
 
         self._refresh_display_order()
         for ti in self.display_cols:
@@ -3454,6 +3638,26 @@ class GeoCanvasEditor(tk.Tk):
                 self.graph_qc_max_mpa,
                 self.graph_fs_max_kpa,
             )
+            self._draw_layer_handles_for_test(ti, (x0, x1, y0, y1))
+
+    def _draw_layer_handles_for_test(self, ti: int, rect):
+        if not bool(getattr(self, "layer_edit_mode", False)):
+            return
+        t = self.tests[ti]
+        layers = self._ensure_test_layers(t)
+        x0, x1, _y0, _y1 = rect
+        handle_x = x1 + 10
+        plus_x = x0 - 8
+        for bi in range(1, len(layers)):
+            boundary = layers[bi].top_m
+            y = self._depth_to_canvas_y(boundary)
+            if y is None:
+                continue
+            self.canvas.create_line(x0, y, x1, y, fill="#ab9f8a", width=1, dash=(3, 2), tags=("layer_handles",))
+            self.canvas.create_rectangle(handle_x - 5, y - 5, handle_x + 5, y + 5, fill="#fefefe", outline="#555", tags=("layer_handles",))
+            self.canvas.create_text(plus_x, y, text="+", fill="#0f6fb2", font=("Segoe UI", 10, "bold"), tags=("layer_handles",))
+            self._layer_handle_hitbox.append({"kind": "boundary", "ti": ti, "boundary": bi, "bbox": (handle_x - 6, y - 6, handle_x + 6, y + 6)})
+            self._layer_handle_hitbox.append({"kind": "plus", "ti": ti, "boundary": bi, "bbox": (plus_x - 8, y - 8, plus_x + 8, y + 8)})
 
     def _draw_graph_layers(self):
         self._redraw_graphs_now()
@@ -3508,6 +3712,14 @@ class GeoCanvasEditor(tk.Tk):
             self.schedule_graph_redraw()
             return
 
+        if kind == "layer_plus":
+            self._push_undo()
+            self._insert_layer_at_boundary(ti, row)
+            return
+        if kind == "layer_boundary":
+            self._push_undo()
+            self._layer_drag = {"ti": int(ti), "boundary": int(row)}
+            return
         if kind == "meter_row":
             self._toggle_meter_expanded(int(field), push_undo=True)
             return
@@ -3685,6 +3897,61 @@ class GeoCanvasEditor(tk.Tk):
             self._hover_tip = tw
         self._hover_after = self.after(delay_ms, _show)
 
+    def _insert_layer_at_boundary(self, ti: int, boundary: int):
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return
+        t = self.tests[ti]
+        layers = [Layer(**layer_to_dict(x)) for x in self._ensure_test_layers(t)]
+        try:
+            t.layers = insert_layer_between(layers, int(boundary))
+            self._sync_layers_panel()
+            self._redraw()
+            self.schedule_graph_redraw()
+        except Exception as exc:
+            self.status.set(f"Невозможно вставить слой: {exc}")
+
+    def _on_layer_drag_motion(self, event):
+        drag = getattr(self, "_layer_drag", None)
+        if not drag:
+            return
+        ti = int(drag.get("ti", -1))
+        boundary = int(drag.get("boundary", 0))
+        if ti < 0 or ti >= len(self.tests):
+            return
+        depth = self._canvas_y_to_depth(self.canvas.canvasy(event.y))
+        if depth is None:
+            return
+        t = self.tests[ti]
+        layers = [Layer(**layer_to_dict(x)) for x in self._ensure_test_layers(t)]
+        try:
+            t.layers = move_layer_boundary(layers, boundary, depth)
+            tip = f"Граница: {float(depth):.2f} м"
+            self.status.set(tip)
+            self._sync_layers_panel()
+            self.schedule_graph_redraw()
+        except Exception:
+            pass
+
+    def _on_layer_drag_release(self, _event):
+        if getattr(self, "_layer_drag", None):
+            self._layer_drag = None
+            self._redraw()
+            self.schedule_graph_redraw()
+
+    def _canvas_y_to_depth(self, y: float) -> float | None:
+        units = getattr(self, "_grid_units", []) or []
+        for disp_r, unit in enumerate(units):
+            y0r, y1r = self._row_y_bounds(disp_r)
+            if y0r <= y <= y1r:
+                if unit[0] == "row":
+                    dv = _parse_depth_float(unit[2])
+                    return float(dv) if dv is not None else None
+                if unit[0] == "meter":
+                    meter_n = float(unit[1])
+                    frac = (y - y0r) / max(1.0, (y1r - y0r))
+                    return meter_n + frac
+        return None
+
     def _on_motion(self, event):
         self._evt_widget = event.widget
         hit = self._hit_test(event.x, event.y)
@@ -3704,6 +3971,10 @@ class GeoCanvasEditor(tk.Tk):
                 ex_on = True
             tip_text = "Исключить из экспорта" if ex_on else "Экспортировать"
             self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=1000)
+        elif kind in ("layer_boundary", "layer_plus"):
+            self._set_hover(None)
+            tip_text = "Перетащить границу слоя" if kind == "layer_boundary" else "Добавить слой 0.20 м"
+            self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=700)
         else:
             self._set_hover(None)
 
@@ -3774,7 +4045,8 @@ class GeoCanvasEditor(tk.Tk):
         qc = list(getattr(src, "qc", []) or [])
         fs = list(getattr(src, "fs", []) or [])
 
-        new_test = TestData(tid=new_id, dt=new_dt, depth=depth, qc=qc, fs=fs, orig_id=None, block=None)
+        new_test = TestData(tid=new_id, dt=new_dt, depth=depth, qc=qc, fs=fs, orig_id=None, block=None,
+                            layers=[layer_from_dict(layer_to_dict(x)) for x in (getattr(src, "layers", []) or [])])
 
         # insert right after source
         insert_at = min(len(self.tests), ti + 1)
@@ -3918,6 +4190,7 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
         if not self.tests:
+            self._sync_layers_panel()
             self._update_scrollregion()
             return
 
@@ -4205,6 +4478,15 @@ class GeoCanvasEditor(tk.Tk):
         # --- таблица (числа) ---
         cx = self.canvas.canvasx(x)
         cy = self.canvas.canvasy(y)
+
+        if bool(getattr(self, "layer_edit_mode", False)):
+            for hit in (getattr(self, "_layer_handle_hitbox", []) or []):
+                bx0, by0, bx1, by1 = hit.get("bbox", (0, 0, 0, 0))
+                if bx0 <= cx <= bx1 and by0 <= cy <= by1:
+                    if hit.get("kind") == "boundary":
+                        return ("layer_boundary", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
+                    if hit.get("kind") == "plus":
+                        return ("layer_plus", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
 
         # row/col by coordinates
         if cy < 0:
