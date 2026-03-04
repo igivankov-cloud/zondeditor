@@ -1600,6 +1600,13 @@ class GeoCanvasEditor(tk.Tk):
         # alias for legacy calls
         return self._update_status_loaded(prefix)
 
+    def _set_status(self, message: str):
+        """Обновить текст основной (верхней) строки статуса."""
+        try:
+            self.status.config(text=message)
+        except Exception:
+            pass
+
     def _normalize_test_lengths(self, t):
         """
         Нормализует длины массивов внутри ОДНОГО опыта:
