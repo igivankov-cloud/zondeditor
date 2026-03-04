@@ -99,6 +99,7 @@ class RibbonView(ttk.Frame):
         self._add_btn_grid(actions, "export_credo", f"{ICON_EXPORT} CREDO", "Экспорт CREDO", 2, 1)
         self._add_btn_grid(actions, "export_archive", "🗜 Архив", "Собрать ZIP с выбранными файлами", 3, 0)
         self._add_btn_grid(actions, "export_dxf", f"{ICON_EXPORT} DXF", "Экспорт графиков в DXF (заглушка)", 3, 1)
+        self._add_btn_grid(actions, "export_cpt_protocol", "📄 φ/E (CPT)", "Экспорт Word-протокола расчёта φ и E по CPT", 4, 0)
 
     def _build_params_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
@@ -120,11 +121,15 @@ class RibbonView(ttk.Frame):
         tools = ttk.Frame(tab)
         tools.pack(fill="x", expand=False, pady=(0, 4))
         self._add_btn_grid(tools, "add_ige", "+ ИГЭ", "Добавить ИГЭ без назначенного грунта", 0, 0)
+        self._add_btn_grid(tools, "calc_cpt", "Рассчитать CPT", "Рассчитать qc_ср, φнорм и Eнорм по ИГЭ", 0, 1)
 
         tbl = ttk.Frame(tab)
         tbl.pack(fill="x", expand=False)
         ttk.Label(tbl, text="ИГЭ", width=12, anchor="w").grid(row=0, column=0, sticky="w", padx=(0, 8))
         ttk.Label(tbl, text="Грунт", width=26, anchor="w").grid(row=0, column=1, sticky="w")
+        ttk.Label(tbl, text="Источник", width=10, anchor="w").grid(row=0, column=2, sticky="w", padx=(8, 0))
+        ttk.Label(tbl, text="φ (CPT)", width=10, anchor="w").grid(row=0, column=3, sticky="w")
+        ttk.Label(tbl, text="E (CPT)", width=10, anchor="w").grid(row=0, column=4, sticky="w")
         self.layers_table = tbl
 
     def _build_processing_tab(self):
@@ -191,6 +196,9 @@ class RibbonView(ttk.Frame):
             lbl.grid(row=idx, column=0, sticky="w", padx=(0, 8), pady=1)
             cb = ttk.Combobox(self.layers_table, state="readonly", width=24, textvariable=soil_var, values=list(soil_values or []))
             cb.grid(row=idx, column=1, sticky="w", pady=1)
+            ttk.Label(self.layers_table, text=str(row.get("source", "")), width=10, anchor="w").grid(row=idx, column=2, sticky="w", padx=(8, 0), pady=1)
+            ttk.Label(self.layers_table, text=str(row.get("phi", "")), width=10, anchor="w").grid(row=idx, column=3, sticky="w", pady=1)
+            ttk.Label(self.layers_table, text=str(row.get("e", "")), width=10, anchor="w").grid(row=idx, column=4, sticky="w", pady=1)
             cb.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, sv=soil_var: self._apply_ige_edit(ig, sv))
             lbl.bind("<Button-1>", lambda _e, ig=ige_id: self._select_ige(ig))
             cb.bind("<Button-1>", lambda _e, ig=ige_id: self._select_ige(ig), add="+")

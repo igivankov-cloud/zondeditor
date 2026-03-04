@@ -34,6 +34,7 @@ try:
 except Exception:
     export_excel_file = None
 from src.zondeditor.export.credo_zip import export_credo_zip
+from src.zondeditor.export.cpt_protocol_docx import export_cpt_protocol_docx
 from src.zondeditor.export.geo_export import bundle_geo_filename, export_bundle_geo, prepare_geo_tests
 from src.zondeditor.export.gxl_export import export_gxl_generated
 from src.zondeditor.export.selection import select_export_tests
@@ -63,6 +64,12 @@ from src.zondeditor.ui.widgets import ToolTip, CalendarDialog
 from src.zondeditor.ui.ribbon import RibbonView
 from src.zondeditor.project import Project, ProjectSettings, SourceInfo, load_project, save_project
 from src.zondeditor.project.ops import op_algo_fix_applied, op_cell_set, op_cells_marked, op_meta_change
+from src.zondeditor.domain.cpt_params_ru import (
+    CptCalcSettings,
+    METHOD_SP11,
+    METHOD_SP446,
+    calculate_ige_cpt_results,
+)
 
 _rebuild_geo_from_template = build_k2_geo_from_template
 
@@ -220,6 +227,7 @@ class GeoCanvasEditor(tk.Tk):
         }
         self.layer_store = LayerStore()
         self._debug_layers_overlay = bool(os.environ.get("ZONDEDITOR_DEBUG_LAYERS") == "1")
+        self.cpt_calc_settings = {"method": METHOD_SP446, "alluvial_sands": False}
 
         try:
             self.graph_w = int(self.winfo_fpixels("4c"))
@@ -518,6 +526,7 @@ class GeoCanvasEditor(tk.Tk):
             "layer_edit_mode": bool(getattr(self, "layer_edit_mode", False)),
             "project_ops": copy.deepcopy(list(getattr(self, "project_ops", []) or [])),
             "ige_registry": copy.deepcopy(dict(getattr(self, "ige_registry", {}) or {})),
+            "cpt_calc_settings": copy.deepcopy(dict(getattr(self, "cpt_calc_settings", {}) or {})),
         }
 
     def _restore(self, snap: dict):
@@ -566,6 +575,10 @@ class GeoCanvasEditor(tk.Tk):
             self.ige_registry = copy.deepcopy(dict(snap.get("ige_registry", {}) or {}))
         except Exception:
             self.ige_registry = {}
+        try:
+            self.cpt_calc_settings = copy.deepcopy(dict(snap.get("cpt_calc_settings", {}) or {})) or {"method": METHOD_SP446, "alluvial_sands": False}
+        except Exception:
+            self.cpt_calc_settings = {"method": METHOD_SP446, "alluvial_sands": False}
         self._ensure_default_iges()
 
         for d in snap.get("tests", []):
@@ -863,6 +876,10 @@ class GeoCanvasEditor(tk.Tk):
                     mode_raw = CalcMode.LIMITED.value
                 ent = {"soil_type": None, "calc_mode": mode_raw, "style": {}}
             self.ige_registry[key] = ent
+        if "lab_phys" not in ent:
+            ent["lab_phys"] = {}
+        if "cpt_result" not in ent:
+            ent["cpt_result"] = None
         return ent
 
     def _next_free_ige_id(self) -> str:
@@ -974,7 +991,16 @@ class GeoCanvasEditor(tk.Tk):
         rows = []
         for ige_id in sorted(ige_ids, key=self._ige_id_to_num):
             ent = self._ensure_ige_entry(ige_id)
-            rows.append({"ige": ige_id, "soil": str(ent.get("soil_type") or "")})
+            cpt = dict(ent.get("cpt_result") or {})
+            rows.append(
+                {
+                    "ige": ige_id,
+                    "soil": str(ent.get("soil_type") or ""),
+                    "source": str(cpt.get("source") or "-"),
+                    "phi": ("-" if cpt.get("phi_norm") is None else f"{float(cpt.get('phi_norm')):.1f}"),
+                    "e": ("-" if cpt.get("E_norm") is None else f"{float(cpt.get('E_norm')):.1f}"),
+                }
+            )
         self.ribbon_view.set_layers(rows, [x.value for x in SoilType])
         if rows:
             current_ige = str(rows[0].get("ige") or "ИГЭ-1")
@@ -1197,6 +1223,7 @@ class GeoCanvasEditor(tk.Tk):
                 "export_credo": self.export_credo_zip,
                 "export_archive": self.export_bundle,
                 "export_dxf": self.export_dxf,
+                "export_cpt_protocol": self.export_cpt_protocol,
                 "geo_params": self.open_geo_params_dialog,
                 "fix_algo": self.fix_by_algorithm,
                 "reduce_step": self.convert_10_to_5,
@@ -1206,6 +1233,7 @@ class GeoCanvasEditor(tk.Tk):
                 "edit_ige": self._edit_ige_from_ribbon,
                 "select_ige": self._select_ige_for_ribbon,
                 "add_ige": self._add_unassigned_ige_from_ribbon,
+                "calc_cpt": self.calculate_cpt_params,
                 "apply_calc": lambda: self._redraw(),
                 "k2k4_30": lambda: messagebox.showinfo("К2→К4", "Режим 30 МПа будет добавлен в следующем шаге."),
                 "k2k4_50": lambda: messagebox.showinfo("К2→К4", "Режим 50 МПа будет добавлен в следующем шаге."),
@@ -6542,6 +6570,94 @@ class GeoCanvasEditor(tk.Tk):
         except Exception as e:
             messagebox.showerror("Ошибка", str(e))
 
+    def _ask_cpt_calc_settings(self) -> dict[str, object] | None:
+        dlg = tk.Toplevel(self)
+        dlg.title("Настройки расчёта φ/E по CPT")
+        dlg.transient(self)
+        dlg.grab_set()
+        frm = ttk.Frame(dlg, padding=10)
+        frm.pack(fill="both", expand=True)
+        current = dict(getattr(self, "cpt_calc_settings", {}) or {})
+        method_var = tk.StringVar(value=str(current.get("method") or METHOD_SP446))
+        alluvial_var = tk.BooleanVar(value=bool(current.get("alluvial_sands", False)))
+        ttk.Label(frm, text="Методика:").pack(anchor="w")
+        ttk.Radiobutton(frm, text="СП 446.1325800.2019 (Приложение Ж)", variable=method_var, value=METHOD_SP446).pack(anchor="w")
+        ttk.Radiobutton(frm, text="СП 11-105-97 (Приложение И)", variable=method_var, value=METHOD_SP11).pack(anchor="w")
+        ttk.Checkbutton(frm, text="Аллювиальные пески", variable=alluvial_var).pack(anchor="w", pady=(6, 0))
+        result: dict[str, object] = {"ok": False}
+
+        def _ok():
+            result["ok"] = True
+            result["method"] = str(method_var.get() or METHOD_SP446)
+            result["alluvial_sands"] = bool(alluvial_var.get())
+            dlg.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x", pady=(10, 0))
+        ttk.Button(btns, text="Отмена", command=dlg.destroy).pack(side="right")
+        ttk.Button(btns, text="Рассчитать", command=_ok).pack(side="right", padx=(0, 8))
+        self.wait_window(dlg)
+        if not bool(result.get("ok")):
+            return None
+        return {"method": result["method"], "alluvial_sands": result["alluvial_sands"]}
+
+    def calculate_cpt_params(self):
+        settings = self._ask_cpt_calc_settings()
+        if settings is None:
+            return
+        self._push_undo()
+        self.cpt_calc_settings = dict(settings)
+        calc = CptCalcSettings(method=str(settings.get("method") or METHOD_SP446), alluvial_sands=bool(settings.get("alluvial_sands", False)))
+        results = calculate_ige_cpt_results(tests=list(self.tests or []), ige_registry=self.ige_registry, settings=calc)
+        for ige_id in sorted(self.ige_registry.keys(), key=self._ige_id_to_num):
+            ent = self._ensure_ige_entry(ige_id)
+            ent["cpt_result"] = results.get(ige_id)
+        self._sync_layers_panel()
+        self._dirty = True
+        self._update_window_title()
+        messagebox.showinfo("Расчёт CPT", f"Расчёт завершён. ИГЭ с результатами: {len(results)}")
+
+    def export_cpt_protocol(self):
+        if not (self.ige_registry or {}):
+            messagebox.showwarning("Протокол CPT", "Нет ИГЭ для протокола")
+            return
+        rows: list[dict[str, object]] = []
+        for ige_id in sorted(self.ige_registry.keys(), key=self._ige_id_to_num):
+            ent = self._ensure_ige_entry(ige_id)
+            cpt = dict(ent.get("cpt_result") or {})
+            bounds = cpt.get("layer_bounds") or []
+            bounds_txt = ", ".join([f"{a:.2f}-{b:.2f} м" for a, b in bounds]) if bounds else "-"
+            rows.append(
+                {
+                    "ige_id": ige_id,
+                    "soil_type": ent.get("soil_type") or "",
+                    "bounds": bounds_txt,
+                    "qc_mean": cpt.get("qc_mean", "-"),
+                    "n": cpt.get("n", "-"),
+                    "qc_min": cpt.get("qc_min", "-"),
+                    "qc_max": cpt.get("qc_max", "-"),
+                    "variation": cpt.get("variation", "-"),
+                    "lookup_interval": cpt.get("lookup_interval", "-"),
+                    "phi_norm": cpt.get("phi_norm", "-"),
+                    "E_norm": cpt.get("E_norm", "-"),
+                }
+            )
+        out = filedialog.asksaveasfilename(title="Сохранить протокол φ и E (CPT)", defaultextension=".docx", filetypes=[("Word", "*.docx")])
+        if not out:
+            return
+        template = Path("templates/protocol_phi_E_CPT.docx")
+        try:
+            export_cpt_protocol_docx(
+                out_path=Path(out),
+                object_name=str(getattr(self, "object_name", "") or ""),
+                settings=dict(getattr(self, "cpt_calc_settings", {}) or {}),
+                rows=rows,
+                template_path=template,
+            )
+            messagebox.showinfo("Протокол CPT", f"Протокол сохранён:\n{out}")
+        except Exception as e:
+            messagebox.showerror("Протокол CPT", f"Не удалось сформировать протокол:\n{e}")
+
     def export_dxf(self):
         messagebox.showinfo(
             "Экспорт DXF",
@@ -6770,6 +6886,7 @@ class GeoCanvasEditor(tk.Tk):
 
 
     def _project_settings_from_ui(self) -> ProjectSettings:
+        extras = {"cpt_calc_settings": dict(getattr(self, "cpt_calc_settings", {}) or {})}
         return ProjectSettings(
             scale=(self.scale_var.get().strip() if hasattr(self, "scale_var") else "250") or "250",
             fcone=(self.fcone_var.get().strip() if hasattr(self, "fcone_var") else "30") or "30",
@@ -6777,6 +6894,7 @@ class GeoCanvasEditor(tk.Tk):
             acon=(self.acon_var.get().strip() if hasattr(self, "acon_var") else "10") or "10",
             asleeve=(self.asl_var.get().strip() if hasattr(self, "asl_var") else "350") or "350",
             step_m=float(getattr(self, "step_m", 0.1) or 0.1),
+            extras=extras,
         )
 
     def _build_project_payload(self) -> Project:
@@ -7021,6 +7139,7 @@ class GeoCanvasEditor(tk.Tk):
             self.fsleeve_var.set(project.settings.fsleeve)
             self.acon_var.set(project.settings.acon)
             self.asl_var.set(project.settings.asleeve)
+        self.cpt_calc_settings = dict((project.settings.extras or {}).get("cpt_calc_settings") or self.cpt_calc_settings or {"method": METHOD_SP446, "alluvial_sands": False})
         self._dirty = False
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)
