@@ -4793,15 +4793,24 @@ class GeoCanvasEditor(tk.Tk):
         current_label = f"{current_ige} ({current_soil})"
         if current_label in values:
             cb.set(current_label)
+        def _canvas_to_root(xc: float, yc: float) -> tuple[int, int]:
+            # Перевод canvas-координат (с учетом текущего x/y scroll) в root-screen координаты.
+            vx = float(self.canvas.canvasx(0.0))
+            vy = float(self.canvas.canvasy(0.0))
+            rx = int(self.canvas.winfo_rootx() + (float(xc) - vx))
+            ry = int(self.canvas.winfo_rooty() + (float(yc) - vy))
+            return rx, ry
+
         gx0 = int(event.x_root)
         gy0 = int(event.y_root)
         col_w = 240
         try:
             rect = self._graph_rect_for_test(int(ti))
             if rect:
-                x0, x1, _y0, _y1 = rect
-                gx0 = int(self.canvas.winfo_rootx() + float(x0))
+                x0, x1, y0r, _y1r = rect
+                gx0, gy_guess = _canvas_to_root(float(x0), float(y0r))
                 col_w = max(80, int(float(x1) - float(x0)))
+                gy0 = int(gy_guess)
         except Exception:
             pass
 
@@ -4809,10 +4818,19 @@ class GeoCanvasEditor(tk.Tk):
         # в свернутом режиме вертикаль привязываем к bbox надписи, чтобы popup не "улетал".
         if anchor_bbox is not None:
             try:
-                _bx0, by0, _bx1, _by1 = anchor_bbox
-                gy0 = int(self.canvas.winfo_rooty() + float(by0))
+                bx0, by0, _bx1, _by1 = anchor_bbox
+                gx0, gy0 = _canvas_to_root(float(bx0), float(by0))
             except Exception:
                 gy0 = int(event.y_root)
+
+        # Не даем popup уходить за пределы экрана.
+        try:
+            sw = int(self.winfo_screenwidth())
+            sh = int(self.winfo_screenheight())
+            gx0 = max(0, min(int(gx0), max(0, sw - int(col_w) - 4)))
+            gy0 = max(0, min(int(gy0), max(0, sh - 28)))
+        except Exception:
+            pass
 
         cb.configure(width=max(10, int((col_w - 12) / 8)))
         cb.pack(fill="x")
