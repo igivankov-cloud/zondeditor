@@ -1523,6 +1523,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.canvas.yview(*args)
             except Exception:
                 pass
+            self._sync_header_body_after_scroll()
         self.vbar.config(command=_yview_proxy)
         # configure/redraw
         self.canvas.bind("<Configure>", lambda _e: self._update_scrollregion())
@@ -3642,6 +3643,9 @@ class GeoCanvasEditor(tk.Tk):
                 except Exception:
                     pass
                 self._hscroll_hidden = False
+
+        self._sync_header_body_after_scroll()
+
     def _refresh_display_order(self):
         """Order tests for rendering.
 
@@ -6395,13 +6399,49 @@ class GeoCanvasEditor(tk.Tk):
         delta = int(-1 * (event.delta / 120)) if event.delta else 0
         if delta != 0:
             self.canvas.yview_scroll(delta, "units")
+            self._sync_header_body_after_scroll()
         return "break"
 
     def _on_mousewheel_linux(self, direction):
         # скролл закрывает активную ячейку
         self._end_edit(commit=True)
         self.canvas.yview_scroll(direction, "units")
+        self._sync_header_body_after_scroll()
         return "break"
+
+    def _get_body_view_top_canvas_y(self) -> float:
+        try:
+            return float(self.canvas.canvasy(0))
+        except Exception:
+            return 0.0
+
+    def _sync_header_body_after_scroll(self):
+        """Нормализует вертикальный сдвиг body canvas (без участия шапки)."""
+        if getattr(self, "_ysync_lock", False):
+            return
+        self._ysync_lock = True
+        try:
+            body_h = float(self._total_body_height())
+            try:
+                view_h = float(self.canvas.winfo_height() or 1)
+            except Exception:
+                view_h = 1.0
+            top_y = self._get_body_view_top_canvas_y()
+            max_top = max(0.0, body_h - max(1.0, view_h))
+            if body_h <= max(1.0, view_h):
+                target_top = 0.0
+            else:
+                target_top = min(max(top_y, 0.0), max_top)
+
+            if abs(target_top - top_y) > 0.5:
+                frac = 0.0 if body_h <= 1.0 else (target_top / body_h)
+                frac = 0.0 if frac < 0.0 else (1.0 if frac > 1.0 else frac)
+                try:
+                    self.canvas.yview_moveto(frac)
+                except Exception:
+                    pass
+        finally:
+            self._ysync_lock = False
 
     def _on_mousewheel_x(self, event):
         """Горизонтальная прокрутка колесом шагом 1 колонка (когда курсор над шапкой или горизонтальным скроллом)."""
