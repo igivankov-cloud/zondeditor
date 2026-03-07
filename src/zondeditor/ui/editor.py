@@ -219,6 +219,7 @@ class GeoCanvasEditor(tk.Tk):
         self._layer_plot_hitbox = []
         self._layer_label_hitbox = []
         self._layer_ige_picker = None
+        self._layer_ige_picker_meta = None
         self._boundary_depth_editor = None
         self._editor_just_opened = False
         self._inline_edit_active = False
@@ -4785,6 +4786,7 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
         self._layer_ige_picker = None
+        self._layer_ige_picker_meta = None
 
     def _show_ige_picker_at_click(self, event, ti: int, depth: float, *, anchor_bbox=None):
         if ti < 0 or ti >= len(self.tests):
@@ -4801,10 +4803,12 @@ class GeoCanvasEditor(tk.Tk):
             target = min(layers, key=lambda lyr: abs(((float(lyr.top_m) + float(lyr.bot_m)) * 0.5) - float(depth)))
         if target is None:
             return
+        picker_meta = (int(ti), str(self._layer_ige_id(target)))
+        if getattr(self, "_layer_ige_picker", None) is not None and getattr(self, "_layer_ige_picker_meta", None) == picker_meta:
+            return
         self._hide_layer_ige_picker()
         win = tk.Toplevel(self)
         win.overrideredirect(True)
-        win.attributes("-topmost", True)
         values = []
         ids = sorted(self.ige_registry.keys(), key=self._ige_id_to_num)
         for ige_id in ids:
@@ -4843,7 +4847,14 @@ class GeoCanvasEditor(tk.Tk):
         if anchor_bbox is not None:
             try:
                 bx0, by0, _bx1, _by1 = anchor_bbox
-                _rx, gy0 = _canvas_to_root(float(bx0), float(by0))
+                rx, gy0 = _canvas_to_root(float(bx0), float(by0))
+                first_ti = None
+                try:
+                    first_ti = int((self.display_cols or [None])[0])
+                except Exception:
+                    first_ti = None
+                if first_ti is not None and int(ti) == int(first_ti):
+                    gx0 = int(rx)
             except Exception:
                 gy0 = int(event.y_root)
 
@@ -4884,6 +4895,7 @@ class GeoCanvasEditor(tk.Tk):
         cb.bind("<Escape>", lambda _e: self._hide_layer_ige_picker())
         cb.focus_set()
         self._layer_ige_picker = win
+        self._layer_ige_picker_meta = picker_meta
 
     def _open_boundary_depth_editor(self, ti: int, boundary: int):
         if ti < 0 or ti >= len(self.tests):
