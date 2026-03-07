@@ -837,24 +837,6 @@ class GeoCanvasEditor(tk.Tk):
             return None
         return None
 
-    def _is_depth0_display_row(self, ti: int, display_row: int) -> bool:
-        """True, если display_row соответствует абсолютной первой строке данных опыта (data_row == 0)."""
-        try:
-            mp = (getattr(self, "_grid_row_maps", {}) or {}).get(int(ti), {}) or {}
-            if mp.get(int(display_row), None) == 0:
-                return True
-            # compact collapsed meter-row case: проверяем, попадает ли depth[0] в этот метр
-            meter_n = (getattr(self, "_grid_meter_rows", {}) or {}).get(int(display_row), None)
-            if meter_n is None:
-                return False
-            t = self.tests[int(ti)]
-            d0 = self._depth_at_index(t, 0)
-            if d0 is None:
-                return False
-            return float(meter_n) <= float(d0) < (float(meter_n) + 1.0)
-        except Exception:
-            return False
-
     def _toggle_compact_1m_from_ui(self):
         self._toggle_compact_1m(bool(getattr(self, "_compact_1m_var", None).get() if getattr(self, "_compact_1m_var", None) is not None else False))
 
@@ -4312,6 +4294,7 @@ class GeoCanvasEditor(tk.Tk):
                 continue
             h_tag = f"layer_handle_{ti}_{bi}"
             p_tag = f"layer_plus_{ti}_{bi}"
+            m_tag = f"layer_minus_{ti}_{bi}"
             self.canvas.create_line(x0, y, x1, y, fill="#ab9f8a", width=1, dash=(3, 2), tags=("layer_handles", "layer_boundary_line"))
             self.canvas.create_rectangle(handle_x - 5, y - 5, handle_x + 5, y + 5, fill="#fefefe", outline="#555", tags=("layer_handles", "layer_handle", h_tag))
             bx0 = handle_x - 52
@@ -4321,6 +4304,7 @@ class GeoCanvasEditor(tk.Tk):
             self._layer_handle_hitbox.append({"kind": "boundary", "ti": ti, "boundary": bi, "tag": h_tag, "bbox": (handle_x - 6, y - 6, handle_x + 6, y + 6)})
             self._layer_depth_box_hitbox.append({"kind": "boundary_depth_edit", "ti": ti, "boundary": bi, "bbox": (bx0, y - 9, bx1, y + 9)})
             _draw_plus(p_tag, y, bi, "plus", active=self._can_split_layer_index(int(ti), int(bi)))
+            _draw_minus(m_tag, y + 14, bi, "minus", active=(len(layers) > 1))
 
     def _draw_graph_layers(self):
         self._redraw_graphs_now()
@@ -4425,6 +4409,13 @@ class GeoCanvasEditor(tk.Tk):
             self._push_undo()
             self._remove_layer_from_bottom(ti)
             return
+        if kind == "layer_minus":
+            if self._is_test_locked(int(ti)):
+                self._set_status("Опыт заблокирован")
+                return
+            self._push_undo()
+            self._remove_layer_at_index(int(ti), int(row))
+            return
         if kind == "layer_boundary":
             if self._is_test_locked(int(ti)):
                 self._set_status("Опыт заблокирован")
@@ -4447,9 +4438,6 @@ class GeoCanvasEditor(tk.Tk):
         if kind == "meter_row":
             if self._is_test_locked(int(ti)):
                 self._set_status("Опыт заблокирован")
-                return
-            if self._is_depth0_display_row(int(ti), int(row)):
-                self._begin_edit_depth0(int(ti), display_row=int(row))
                 return
             self._toggle_meter_expanded(int(field), push_undo=True)
             return
@@ -4963,6 +4951,31 @@ class GeoCanvasEditor(tk.Tk):
         self._redraw_graphs_now()
         self.schedule_graph_redraw()
 
+    def _remove_layer_at_index(self, ti: int, layer_index: int):
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return
+        t = self.tests[ti]
+        layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
+        li = int(layer_index)
+        if len(layers) <= 1 or not (0 <= li < len(layers)):
+            self._set_status("Нельзя удалить единственный слой")
+            return
+        if li <= 0:
+            self._remove_layer_from_top(int(ti))
+            return
+        if li >= len(layers) - 1:
+            self._remove_layer_from_bottom(int(ti))
+            return
+        removed = layers.pop(li)
+        # Внутренний слой поглощается нижележащим соседним слоем.
+        layers[li].top_m = float(removed.top_m)
+        t.layers = normalize_layers(layers)
+        self._calc_layer_params_for_test(int(ti))
+        self._sync_layers_panel()
+        self._redraw()
+        self._redraw_graphs_now()
+        self.schedule_graph_redraw()
+
     def _on_layer_drag_motion(self, event):
         drag = getattr(self, "_layer_drag", None)
         if not drag:
@@ -5080,7 +5093,7 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 is_toggle = False
             _set_cursor("hand2" if is_toggle else "")
-        elif kind in ("layer_boundary", "layer_plus", "layer_plus_top", "layer_plus_bottom", "layer_minus_top", "layer_minus_bottom", "layer_interval", "layer_boundary_depth_edit"):
+        elif kind in ("layer_boundary", "layer_plus", "layer_plus_top", "layer_plus_bottom", "layer_minus", "layer_minus_top", "layer_minus_bottom", "layer_interval", "layer_boundary_depth_edit"):
             self._set_hover(None)
             is_active = (ti is not None) and (not self._is_test_locked(int(ti)))
             _set_cursor("hand2" if is_active else "")
@@ -5638,6 +5651,8 @@ class GeoCanvasEditor(tk.Tk):
                     return ("layer_plus_top", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
                 if hit.get("kind") == "plus_bottom":
                     return ("layer_plus_bottom", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
+                if hit.get("kind") == "minus":
+                    return ("layer_minus", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
                 if hit.get("kind") == "minus_top":
                     return ("layer_minus_top", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
                 if hit.get("kind") == "minus_bottom":
@@ -5694,9 +5709,6 @@ class GeoCanvasEditor(tk.Tk):
         if kind == "meter_row":
             if self._is_test_locked(int(ti)):
                 self._set_status("Опыт заблокирован")
-                return
-            if self._is_depth0_display_row(int(ti), int(row)):
-                self._begin_edit_depth0(int(ti), display_row=int(row))
                 return
             self._toggle_meter_expanded(int(field), push_undo=True)
             return
@@ -6029,6 +6041,7 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
         self._redraw()
+        self._redraw_graphs_now()
         if xview_before is not None:
             try:
                 self.canvas.xview_moveto(float(xview_before[0]))
@@ -6346,6 +6359,7 @@ class GeoCanvasEditor(tk.Tk):
         self._editing = None
         if not commit:
             self._redraw()
+            self._redraw_graphs_now()
             self.schedule_graph_redraw()
             return
 
@@ -6375,6 +6389,7 @@ class GeoCanvasEditor(tk.Tk):
                 return
         if new0 is None:
             self._redraw()
+            self._redraw_graphs_now()
             self.schedule_graph_redraw()
             return
         if old0 is None:
@@ -6384,6 +6399,7 @@ class GeoCanvasEditor(tk.Tk):
         if abs(delta) < 1e-9:
             t.depth[0] = f"{new0:.2f}"
             self._redraw()
+            self._redraw_graphs_now()
             return
 
         new_depth = []
@@ -6398,6 +6414,7 @@ class GeoCanvasEditor(tk.Tk):
         # Не сбрасываем подсветку/флаги при сдвиге глубины: qc/fs не менялись
         # (иначе пропадает фиолетовая отметка ручных правок и др. подсветки)
         self._redraw()
+        self._redraw_graphs_now()
         self.schedule_graph_redraw()
     def _end_edit(self, commit: bool):
         if not self._editing:
