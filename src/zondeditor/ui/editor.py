@@ -4193,10 +4193,10 @@ class GeoCanvasEditor(tk.Tk):
                         "ti": int(ti),
                         "depth": float(depth),
                         "bbox": (
-                            float(cx - chip_w * 0.5),
-                            float(cy - chip_h * 0.5),
-                            float(cx + chip_w * 0.5),
-                            float(cy + chip_h * 0.5),
+                            float(cx - chip_w * 0.5 - 3.0),
+                            float(cy - chip_h * 0.5 - 2.0),
+                            float(cx + chip_w * 0.5 + 3.0),
+                            float(cy + chip_h * 0.5 + 2.0),
                         ),
                     })
                 except Exception:
@@ -4819,7 +4819,7 @@ class GeoCanvasEditor(tk.Tk):
         if anchor_bbox is not None:
             try:
                 bx0, by0, _bx1, _by1 = anchor_bbox
-                gx0, gy0 = _canvas_to_root(float(bx0), float(by0))
+                _rx, gy0 = _canvas_to_root(float(bx0), float(by0))
             except Exception:
                 gy0 = int(event.y_root)
 
