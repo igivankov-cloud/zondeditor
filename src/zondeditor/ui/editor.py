@@ -4607,7 +4607,6 @@ class GeoCanvasEditor(tk.Tk):
         self._hide_layer_ige_picker()
         win = tk.Toplevel(self)
         win.overrideredirect(True)
-        win.attributes("-topmost", True)
         values = []
         ids = sorted(self.ige_registry.keys(), key=self._ige_id_to_num)
         for ige_id in ids:
