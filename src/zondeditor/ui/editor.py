@@ -4398,7 +4398,8 @@ class GeoCanvasEditor(tk.Tk):
                 return
 
             if field == "depth":
-                if row == start_r:
+                data_row0 = mp.get(row, None)
+                if data_row0 == 0:
                     self._begin_edit_depth0(ti, display_row=row)
                     return
                 meter_n = self._expanded_meter_for_depth_cell(ti, row)
@@ -5548,12 +5549,14 @@ class GeoCanvasEditor(tk.Tk):
         start_r = (getattr(self, "_grid_start_rows", {}) or {}).get(ti, 0)
 
         if field == "depth":
+            data_row0 = mp.get(row, None)
+            if data_row0 == 0:
+                self._begin_edit_depth0(ti, display_row=row)
+                return
             meter_n = self._expanded_meter_for_depth_cell(ti, row)
             if meter_n is not None:
                 self._toggle_meter_expanded(meter_n, push_undo=True)
                 return
-            if row == start_r:
-                self._begin_edit_depth0(ti, display_row=row)
             return
 
         data_row = mp.get(row, None)
