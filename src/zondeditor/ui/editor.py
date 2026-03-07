@@ -4791,10 +4791,14 @@ class GeoCanvasEditor(tk.Tk):
             return
         layers = self._ensure_test_layers(self.tests[ti])
         target = None
+        eps = 1e-6
         for lyr in layers:
-            if float(lyr.top_m) <= depth <= float(lyr.bot_m):
+            if float(lyr.top_m) - eps <= depth <= float(lyr.bot_m) + eps:
                 target = lyr
                 break
+        if target is None and layers:
+            # fallback: выбираем ближайший слой по центру, чтобы клик по label всегда открывал picker
+            target = min(layers, key=lambda lyr: abs(((float(lyr.top_m) + float(lyr.bot_m)) * 0.5) - float(depth)))
         if target is None:
             return
         self._hide_layer_ige_picker()
@@ -4843,14 +4847,22 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 gy0 = int(event.y_root)
 
-        # Не даем popup уходить за пределы экрана.
+        # Не даем popup уходить за пределы окна редактора (и экрана как fallback).
         try:
-            sw = int(self.winfo_screenwidth())
-            sh = int(self.winfo_screenheight())
-            gx0 = max(0, min(int(gx0), max(0, sw - int(col_w) - 4)))
-            gy0 = max(0, min(int(gy0), max(0, sh - 28)))
+            root_x0 = int(self.winfo_rootx())
+            root_y0 = int(self.winfo_rooty())
+            root_x1 = root_x0 + int(max(1, self.winfo_width()))
+            root_y1 = root_y0 + int(max(1, self.winfo_height()))
+            gx0 = max(root_x0, min(int(gx0), max(root_x0, root_x1 - int(col_w) - 2)))
+            gy0 = max(root_y0, min(int(gy0), max(root_y0, root_y1 - 28)))
         except Exception:
-            pass
+            try:
+                sw = int(self.winfo_screenwidth())
+                sh = int(self.winfo_screenheight())
+                gx0 = max(0, min(int(gx0), max(0, sw - int(col_w) - 4)))
+                gy0 = max(0, min(int(gy0), max(0, sh - 28)))
+            except Exception:
+                pass
 
         cb.configure(width=max(10, int((col_w - 12) / 8)))
         cb.pack(fill="x")
