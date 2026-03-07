@@ -837,6 +837,24 @@ class GeoCanvasEditor(tk.Tk):
             return None
         return None
 
+    def _is_depth0_display_row(self, ti: int, display_row: int) -> bool:
+        """True, если display_row соответствует абсолютной первой строке данных опыта (data_row == 0)."""
+        try:
+            mp = (getattr(self, "_grid_row_maps", {}) or {}).get(int(ti), {}) or {}
+            if mp.get(int(display_row), None) == 0:
+                return True
+            # compact collapsed meter-row case: проверяем, попадает ли depth[0] в этот метр
+            meter_n = (getattr(self, "_grid_meter_rows", {}) or {}).get(int(display_row), None)
+            if meter_n is None:
+                return False
+            t = self.tests[int(ti)]
+            d0 = self._depth_at_index(t, 0)
+            if d0 is None:
+                return False
+            return float(meter_n) <= float(d0) < (float(meter_n) + 1.0)
+        except Exception:
+            return False
+
     def _toggle_compact_1m_from_ui(self):
         self._toggle_compact_1m(bool(getattr(self, "_compact_1m_var", None).get() if getattr(self, "_compact_1m_var", None) is not None else False))
 
@@ -4430,26 +4448,29 @@ class GeoCanvasEditor(tk.Tk):
             if self._is_test_locked(int(ti)):
                 self._set_status("Опыт заблокирован")
                 return
+            if self._is_depth0_display_row(int(ti), int(row)):
+                self._begin_edit_depth0(int(ti), display_row=int(row))
+                return
             self._toggle_meter_expanded(int(field), push_undo=True)
             return
 
         # --- Single-click cell edit (ironclad) ---
         if kind == "cell" and ti is not None and row is not None:
             mp = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {})
-            start_r = (getattr(self, "_grid_start_rows", {}) or {}).get(ti, 0)
-
             # Depth: single click on the first depth cell opens "start depth" editor
             if self._is_test_locked(int(ti)):
                 self._set_status("Опыт заблокирован")
                 return
 
             if field == "depth":
+                data_row0 = mp.get(row, None)
+                if data_row0 == 0:
+                    self._begin_edit_depth0(ti, display_row=row)
+                    return
                 meter_n = self._expanded_meter_for_depth_cell(ti, row)
                 if meter_n is not None:
                     self._toggle_meter_expanded(meter_n, push_undo=True)
                     return
-                if row == start_r:
-                    self._begin_edit_depth0(ti, display_row=row)
                 return
 
             # qc/fs cells
@@ -4888,6 +4909,7 @@ class GeoCanvasEditor(tk.Tk):
         self._calc_layer_params_for_test(int(ti))
         self._sync_layers_panel()
         self._redraw()
+        self._redraw_graphs_now()
         self.schedule_graph_redraw()
         try:
             if getattr(self, "ribbon_view", None):
@@ -4921,6 +4943,7 @@ class GeoCanvasEditor(tk.Tk):
         self._calc_layer_params_for_test(int(ti))
         self._sync_layers_panel()
         self._redraw()
+        self._redraw_graphs_now()
         self.schedule_graph_redraw()
 
     def _remove_layer_from_bottom(self, ti: int):
@@ -4937,6 +4960,7 @@ class GeoCanvasEditor(tk.Tk):
         self._calc_layer_params_for_test(int(ti))
         self._sync_layers_panel()
         self._redraw()
+        self._redraw_graphs_now()
         self.schedule_graph_redraw()
 
     def _on_layer_drag_motion(self, event):
@@ -5671,21 +5695,24 @@ class GeoCanvasEditor(tk.Tk):
             if self._is_test_locked(int(ti)):
                 self._set_status("Опыт заблокирован")
                 return
+            if self._is_depth0_display_row(int(ti), int(row)):
+                self._begin_edit_depth0(int(ti), display_row=int(row))
+                return
             self._toggle_meter_expanded(int(field), push_undo=True)
             return
         if kind == "header":
             return
 
         mp = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {})
-        start_r = (getattr(self, "_grid_start_rows", {}) or {}).get(ti, 0)
-
         if field == "depth":
+            data_row0 = mp.get(row, None)
+            if data_row0 == 0:
+                self._begin_edit_depth0(ti, display_row=row)
+                return
             meter_n = self._expanded_meter_for_depth_cell(ti, row)
             if meter_n is not None:
                 self._toggle_meter_expanded(meter_n, push_undo=True)
                 return
-            if row == start_r:
-                self._begin_edit_depth0(ti, display_row=row)
             return
 
         data_row = mp.get(row, None)
