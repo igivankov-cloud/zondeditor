@@ -48,6 +48,7 @@ from src.zondeditor.domain.layers import (
     CalcMode,
     Layer,
     INSERT_LAYER_THICKNESS_M,
+    MIN_LAYER_THICKNESS_M,
     SOIL_STYLE,
     build_default_layers,
     calc_mode_for_soil,
@@ -3807,25 +3808,108 @@ class GeoCanvasEditor(tk.Tk):
             depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
         return float(depth0 + (idx * step))
 
-    def _test_depth_range(self, t) -> tuple[float, float]:
+    def _get_test_effective_depth_interval(self, ti: int) -> tuple[float, float]:
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
+            return depth0, depth0 + max(float(getattr(self, "step_m", 0.05) or 0.05), 0.05)
+        t = self.tests[ti]
+        qarr = getattr(t, "qc", []) or []
+        farr = getattr(t, "fs", []) or []
+        n = max(len(qarr), len(farr), len(getattr(t, "depth", []) or []))
         dvals = []
-        for ds in (getattr(t, "depth", []) or []):
-            dv = _parse_depth_float(ds)
-            if dv is not None:
-                dvals.append(float(dv))
-        if dvals:
-            top = min(dvals)
-            bot = max(dvals)
-            if len(dvals) >= 2:
-                step = abs(dvals[1] - dvals[0])
-            else:
-                step = float(getattr(self, "step_m", 0.05) or 0.05)
-            return top, bot + max(step, 0.05)
-        depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
-        return depth0, depth0 + 1.0
+        for i in range(n):
+            q_raw = _parse_cell_int(qarr[i]) if i < len(qarr) else None
+            f_raw = _parse_cell_int(farr[i]) if i < len(farr) else None
+            if q_raw is None and f_raw is None:
+                continue
+            dv = self._depth_at_index(t, i)
+            if dv is None:
+                continue
+            dvals.append(float(dv))
+        if not dvals:
+            for ds in (getattr(t, "depth", []) or []):
+                dv = _parse_depth_float(ds)
+                if dv is not None:
+                    dvals.append(float(dv))
+
+        if not dvals:
+            depth0 = self._depth_at_index(t, 0)
+            step = max(float(getattr(self, "step_m", 0.05) or 0.05), 0.05)
+            return float(depth0 or 0.0), float((depth0 or 0.0) + step)
+
+        dvals.sort()
+        top = float(dvals[0])
+        bot_data = float(dvals[-1])
+        step = float(getattr(self, "step_m", 0.05) or 0.05)
+        if len(dvals) >= 2:
+            dd = [abs(b - a) for a, b in zip(dvals, dvals[1:]) if abs(b - a) > 1e-9]
+            if dd:
+                step = min(dd)
+        step = max(float(step), 0.05)
+        return top, bot_data + step
+
+    def _test_depth_range(self, t) -> tuple[float, float]:
+        try:
+            ti = self.tests.index(t)
+        except Exception:
+            depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
+            return depth0, depth0 + 1.0
+        return self._get_test_effective_depth_interval(int(ti))
+
+    def _sync_layers_to_effective_interval(self, ti: int) -> None:
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return
+        t = self.tests[ti]
+        top, bot = self._get_test_effective_depth_interval(int(ti))
+        if bot <= top + 1e-9:
+            return
+        raw_layers = [layer_from_dict(layer_to_dict(x)) for x in (getattr(t, "layers", []) or [])]
+        if not raw_layers:
+            t.layers = build_default_layers(top, bot)
+            return
+
+        clipped = []
+        for lyr in normalize_layers(raw_layers):
+            lo = max(float(lyr.top_m), float(top))
+            hi = min(float(lyr.bot_m), float(bot))
+            if hi - lo <= 1e-9:
+                continue
+            clone = layer_from_dict(layer_to_dict(lyr))
+            clone.top_m = float(lo)
+            clone.bot_m = float(hi)
+            clipped.append(clone)
+
+        if not clipped:
+            t.layers = build_default_layers(top, bot)
+            return
+
+        clipped = normalize_layers(clipped)
+        clipped[0].top_m = float(top)
+        clipped[-1].bot_m = float(bot)
+        for i in range(len(clipped) - 1):
+            boundary = float(clipped[i].bot_m)
+            boundary = max(boundary, float(clipped[i].top_m) + MIN_LAYER_THICKNESS_M)
+            boundary = min(boundary, float(clipped[i + 1].bot_m) - MIN_LAYER_THICKNESS_M)
+            if boundary <= float(clipped[i].top_m) + 1e-9 or boundary >= float(clipped[i + 1].bot_m) - 1e-9:
+                t.layers = build_default_layers(top, bot)
+                return
+            clipped[i].bot_m = float(boundary)
+            clipped[i + 1].top_m = float(boundary)
+
+        try:
+            t.layers = normalize_layers(clipped)
+            validate_layers(t.layers)
+        except Exception:
+            t.layers = build_default_layers(top, bot)
 
     def _ensure_test_layers(self, t) -> list[Layer]:
         layers = self.layer_store.get_layers(t, self._test_depth_range)
+        try:
+            ti = self.tests.index(t)
+            self._sync_layers_to_effective_interval(int(ti))
+            layers = self.layer_store.get_layers(t, self._test_depth_range)
+        except Exception:
+            pass
         for lyr in layers:
             self._apply_ige_to_layer(lyr)
         return layers
@@ -3898,20 +3982,71 @@ class GeoCanvasEditor(tk.Tk):
         for ti in range(len(self.tests or [])):
             self._calc_layer_params_for_test(ti)
 
-    def _depth_to_canvas_y(self, depth_m: float) -> float | None:
+    def _depth_to_canvas_y(self, depth_m: float, ti: int | None = None) -> float | None:
         d = float(depth_m)
         units = getattr(self, "_grid_units", []) or []
         base_grid = getattr(self, "_grid_base", []) or []
+        disp_map = None
+        t = None
+        top_lim = None
+        bot_lim = None
+        if ti is not None and 0 <= int(ti) < len(getattr(self, "tests", []) or []):
+            ti = int(ti)
+            t = self.tests[ti]
+            disp_map = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {}) or {}
+            top_lim, bot_lim = self._get_test_effective_depth_interval(ti)
+            if d < top_lim - 1e-6 or d > bot_lim + 1e-6:
+                return None
 
         points: list[tuple[float, float]] = []
         for disp_r, unit in enumerate(units):
             y0r, y1r = self._row_y_bounds(disp_r)
             if unit[0] == "meter":
                 meter_n = float(unit[1])
+                if top_lim is not None and bot_lim is not None:
+                    seg_top = max(meter_n, float(top_lim))
+                    seg_bot = min(meter_n + 1.0, float(bot_lim))
+                    if seg_bot <= seg_top + 1e-9:
+                        continue
+                    yy0 = y0r + (seg_top - meter_n) * (y1r - y0r)
+                    yy1 = y0r + (seg_bot - meter_n) * (y1r - y0r)
+                    points.append((seg_top, yy0))
+                    points.append((seg_bot, yy1))
+                    continue
                 points.append((meter_n, y0r))
                 points.append((meter_n + 1.0, y1r))
                 continue
             if unit[0] != "row":
+                continue
+            if disp_map is not None:
+                di = disp_map.get(disp_r)
+                if di is None or t is None:
+                    continue
+                cur = self._depth_at_index(t, int(di))
+                if cur is None:
+                    continue
+                prev = self._depth_at_index(t, int(di) - 1) if int(di) > 0 else None
+                nxt = self._depth_at_index(t, int(di) + 1)
+                step = float(getattr(self, "step_m", 0.05) or 0.05)
+                if prev is not None:
+                    step = max(step, abs(float(cur) - float(prev)))
+                elif nxt is not None:
+                    step = max(step, abs(float(nxt) - float(cur)))
+                if prev is not None:
+                    top_d = (float(prev) + float(cur)) * 0.5
+                else:
+                    top_d = float(cur) - (step * 0.5)
+                if nxt is not None:
+                    bot_d = (float(cur) + float(nxt)) * 0.5
+                else:
+                    bot_d = float(cur) + (step * 0.5)
+                if top_lim is not None and bot_lim is not None:
+                    top_d = max(top_d, float(top_lim))
+                    bot_d = min(bot_d, float(bot_lim))
+                if bot_d <= top_d + 1e-9:
+                    continue
+                points.append((top_d, y0r))
+                points.append((bot_d, y1r))
                 continue
             try:
                 gi = int(unit[1])
@@ -4129,7 +4264,7 @@ class GeoCanvasEditor(tk.Tk):
             gwl_val = float(str(gwl).replace(",", "."))
         except Exception:
             return
-        y = self._depth_to_canvas_y(gwl_val)
+        y = self._depth_to_canvas_y(gwl_val, ti=ti)
         if y is None:
             return
         x0, x1, y0, y1 = rect
@@ -4160,6 +4295,15 @@ class GeoCanvasEditor(tk.Tk):
                 continue
             x0, x1, y0, y1 = rect
             t = self.tests[ti]
+            d_top, d_bot = self._get_test_effective_depth_interval(int(ti))
+            y_top = self._depth_to_canvas_y(d_top, ti=ti)
+            y_bot = self._depth_to_canvas_y(d_bot, ti=ti)
+            if y_top is None or y_bot is None:
+                continue
+            py0 = min(y_top, y_bot)
+            py1 = max(y_top, y_bot)
+            if py1 <= py0 + 1e-9:
+                continue
 
             y_points = []
             qc_vals = []
@@ -4176,6 +4320,9 @@ class GeoCanvasEditor(tk.Tk):
                     di = disp_map.get(disp_r)
                     if di is None:
                         continue
+                    dv = self._depth_at_index(t, int(di))
+                    if dv is None or dv < d_top - 1e-9 or dv > d_bot + 1e-9:
+                        continue
                     q_raw = _parse_cell_int(qarr[di]) if di < len(qarr) else None
                     f_raw = _parse_cell_int(farr[di]) if di < len(farr) else None
                     if q_raw is None and f_raw is None:
@@ -4188,7 +4335,7 @@ class GeoCanvasEditor(tk.Tk):
                     meter_n = int(unit[1])
                     for di in range(max(len(qarr), len(farr))):
                         dv = self._depth_at_index(t, di)
-                        if dv is None or not (meter_n <= dv < (meter_n + 1)):
+                        if dv is None or dv < d_top - 1e-9 or dv > d_bot + 1e-9 or not (meter_n <= dv < (meter_n + 1)):
                             continue
                         q_raw = _parse_cell_int(qarr[di]) if di < len(qarr) else None
                         f_raw = _parse_cell_int(farr[di]) if di < len(farr) else None
@@ -4200,11 +4347,11 @@ class GeoCanvasEditor(tk.Tk):
                         qc_vals.append(float(qc_mpa))
                         fs_vals.append(float(fs_kpa))
 
-            plot_rect = (x0, x1, y0, y1)
+            plot_rect = (x0, x1, py0, py1)
             tag_axes = ("graph_axes", f"graph_axes_{ti}")
             tag_overlay = ("layers_overlay", f"layers_overlay_{ti}")
-            self.canvas.create_rectangle(x0, y0, x1, y1, fill="#fbfdff", outline=GUI_GRID, tags=tag_axes)
-            labels = self._draw_layers_overlay_for_test(ti, plot_rect, self._depth_to_canvas_y, tag_overlay) or []
+            self.canvas.create_rectangle(x0, py0, x1, py1, fill="#fbfdff", outline=GUI_GRID, tags=tag_axes)
+            labels = self._draw_layers_overlay_for_test(ti, plot_rect, lambda dv, _ti=ti: self._depth_to_canvas_y(dv, ti=_ti), tag_overlay) or []
             if not y_points:
                 self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
                 self._draw_groundwater_line_for_test(ti, plot_rect)
@@ -4252,8 +4399,8 @@ class GeoCanvasEditor(tk.Tk):
             self._layer_handle_hitbox.append({"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (plus_x - 10, y_pos - 10, plus_x + 10, y_pos + 10)})
 
         if layers:
-            top_y = self._depth_to_canvas_y(float(layers[0].top_m))
-            bot_y = self._depth_to_canvas_y(float(layers[-1].bot_m))
+            top_y = self._depth_to_canvas_y(float(layers[0].top_m), ti=ti)
+            bot_y = self._depth_to_canvas_y(float(layers[-1].bot_m), ti=ti)
             if top_y is not None:
                 _draw_plus(f"layer_plus_top_{ti}", top_y, 0, "plus_top")
             if bot_y is not None:
@@ -4261,7 +4408,7 @@ class GeoCanvasEditor(tk.Tk):
 
         for bi in range(1, len(layers)):
             boundary = layers[bi].top_m
-            y = self._depth_to_canvas_y(boundary)
+            y = self._depth_to_canvas_y(boundary, ti=ti)
             if y is None:
                 continue
             h_tag = f"layer_handle_{ti}_{bi}"
@@ -5756,10 +5903,10 @@ class GeoCanvasEditor(tk.Tk):
         # список (depth, idx)
         pairs = []
         for i in range(n):
-            d = pdepth(t.depth[i])
+            d = self._depth_at_index(t, i)
             if d is None:
                 continue
-            pairs.append((d, i))
+            pairs.append((float(d), i))
         if not pairs:
             return
 
@@ -5861,23 +6008,27 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
 
-        # K4: после удаления строк пересчитываем начальную глубину опыта по первой строке (на всякий случай)
+        # После удаления пересчитываем верх опыта и синхронизируем пер-опытную начальную глубину.
         try:
-            if getattr(self, "geo_kind", "K2") == "K4":
-                tid = int(getattr(t, "tid", 0) or 0)
-                d0 = None
-                for dv in (getattr(t, "depth", []) or []):
-                    try:
-                        dd = float(str(dv).strip().replace(',', '.'))
-                    except Exception:
-                        dd = None
-                    if dd is not None:
-                        d0 = dd
-                        break
-                if d0 is not None and tid:
-                    self.depth0_by_tid[tid] = float(d0)
-                elif tid and hasattr(self, "depth0_by_tid"):
-                    self.depth0_by_tid.pop(tid, None)
+            tid = int(getattr(t, "tid", 0) or 0)
+            d0 = None
+            for dv in (getattr(t, "depth", []) or []):
+                try:
+                    dd = float(str(dv).strip().replace(',', '.'))
+                except Exception:
+                    dd = None
+                if dd is not None:
+                    d0 = dd
+                    break
+            if d0 is not None and tid:
+                self.depth0_by_tid[tid] = float(d0)
+            elif tid and hasattr(self, "depth0_by_tid"):
+                self.depth0_by_tid.pop(tid, None)
+        except Exception:
+            pass
+
+        try:
+            self._sync_layers_to_effective_interval(int(ti))
         except Exception:
             pass
 
@@ -5889,7 +6040,7 @@ class GeoCanvasEditor(tk.Tk):
         self.schedule_graph_redraw()
         # если опыт не помещается на экран — прокручиваем по X так, чтобы он попал в видимую область
         try:
-            self._ensure_cell_visible(insert_at, 0, 'depth', pad=12)
+            self._ensure_cell_visible(ti, 0, 'depth', pad=12)
         except Exception:
             try:
                 self.canvas.xview_moveto(1.0)
@@ -6244,7 +6395,18 @@ class GeoCanvasEditor(tk.Tk):
         delta = new0 - old0
         if abs(delta) < 1e-9:
             t.depth[0] = f"{new0:.2f}"
+            try:
+                tid = int(getattr(t, "tid", 0) or 0)
+                if tid:
+                    self.depth0_by_tid[tid] = float(new0)
+            except Exception:
+                pass
+            try:
+                self._sync_layers_to_effective_interval(int(ti))
+            except Exception:
+                pass
             self._redraw()
+            self.schedule_graph_redraw()
             return
 
         new_depth = []
@@ -6256,10 +6418,23 @@ class GeoCanvasEditor(tk.Tk):
                 new_depth.append(f"{(d + delta):.2f}")
         t.depth = new_depth
 
+        try:
+            tid = int(getattr(t, "tid", 0) or 0)
+            if tid:
+                self.depth0_by_tid[tid] = float(new0)
+        except Exception:
+            pass
+
+        try:
+            self._sync_layers_to_effective_interval(int(ti))
+        except Exception:
+            pass
+
         # Не сбрасываем подсветку/флаги при сдвиге глубины: qc/fs не менялись
         # (иначе пропадает фиолетовая отметка ручных правок и др. подсветки)
         self._redraw()
         self.schedule_graph_redraw()
+
     def _end_edit(self, commit: bool):
         if not self._editing:
             return
