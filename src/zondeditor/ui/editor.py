@@ -4607,7 +4607,6 @@ class GeoCanvasEditor(tk.Tk):
         self._hide_layer_ige_picker()
         win = tk.Toplevel(self)
         win.overrideredirect(True)
-        win.attributes("-topmost", True)
         values = []
         ids = sorted(self.ige_registry.keys(), key=self._ige_id_to_num)
         for ige_id in ids:
@@ -4924,12 +4923,13 @@ class GeoCanvasEditor(tk.Tk):
             elif kind == "layer_plus_bottom":
                 tip_text = "Добавить нижний слой 1.00 м вверх"
             elif kind == "layer_interval":
-                tip_text = "Выбрать ИГЭ"
+                tip_text = None
             elif kind == "layer_boundary_depth_edit":
                 tip_text = "Ввести глубину границы"
             else:
                 tip_text = "Перетащить границу слоя"
-            self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=700)
+            if tip_text:
+                self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=700)
             self.canvas.configure(cursor="hand2")
         else:
             self._set_hover(None)
