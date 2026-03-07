@@ -4531,6 +4531,26 @@ class GeoCanvasEditor(tk.Tk):
             if self._is_test_locked(int(ti)):
                 self._set_status("Опыт заблокирован")
                 return
+            # Fallback: если hit-test попал в interval рядом с чипом ИГЭ,
+            # открываем picker как для label-клика.
+            try:
+                cx = float(self.canvas.canvasx(event.x))
+                cy = float(self.canvas.canvasy(event.y))
+                label_hit = None
+                for hit in (getattr(self, "_layer_label_hitbox", []) or []):
+                    if int(hit.get("ti", -1)) != int(ti):
+                        continue
+                    bx0, by0, bx1, by1 = hit.get("bbox", (0.0, 0.0, 0.0, 0.0))
+                    if (bx0 - 12.0) <= cx <= (bx1 + 12.0) and (by0 - 6.0) <= cy <= (by1 + 6.0):
+                        label_hit = (float(hit.get("depth", 0.0)), (bx0, by0, bx1, by1))
+                        break
+                if label_hit is not None:
+                    depth_hit, bbox_hit = label_hit
+                    self._show_ige_picker_at_click(event, int(ti), float(depth_hit), anchor_bbox=bbox_hit)
+                    return
+            except Exception:
+                pass
+
             # Клик по телу слоя только выбирает опыт/слой, но не открывает picker ИГЭ.
             try:
                 layers = self._ensure_test_layers(self.tests[int(ti)])
