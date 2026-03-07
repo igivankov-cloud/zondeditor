@@ -3824,6 +3824,38 @@ class GeoCanvasEditor(tk.Tk):
         depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
         return depth0, depth0 + 1.0
 
+
+    def _test_effective_data_depth_range(self, t) -> tuple[float, float]:
+        """Фактический диапазон данных (по непустым qc/fs) для отрисовки оверлея."""
+        top_fallback, bot_fallback = self._test_depth_range(t)
+        qarr = getattr(t, "qc", []) or []
+        farr = getattr(t, "fs", []) or []
+        first = None
+        last = None
+        for i in range(max(len(qarr), len(farr))):
+            q_raw = _parse_cell_int(qarr[i]) if i < len(qarr) else None
+            f_raw = _parse_cell_int(farr[i]) if i < len(farr) else None
+            if q_raw is None and f_raw is None:
+                continue
+            if first is None:
+                first = i
+            last = i
+        if first is None or last is None:
+            return float(top_fallback), float(bot_fallback)
+        top = float(self._depth_at_index(t, int(first)))
+        bot = float(self._depth_at_index(t, int(last)))
+        step = float(getattr(self, "step_m", 0.05) or 0.05)
+        d_arr = getattr(t, "depth", []) or []
+        if int(last) + 1 < len(d_arr):
+            dn = _parse_depth_float(d_arr[int(last) + 1])
+            dl = _parse_depth_float(d_arr[int(last)])
+            if dn is not None and dl is not None:
+                step = max(0.01, abs(float(dn) - float(dl)))
+        bot = bot + max(step, 0.05)
+        if bot <= top:
+            return float(top_fallback), float(bot_fallback)
+        return top, bot
+
     def _ensure_test_layers(self, t) -> list[Layer]:
         raw = list(getattr(t, "layers", []) or [])
         layers: list[Layer] = []
@@ -4020,7 +4052,10 @@ class GeoCanvasEditor(tk.Tk):
 
 
     def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, color: str, hatch: str, tags):
+        drew_any = False
+
         def _draw_diag_segment(b: float, slope: int):
+            nonlocal drew_any
             pts = []
             if slope > 0:
                 # y = x + b
@@ -4056,6 +4091,7 @@ class GeoCanvasEditor(tk.Tk):
                     uniq.append(p)
             if len(uniq) >= 2:
                 self.canvas.create_line(uniq[0][0], uniq[0][1], uniq[1][0], uniq[1][1], fill=color, width=1, tags=tags)
+                drew_any = True
 
         spacing = 10 if hatch in ("diag_sparse", "dot") else 6
         if hatch == "cross":
@@ -4068,9 +4104,14 @@ class GeoCanvasEditor(tk.Tk):
             for yy in range(int(y0) + 3, int(y1), spacing):
                 for xx in range(int(x0) + 3, int(x1), spacing):
                     self.canvas.create_rectangle(xx, yy, xx + 1, yy + 1, outline=color, fill=color, tags=tags)
+                    drew_any = True
             return
         for offs in range(int(y0) - int(x1), int(y1 + x1), spacing):
             _draw_diag_segment(float(offs), +1)
+
+        if not drew_any and y1 > y0 and x1 > x0:
+            ym = (y0 + y1) * 0.5
+            self.canvas.create_line(x0, ym, x1, ym, fill=color, width=1, tags=tags)
 
     def _draw_layers_overlay_for_test(self, ti: int, plot_rect, depth_to_y, tags):
         t = self.tests[ti]
@@ -4085,10 +4126,17 @@ class GeoCanvasEditor(tk.Tk):
         if not callable(depth_to_y):
             self._debug_log(f"layers_overlay: invalid depth_to_y for ti={ti}")
             return
+        data_top, data_bot = self._test_effective_data_depth_range(t)
+        data_top = float(data_top)
+        data_bot = float(data_bot)
         label_spans = []
         for lyr in layers:
-            ly0 = depth_to_y(float(lyr.top_m))
-            ly1 = depth_to_y(float(lyr.bot_m))
+            lt = max(data_top, float(lyr.top_m))
+            lb = min(data_bot, float(lyr.bot_m))
+            if lb - lt <= 1e-9:
+                continue
+            ly0 = depth_to_y(lt)
+            ly1 = depth_to_y(lb)
             if ly0 is None or ly1 is None:
                 self._debug_log(f"layers_overlay: depth_to_y none ti={ti}, layer={lyr.ige_num}, top={lyr.top_m}, bot={lyr.bot_m}")
                 continue
@@ -4105,7 +4153,7 @@ class GeoCanvasEditor(tk.Tk):
             if hatch:
                 hatch_color = style.get("hatch_color") or "#000000"
                 self._draw_layer_hatch(x0, ty0, x1, ty1, color=hatch_color, hatch=hatch, tags=tags)
-            self._layer_plot_hitbox.append({"kind": "interval", "ti": ti, "ige_id": ige_id, "top": float(lyr.top_m), "bot": float(lyr.bot_m), "bbox": (x0, ty0, x1, ty1)})
+            self._layer_plot_hitbox.append({"kind": "interval", "ti": ti, "ige_id": ige_id, "top": float(lt), "bot": float(lb), "bbox": (x0, ty0, x1, ty1)})
             label_spans.append({
                 "x0": x0,
                 "x1": x1,
@@ -4113,7 +4161,7 @@ class GeoCanvasEditor(tk.Tk):
                 "y1": ty1,
                 "ige": str(ige_id),
                 "ti": int(ti),
-                "depth": (float(lyr.top_m) + float(lyr.bot_m)) * 0.5,
+                "depth": (float(lt) + float(lb)) * 0.5,
             })
         return label_spans
 
@@ -4752,34 +4800,30 @@ class GeoCanvasEditor(tk.Tk):
         current_label = f"{current_ige} ({current_soil})"
         if current_label in values:
             cb.set(current_label)
-        # Для label-клика (особенно в свернутом режиме) — открываем ровно по bbox надписи.
+        gx0 = int(event.x_root)
+        gy0 = int(event.y_root)
+        col_w = 240
+        try:
+            rect = self._graph_rect_for_test(int(ti))
+            if rect:
+                x0, x1, _y0, _y1 = rect
+                gx0 = int(self.canvas.winfo_rootx() + float(x0))
+                col_w = max(80, int(float(x1) - float(x0)))
+        except Exception:
+            pass
+
+        # В обоих режимах ширина = ширина колонки слоя;
+        # в свернутом режиме вертикаль привязываем к bbox надписи, чтобы popup не "улетал".
         if anchor_bbox is not None:
             try:
-                bx0, by0, bx1, by1 = anchor_bbox
-                gx0 = int(self.canvas.winfo_rootx() - self.winfo_rootx() + float(bx0))
-                gy0 = int(self.canvas.winfo_rooty() - self.winfo_rooty() + float(by0))
-                col_w = max(80, int(float(bx1) - float(bx0)))
-                cb.configure(width=max(10, int((col_w - 8) / 8)))
-                cb.pack(fill="x")
-                win.geometry(f"{col_w}x24+{gx0}+{gy0}")
+                _bx0, by0, _bx1, _by1 = anchor_bbox
+                gy0 = int(self.canvas.winfo_rooty() + float(by0))
             except Exception:
-                anchor_bbox = None
+                gy0 = int(event.y_root)
 
-        # Обычный клик по интервалу (развернутый режим): по ширине всей колонки.
-        if anchor_bbox is None:
-            gx0 = event.x_root
-            col_w = 240
-            try:
-                rect = self._graph_rect_for_test(int(ti))
-                if rect:
-                    x0, x1, _y0, _y1 = rect
-                    gx0 = int(self.canvas.winfo_rootx() - self.winfo_rootx() + float(x0))
-                    col_w = max(80, int(float(x1) - float(x0)))
-            except Exception:
-                pass
-            cb.configure(width=max(10, int((col_w - 12) / 8)))
-            cb.pack(fill="x")
-            win.geometry(f"{col_w}x24+{gx0}+{event.y_root}")
+        cb.configure(width=max(10, int((col_w - 12) / 8)))
+        cb.pack(fill="x")
+        win.geometry(f"{col_w}x24+{gx0}+{gy0}")
 
         def _apply(_ev=None):
             label = str(cb.get() or "")
