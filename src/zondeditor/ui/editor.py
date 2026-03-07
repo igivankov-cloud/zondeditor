@@ -1545,7 +1545,7 @@ class GeoCanvasEditor(tk.Tk):
         for _k in ("<Up>", "<Down>", "<Left>", "<Right>"):
             self.bind(_k, self._on_arrow_key)
         self.canvas.bind("<Motion>", self._on_motion)
-        self.canvas.bind("<Leave>", lambda _e: self._set_hover(None))
+        self.canvas.bind("<Leave>", lambda _e: (self._set_hover(None), self.canvas.configure(cursor=""), self.hcanvas.configure(cursor="")))
 
         # события шапки (клики по иконкам/галочке)
         self.hcanvas.bind("<Button-1>", self._on_left_click)
@@ -1554,7 +1554,7 @@ class GeoCanvasEditor(tk.Tk):
         self.hcanvas.bind("<Button-4>", lambda e: self._on_mousewheel_linux_x(-1))
         self.hcanvas.bind("<Button-5>", lambda e: self._on_mousewheel_linux_x(1))
         self.hcanvas.bind("<Motion>", self._on_motion)
-        self.hcanvas.bind("<Leave>", lambda _e: self._set_hover(None))
+        self.hcanvas.bind("<Leave>", lambda _e: (self._set_hover(None), self.canvas.configure(cursor=""), self.hcanvas.configure(cursor="")))
         self._ctx_menu = tk.Menu(self, tearoff=0)
         self._ctx_menu.add_command(label="Удалить выше (вкл.)", command=self._ctx_delete_above)
         self._ctx_menu.add_command(label="Удалить ниже (вкл.)", command=self._ctx_delete_below)
@@ -4398,12 +4398,13 @@ class GeoCanvasEditor(tk.Tk):
                 return
 
             if field == "depth":
+                data_row0 = mp.get(row, None)
+                if data_row0 == 0:
+                    self._begin_edit_depth0(ti, display_row=row)
+                    return
                 meter_n = self._expanded_meter_for_depth_cell(ti, row)
                 if meter_n is not None:
                     self._toggle_meter_expanded(meter_n, push_undo=True)
-                    return
-                if row == start_r:
-                    self._begin_edit_depth0(ti, display_row=row)
                 return
 
             # qc/fs cells
@@ -4897,44 +4898,45 @@ class GeoCanvasEditor(tk.Tk):
 
     def _on_motion(self, event):
         self._evt_widget = event.widget
+        self._hide_canvas_tip()
+
+        def _set_canvas_cursor(cur: str):
+            try:
+                self.canvas.configure(cursor=cur)
+            except Exception:
+                pass
+            try:
+                self.hcanvas.configure(cursor=cur)
+            except Exception:
+                pass
+
         hit = self._hit_test(event.x, event.y)
         if not hit:
             self._set_hover(None)
-            self.canvas.configure(cursor="")
+            _set_canvas_cursor("")
             return
         kind, ti, row, field = hit
         if kind in ("lock", "edit", "dup", "trash"):
             self._set_hover((kind, ti))
-            tip_text = "Блокировать/разблокировать" if kind == "lock" else ("Редактировать" if kind == "edit" else ("Копировать" if kind == "dup" else "Удалить"))
-            self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=1000)
+            _set_canvas_cursor("hand2")
         elif kind == "export":
             self._set_hover((kind, ti))
-            try:
-                ex_on = bool(getattr(self.tests[ti], "export_on", True))
-            except Exception:
-                ex_on = True
-            tip_text = "Исключить из экспорта" if ex_on else "Экспортировать"
-            self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=1000)
+            _set_canvas_cursor("hand2")
         elif kind in ("layer_boundary", "layer_plus", "layer_plus_top", "layer_plus_bottom", "layer_interval", "layer_boundary_depth_edit"):
             self._set_hover(None)
-            if kind == "layer_plus":
-                tip_text = "Добавить средний слой 1.00 м"
-            elif kind == "layer_plus_top":
-                tip_text = "Добавить верхний слой 1.00 м вниз"
-            elif kind == "layer_plus_bottom":
-                tip_text = "Добавить нижний слой 1.00 м вверх"
-            elif kind == "layer_interval":
-                tip_text = None
-            elif kind == "layer_boundary_depth_edit":
-                tip_text = "Ввести глубину границы"
-            else:
-                tip_text = "Перетащить границу слоя"
-            if tip_text:
-                self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=700)
-            self.canvas.configure(cursor="hand2")
+            is_active = (ti is not None) and (not self._is_test_locked(int(ti)))
+            _set_canvas_cursor("hand2" if is_active else "")
+        elif kind == "cell" and field == "depth":
+            self._set_hover(None)
+            is_toggle = False
+            try:
+                is_toggle = (ti is not None) and (not self._is_test_locked(int(ti))) and (self._expanded_meter_for_depth_cell(int(ti), int(row)) is not None)
+            except Exception:
+                is_toggle = False
+            _set_canvas_cursor("hand2" if is_toggle else "")
         else:
             self._set_hover(None)
-            self.canvas.configure(cursor="")
+            _set_canvas_cursor("")
 
     def _is_test_locked(self, ti: int) -> bool:
         try:
@@ -5346,7 +5348,7 @@ class GeoCanvasEditor(tk.Tk):
 
                 if is_meter_row:
                     depth_fill = "#f3f6fb"
-                elif r == start_r and has_row:
+                elif has_row and data_i == 0:
                     depth_fill = "white"   # editable cell
                 else:
                     depth_fill = (GUI_DEPTH_BG if has_row else "white")
@@ -5548,12 +5550,14 @@ class GeoCanvasEditor(tk.Tk):
         start_r = (getattr(self, "_grid_start_rows", {}) or {}).get(ti, 0)
 
         if field == "depth":
+            data_row0 = mp.get(row, None)
+            if data_row0 == 0:
+                self._begin_edit_depth0(ti, display_row=row)
+                return
             meter_n = self._expanded_meter_for_depth_cell(ti, row)
             if meter_n is not None:
                 self._toggle_meter_expanded(meter_n, push_undo=True)
                 return
-            if row == start_r:
-                self._begin_edit_depth0(ti, display_row=row)
             return
 
         data_row = mp.get(row, None)
@@ -5697,13 +5701,32 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 return None
 
-        # глубина по сетке, если есть
+        # Глубина выбранной строки (display_row -> индекс строки опыта -> depth).
         target_depth = None
-        if getattr(self, '_grid', None) and 0 <= display_row < len(self._grid):
-            target_depth = self._grid[display_row]
-        else:
-            if 0 <= display_row < len(getattr(t, 'depth', []) or []):
-                target_depth = pdepth(t.depth[display_row])
+        try:
+            mp = (getattr(self, '_grid_row_maps', {}) or {}).get(ti, {}) or {}
+            data_i = mp.get(int(display_row), None)
+            if data_i is not None and 0 <= int(data_i) < len(getattr(t, 'depth', []) or []):
+                target_depth = pdepth(t.depth[int(data_i)])
+        except Exception:
+            target_depth = None
+
+        # Fallback для старых путей/состояний кеша сетки.
+        if target_depth is None:
+            try:
+                units = getattr(self, '_grid_units', []) or []
+                base = getattr(self, '_grid_base', []) or []
+                if 0 <= int(display_row) < len(units):
+                    unit = units[int(display_row)]
+                    if unit and unit[0] == 'row':
+                        gi = int(unit[1])
+                        if 0 <= gi < len(base):
+                            target_depth = pdepth(base[gi])
+            except Exception:
+                target_depth = None
+
+        if target_depth is None and 0 <= int(display_row) < len(getattr(t, 'depth', []) or []):
+            target_depth = pdepth(t.depth[int(display_row)])
 
         if target_depth is None:
             return
@@ -5739,6 +5762,87 @@ class GeoCanvasEditor(tk.Tk):
             r0, r1 = min(inds), max(inds)
 
         self._delete_range_indices(ti, r0, r1)
+
+    def _sync_test_after_trim_or_depth0_change(self, ti: int, *, depth_shift: float = 0.0):
+        """Локальная синхронизация одного опыта после trim/depth[0] изменения."""
+        if ti < 0 or ti >= len(self.tests):
+            return
+        t = self.tests[ti]
+
+        # 1) Сдвиг слоёв вместе с опытом при ручном изменении depth[0].
+        if abs(float(depth_shift or 0.0)) > 1e-12:
+            shifted = []
+            for lyr in (getattr(t, "layers", []) or []):
+                try:
+                    c = layer_from_dict(layer_to_dict(lyr))
+                except Exception:
+                    continue
+                c.top_m = float(c.top_m) + float(depth_shift)
+                c.bot_m = float(c.bot_m) + float(depth_shift)
+                shifted.append(c)
+            if shifted:
+                t.layers = shifted
+
+        # 2) Фактический диапазон глубин опыта по текущим строкам.
+        top, bot = self._test_depth_range(t)
+        top = float(top)
+        bot = float(bot)
+
+        # 3) Синхронизируем depth0_by_tid по первой валидной глубине текущего опыта.
+        try:
+            tid = int(getattr(t, "tid", 0) or 0)
+            if tid:
+                d0 = None
+                for dv in (getattr(t, "depth", []) or []):
+                    d0 = _parse_depth_float(dv)
+                    if d0 is not None:
+                        break
+                if d0 is not None:
+                    self.depth0_by_tid[tid] = float(d0)
+                elif hasattr(self, "depth0_by_tid"):
+                    self.depth0_by_tid.pop(tid, None)
+        except Exception:
+            pass
+
+        # 4) Подрезаем слои только у текущего опыта под новый диапазон.
+        try:
+            src_layers = []
+            for lyr in (getattr(t, "layers", []) or []):
+                try:
+                    src_layers.append(layer_from_dict(layer_to_dict(lyr)))
+                except Exception:
+                    continue
+            src_layers.sort(key=lambda x: float(x.top_m))
+
+            clipped = []
+            for lyr in src_layers:
+                lt = max(float(lyr.top_m), top)
+                lb = min(float(lyr.bot_m), bot)
+                if lb - lt <= 1e-9:
+                    continue
+                lyr.top_m = lt
+                lyr.bot_m = lb
+                clipped.append(lyr)
+
+            if not clipped:
+                t.layers = build_default_layers(top, bot)
+            else:
+                clipped[0].top_m = top
+                for i in range(1, len(clipped)):
+                    clipped[i].top_m = float(clipped[i - 1].bot_m)
+                clipped[-1].bot_m = bot
+                t.layers = normalize_layers(clipped)
+        except Exception:
+            t.layers = build_default_layers(top, bot)
+
+        try:
+            self._calc_layer_params_for_test(int(ti))
+        except Exception:
+            pass
+        try:
+            self._sync_layers_panel()
+        except Exception:
+            pass
 
     def _delete_range_indices(self, ti, r0, r1):
         if ti < 0 or ti >= len(self.tests):
@@ -5821,40 +5925,27 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
 
-        # K4: после удаления строк пересчитываем начальную глубину опыта по первой строке (на всякий случай)
+        self._sync_test_after_trim_or_depth0_change(int(ti))
+
+        # Сохраняем текущую горизонтальную позицию, чтобы delete не уводил вправо.
+        xview_before = None
         try:
-            if getattr(self, "geo_kind", "K2") == "K4":
-                tid = int(getattr(t, "tid", 0) or 0)
-                d0 = None
-                for dv in (getattr(t, "depth", []) or []):
-                    try:
-                        dd = float(str(dv).strip().replace(',', '.'))
-                    except Exception:
-                        dd = None
-                    if dd is not None:
-                        d0 = dd
-                        break
-                if d0 is not None and tid:
-                    self.depth0_by_tid[tid] = float(d0)
-                elif tid and hasattr(self, "depth0_by_tid"):
-                    self.depth0_by_tid.pop(tid, None)
+            xview_before = tuple(self.canvas.xview())
         except Exception:
-            pass
+            xview_before = None
 
         try:
             self._build_grid()
         except Exception:
             pass
         self._redraw()
-        self.schedule_graph_redraw()
-        # если опыт не помещается на экран — прокручиваем по X так, чтобы он попал в видимую область
-        try:
-            self._ensure_cell_visible(insert_at, 0, 'depth', pad=12)
-        except Exception:
+        if xview_before is not None:
             try:
-                self.canvas.xview_moveto(1.0)
+                self.canvas.xview_moveto(float(xview_before[0]))
+                self._sync_header_body_after_scroll()
             except Exception:
                 pass
+        self.schedule_graph_redraw()
 
         try:
             self.status.set(f"Удалено строк: {r1 - r0 + 1} (опыт {ti+1})")
@@ -6213,6 +6304,8 @@ class GeoCanvasEditor(tk.Tk):
             else:
                 new_depth.append(f"{(d + delta):.2f}")
         t.depth = new_depth
+
+        self._sync_test_after_trim_or_depth0_change(int(ti), depth_shift=float(delta))
 
         # Не сбрасываем подсветку/флаги при сдвиге глубины: qc/fs не менялись
         # (иначе пропадает фиолетовая отметка ручных правок и др. подсветки)
