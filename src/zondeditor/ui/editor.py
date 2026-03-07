@@ -3848,6 +3848,46 @@ class GeoCanvasEditor(tk.Tk):
             self._apply_ige_to_layer(lyr)
         return layers
 
+    def _sync_layers_to_test_depth_range(self, ti: int, *, depth_shift: float = 0.0):
+        """Локально синхронизирует слои одного опыта с актуальным диапазоном depth."""
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return
+        t = self.tests[int(ti)]
+        layers = [layer_from_dict(layer_to_dict(x)) for x in (getattr(t, "layers", []) or [])]
+        if not layers:
+            return
+
+        if abs(float(depth_shift or 0.0)) > 1e-12:
+            for lyr in layers:
+                lyr.top_m = float(lyr.top_m) + float(depth_shift)
+                lyr.bot_m = float(lyr.bot_m) + float(depth_shift)
+
+        top, bot = self._test_depth_range(t)
+        top = float(top)
+        bot = float(bot)
+
+        clipped: list[Layer] = []
+        for lyr in sorted(layers, key=lambda x: float(x.top_m)):
+            lt = max(top, float(lyr.top_m))
+            lb = min(bot, float(lyr.bot_m))
+            if lb - lt <= 1e-9:
+                continue
+            lyr.top_m = lt
+            lyr.bot_m = lb
+            clipped.append(lyr)
+
+        if not clipped:
+            t.layers = build_default_layers(top, bot)
+        else:
+            clipped[0].top_m = top
+            for i in range(1, len(clipped)):
+                clipped[i].top_m = float(clipped[i - 1].bot_m)
+            clipped[-1].bot_m = bot
+            t.layers = normalize_layers(clipped)
+
+        self._calc_layer_params_for_test(int(ti))
+        self._sync_layers_panel()
+
 
     def _ensure_layers_defaults_for_all_tests(self):
         changed = self.layer_store.ensure_defaults_for_all_tests(self.tests, self._test_depth_range)
@@ -4669,14 +4709,26 @@ class GeoCanvasEditor(tk.Tk):
             ent = self._ensure_ige_entry(ige_id)
             soil_label = str(ent.get("soil_type") or "не назначен")
             values.append(f"{ige_id} ({soil_label})")
-        cb = ttk.Combobox(win, state="readonly", width=26, values=values)
+        cb = ttk.Combobox(win, state="readonly", values=values)
         current_ige = self._layer_ige_id(target)
         current_soil = str(self._ensure_ige_entry(current_ige).get("soil_type") or "не назначен")
         current_label = f"{current_ige} ({current_soil})"
         if current_label in values:
             cb.set(current_label)
-        cb.pack()
-        win.geometry(f"+{event.x_root}+{event.y_root}")
+        # Открываем picker по ширине всей колонки графики/слоёв текущего опыта.
+        gx0 = event.x_root
+        col_w = 240
+        try:
+            rect = self._graph_rect_for_test(int(ti))
+            if rect:
+                x0, x1, _y0, _y1 = rect
+                gx0 = int(self.canvas.winfo_rootx() - self.winfo_rootx() + float(x0))
+                col_w = max(80, int(float(x1) - float(x0)))
+        except Exception:
+            pass
+        cb.configure(width=max(10, int((col_w - 12) / 8)))
+        cb.pack(fill="x")
+        win.geometry(f"{col_w}x24+{gx0}+{event.y_root}")
 
         def _apply(_ev=None):
             label = str(cb.get() or "")
@@ -5688,7 +5740,10 @@ class GeoCanvasEditor(tk.Tk):
                 if bool(getattr(self, "compact_1m", False)):
                     meter_n = (getattr(self, "_grid_meter_rows", {}) or {}).get(row)
                     if meter_n is not None:
-                        return ("meter_row", ti, row, int(meter_n))
+                        # В свернутом meter-row интерактивна только depth-ячейка (toggle).
+                        if field == "depth":
+                            return ("meter_row", ti, row, int(meter_n))
+                        return None
                 return ("cell", ti, row, field)
 
         return None
@@ -6027,6 +6082,11 @@ class GeoCanvasEditor(tk.Tk):
                     self.depth0_by_tid[tid] = float(d0)
                 elif tid and hasattr(self, "depth0_by_tid"):
                     self.depth0_by_tid.pop(tid, None)
+        except Exception:
+            pass
+
+        try:
+            self._sync_layers_to_test_depth_range(int(ti))
         except Exception:
             pass
 
@@ -6410,6 +6470,11 @@ class GeoCanvasEditor(tk.Tk):
             else:
                 new_depth.append(f"{(d + delta):.2f}")
         t.depth = new_depth
+
+        try:
+            self._sync_layers_to_test_depth_range(int(ti), depth_shift=float(delta))
+        except Exception:
+            pass
 
         # Не сбрасываем подсветку/флаги при сдвиге глубины: qc/fs не менялись
         # (иначе пропадает фиолетовая отметка ручных правок и др. подсветки)
