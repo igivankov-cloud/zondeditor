@@ -22,26 +22,6 @@ def bundle_geo_filename(*, source_geo_path: str | Path | None, fallback_name: st
     return f"{stem}.GEO"
 
 
-def _looks_like_k4(source_bytes: bytes, blocks_info: Sequence[object]) -> bool:
-    # Heuristic 1: marker 1E 14 present (common for K4)
-    try:
-        if (source_bytes or b"").find(b"\x1E\x14") != -1:
-            return True
-    except Exception:
-        pass
-    # Heuristic 2: blocks_info bytes_per_row==9 (u16 qc/fs/incl layout)
-    try:
-        for blk in (blocks_info or []):
-            bpr = getattr(blk, "bytes_per_row", None)
-            if bpr is None and isinstance(blk, dict):
-                bpr = blk.get("bytes_per_row")
-            if int(bpr or 0) == 9:
-                return True
-    except Exception:
-        pass
-    return False
-
-
 def prepare_geo_tests(tests: Sequence[TestData]) -> list[TestData]:
     prepared: list[TestData] = []
     for t in tests:
@@ -49,28 +29,22 @@ def prepare_geo_tests(tests: Sequence[TestData]) -> list[TestData]:
             d = list(getattr(t, "depth", []) or [])
             qc = list(getattr(t, "qc", []) or [])
             fs = list(getattr(t, "fs", []) or [])
-            incl_src = getattr(t, "incl", None)
-            incl = list(incl_src or []) if incl_src is not None else None
-
             rows = []
-            n = max(len(d), len(qc), len(fs), len(incl or []))
+            n = max(len(d), len(qc), len(fs))
             for k in range(n):
                 dv = d[k] if k < len(d) else ""
                 qv = qc[k] if k < len(qc) else ""
                 fv = fs[k] if k < len(fs) else ""
-                uv = (incl[k] if (incl is not None and k < len(incl)) else (0 if incl is not None else None))
-
                 ds = str(dv).strip()
-                if ds == "" and str(qv).strip() == "" and str(fv).strip() == "" and (str(uv).strip() == "" if incl is not None else True):
+                if ds == "" and str(qv).strip() == "" and str(fv).strip() == "":
                     continue
-                rows.append((dv, qv, fv, uv))
+                rows.append((dv, qv, fv))
             prepared.append(TestData(
                 tid=int(getattr(t, "tid", 0) or 0),
                 dt=str(getattr(t, "dt", "") or ""),
                 depth=[r[0] for r in rows],
                 qc=[r[1] for r in rows],
                 fs=[r[2] for r in rows],
-                incl=([r[3] for r in rows] if incl is not None else None),
                 marker=str(getattr(t, "marker", "") or ""),
                 header_pos=str(getattr(t, "header_pos", "") or ""),
                 orig_id=getattr(t, "orig_id", None),
@@ -88,11 +62,5 @@ def export_bundle_geo(
     source_bytes: bytes,
     blocks_info: Sequence[object],
 ) -> None:
-    prepared = prepare_geo_tests(tests)
-    # K4: separate exporter (rebuild-based), does NOT affect K2
-    if _looks_like_k4(source_bytes, blocks_info):
-        from src.zondeditor.io.geo_writer_k4 import save_k4_geo_as
-        save_k4_geo_as(out_path, prepared, source_bytes=source_bytes, blocks_info=blocks_info)
-        return
-    # K2: existing stable path
-    save_geo_as(out_path, prepared, source_bytes=source_bytes, blocks_info=blocks_info)
+    save_geo_as(out_path, prepare_geo_tests(tests), source_bytes=source_bytes, blocks_info=blocks_info)
+
