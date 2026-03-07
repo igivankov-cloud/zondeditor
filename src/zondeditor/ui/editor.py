@@ -4926,6 +4926,14 @@ class GeoCanvasEditor(tk.Tk):
             self._set_hover(None)
             is_active = (ti is not None) and (not self._is_test_locked(int(ti)))
             _set_canvas_cursor("hand2" if is_active else "")
+        elif kind == "cell" and field == "depth":
+            self._set_hover(None)
+            is_toggle = False
+            try:
+                is_toggle = (ti is not None) and (not self._is_test_locked(int(ti))) and (self._expanded_meter_for_depth_cell(int(ti), int(row)) is not None)
+            except Exception:
+                is_toggle = False
+            _set_canvas_cursor("hand2" if is_toggle else "")
         else:
             self._set_hover(None)
             _set_canvas_cursor("")
@@ -5340,7 +5348,7 @@ class GeoCanvasEditor(tk.Tk):
 
                 if is_meter_row:
                     depth_fill = "#f3f6fb"
-                elif r == start_r and has_row:
+                elif has_row and data_i == 0:
                     depth_fill = "white"   # editable cell
                 else:
                     depth_fill = (GUI_DEPTH_BG if has_row else "white")
