@@ -5697,13 +5697,32 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 return None
 
-        # глубина по сетке, если есть
+        # Глубина выбранной строки (display_row -> индекс строки опыта -> depth).
         target_depth = None
-        if getattr(self, '_grid', None) and 0 <= display_row < len(self._grid):
-            target_depth = self._grid[display_row]
-        else:
-            if 0 <= display_row < len(getattr(t, 'depth', []) or []):
-                target_depth = pdepth(t.depth[display_row])
+        try:
+            mp = (getattr(self, '_grid_row_maps', {}) or {}).get(ti, {}) or {}
+            data_i = mp.get(int(display_row), None)
+            if data_i is not None and 0 <= int(data_i) < len(getattr(t, 'depth', []) or []):
+                target_depth = pdepth(t.depth[int(data_i)])
+        except Exception:
+            target_depth = None
+
+        # Fallback для старых путей/состояний кеша сетки.
+        if target_depth is None:
+            try:
+                units = getattr(self, '_grid_units', []) or []
+                base = getattr(self, '_grid_base', []) or []
+                if 0 <= int(display_row) < len(units):
+                    unit = units[int(display_row)]
+                    if unit and unit[0] == 'row':
+                        gi = int(unit[1])
+                        if 0 <= gi < len(base):
+                            target_depth = pdepth(base[gi])
+            except Exception:
+                target_depth = None
+
+        if target_depth is None and 0 <= int(display_row) < len(getattr(t, 'depth', []) or []):
+            target_depth = pdepth(t.depth[int(display_row)])
 
         if target_depth is None:
             return
