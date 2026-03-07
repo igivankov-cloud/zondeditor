@@ -4422,7 +4422,7 @@ class GeoCanvasEditor(tk.Tk):
             self._hide_canvas_tip()
             return
         kind, ti, row, field = hit
-        self._hide_layer_ige_picker()
+        self._hide_layer_ige_picker(reason="left_click")
         if ti is not None:
             self._active_test_idx = int(ti)
             self._sync_layers_panel()
@@ -4778,18 +4778,35 @@ class GeoCanvasEditor(tk.Tk):
             self._hover_tip = tw
         self._hover_after = self.after(delay_ms, _show)
 
-    def _hide_layer_ige_picker(self):
+    def _ige_picker_log(self, msg: str):
+        try:
+            print(f"[IGE_PICKER] {msg}")
+        except Exception:
+            pass
+
+    def _hide_layer_ige_picker(self, reason: str | None = None):
         win = getattr(self, "_layer_ige_picker", None)
+        meta = getattr(self, "_layer_ige_picker_meta", None)
+        self._ige_picker_log(f"hide reason={reason or 'unspecified'} has_win={win is not None} meta={meta}")
         if win is not None:
             try:
-                win.destroy()
+                self._ige_picker_log(f"hide destroying id={id(win)} exists_before={bool(win.winfo_exists())} geom={win.winfo_geometry() if win.winfo_exists() else 'n/a'}")
             except Exception:
                 pass
+            try:
+                win.destroy()
+            except Exception as ex:
+                self._ige_picker_log(f"hide destroy_error={ex!r}")
         self._layer_ige_picker = None
         self._layer_ige_picker_meta = None
 
     def _show_ige_picker_at_click(self, event, ti: int, depth: float, *, anchor_bbox=None):
+        self._ige_picker_log(
+            f"show ti={ti} depth={float(depth):.4f} evt_xy=({getattr(event, 'x', None)},{getattr(event, 'y', None)}) "
+            f"evt_root=({getattr(event, 'x_root', None)},{getattr(event, 'y_root', None)}) active={getattr(self, '_active_test_idx', None)} hover={getattr(self, '_hover', None)}"
+        )
         if ti < 0 or ti >= len(self.tests):
+            self._ige_picker_log("show aborted: ti out of range")
             return
         layers = self._ensure_test_layers(self.tests[ti])
         target = None
@@ -4802,11 +4819,13 @@ class GeoCanvasEditor(tk.Tk):
             # fallback: выбираем ближайший слой по центру, чтобы клик по label всегда открывал picker
             target = min(layers, key=lambda lyr: abs(((float(lyr.top_m) + float(lyr.bot_m)) * 0.5) - float(depth)))
         if target is None:
+            self._ige_picker_log("show aborted: target layer not resolved")
             return
         picker_meta = (int(ti), str(self._layer_ige_id(target)))
         if getattr(self, "_layer_ige_picker", None) is not None and getattr(self, "_layer_ige_picker_meta", None) == picker_meta:
+            self._ige_picker_log(f"show skip recreate: same meta={picker_meta}")
             return
-        self._hide_layer_ige_picker()
+        self._hide_layer_ige_picker(reason="show_open_new")
         win = tk.Toplevel(self)
         win.overrideredirect(True)
         values = []
@@ -4833,12 +4852,21 @@ class GeoCanvasEditor(tk.Tk):
         gy0 = int(event.y_root)
         col_w = 240
         try:
+            root_x0 = int(self.winfo_rootx())
+            root_y0 = int(self.winfo_rooty())
+            root_w = int(self.winfo_width())
+            root_h = int(self.winfo_height())
+            self._ige_picker_log(f"bbox root=({root_x0},{root_y0},{root_w},{root_h}) anchor_bbox={anchor_bbox}")
+        except Exception:
+            pass
+        try:
             rect = self._graph_rect_for_test(int(ti))
             if rect:
                 x0, x1, y0r, _y1r = rect
                 gx0, gy_guess = _canvas_to_root(float(x0), float(y0r))
                 col_w = max(80, int(float(x1) - float(x0)))
                 gy0 = int(gy_guess)
+                self._ige_picker_log(f"bbox column rect=({x0:.1f},{x1:.1f},{y0r:.1f},{_y1r:.1f}) gx0={gx0} gy0={gy0} col_w={col_w}")
         except Exception:
             pass
 
@@ -4858,6 +4886,7 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 gy0 = int(event.y_root)
 
+        pre_clamp = (int(gx0), int(gy0))
         # Не даем popup уходить за пределы окна редактора (и экрана как fallback).
         try:
             root_x0 = int(self.winfo_rootx())
@@ -4866,18 +4895,51 @@ class GeoCanvasEditor(tk.Tk):
             root_y1 = root_y0 + int(max(1, self.winfo_height()))
             gx0 = max(root_x0, min(int(gx0), max(root_x0, root_x1 - int(col_w) - 2)))
             gy0 = max(root_y0, min(int(gy0), max(root_y0, root_y1 - 28)))
+            self._ige_picker_log(f"place clamp_window pre={pre_clamp} post=({gx0},{gy0}) root=({root_x0},{root_y0},{root_x1-root_x0},{root_y1-root_y0})")
         except Exception:
             try:
                 sw = int(self.winfo_screenwidth())
                 sh = int(self.winfo_screenheight())
                 gx0 = max(0, min(int(gx0), max(0, sw - int(col_w) - 4)))
                 gy0 = max(0, min(int(gy0), max(0, sh - 28)))
+                self._ige_picker_log(f"place clamp_screen pre={pre_clamp} post=({gx0},{gy0}) screen=({sw},{sh})")
             except Exception:
                 pass
 
         cb.configure(width=max(10, int((col_w - 12) / 8)))
+        try:
+            self._ige_picker_log(f"created id={id(win)} exists={bool(win.winfo_exists())} req=({win.winfo_reqwidth()},{win.winfo_reqheight()}) geom_before={win.winfo_geometry()}")
+        except Exception:
+            pass
         cb.pack(fill="x")
         win.geometry(f"{col_w}x24+{gx0}+{gy0}")
+        try:
+            self._ige_picker_log(f"place final=({gx0},{gy0}) col_w={col_w} geom_after={win.winfo_geometry()}")
+        except Exception:
+            pass
+
+        def _after_probe(tag: str):
+            w = getattr(self, "_layer_ige_picker", None)
+            try:
+                exists = bool(w is not None and w.winfo_exists())
+                geom = w.winfo_geometry() if exists else "none"
+                focus_w = self.focus_get()
+                self._ige_picker_log(f"{tag} exists={exists} geom={geom} focus={focus_w}")
+            except Exception as ex:
+                self._ige_picker_log(f"{tag} probe_error={ex!r}")
+
+        self.after_idle(lambda: _after_probe("after_idle"))
+        self.after(50, lambda: _after_probe("after_50"))
+        self.after(150, lambda: _after_probe("after_150"))
+
+        def _on_focus_out(ev=None):
+            try:
+                self._ige_picker_log(f"focusout widget={getattr(ev, 'widget', None)} focus_now={self.focus_get()}")
+            except Exception:
+                pass
+
+        win.bind("<FocusOut>", _on_focus_out, add="+")
+        cb.bind("<FocusOut>", _on_focus_out, add="+")
 
         def _apply(_ev=None):
             label = str(cb.get() or "")
@@ -4888,11 +4950,11 @@ class GeoCanvasEditor(tk.Tk):
             target.ige_id = ige_id
             self._apply_ige_to_layer(target)
             self.redraw_all()
-            self._hide_layer_ige_picker()
+            self._hide_layer_ige_picker(reason="apply_selected")
 
         cb.bind("<<ComboboxSelected>>", _apply)
         cb.bind("<Return>", _apply)
-        cb.bind("<Escape>", lambda _e: self._hide_layer_ige_picker())
+        cb.bind("<Escape>", lambda _e: self._hide_layer_ige_picker(reason="escape"))
         cb.focus_set()
         self._layer_ige_picker = win
         self._layer_ige_picker_meta = picker_meta
@@ -5322,7 +5384,7 @@ class GeoCanvasEditor(tk.Tk):
         self._push_undo()
         t = self.tests[ti]
         t.locked = not bool(getattr(t, "locked", False))
-        self._hide_layer_ige_picker()
+        self._hide_layer_ige_picker(reason="toggle_lock")
         self._close_boundary_depth_editor(commit=False)
         self._end_edit(commit=False)
         self._redraw()
