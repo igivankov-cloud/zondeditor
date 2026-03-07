@@ -4243,7 +4243,8 @@ class GeoCanvasEditor(tk.Tk):
         t = self.tests[ti]
         layers = self._ensure_test_layers(t)
         x0, x1, _y0, _y1 = rect
-        handle_x = x1 + 10
+        # Ручка границы: центр по правому краю колонки слоёв, слегка внутри.
+        handle_x = x1 - 2
         plus_x = x0 + 10
 
         def _draw_plus(tag: str, y_pos: float, boundary: int, kind: str):
@@ -4268,8 +4269,8 @@ class GeoCanvasEditor(tk.Tk):
             p_tag = f"layer_plus_{ti}_{bi}"
             self.canvas.create_line(x0, y, x1, y, fill="#ab9f8a", width=1, dash=(3, 2), tags=("layer_handles", "layer_boundary_line"))
             self.canvas.create_rectangle(handle_x - 5, y - 5, handle_x + 5, y + 5, fill="#fefefe", outline="#555", tags=("layer_handles", "layer_handle", h_tag))
-            bx0 = handle_x - 54
-            bx1 = handle_x - 14
+            bx0 = handle_x - 52
+            bx1 = handle_x - 12
             self.canvas.create_rectangle(bx0, y - 8, bx1, y + 8, fill="#ffffff", outline="#555", tags=("layer_handles", "layer_depth_box", h_tag))
             self.canvas.create_text((bx0 + bx1) / 2, y, text=f"{float(boundary):.2f}", fill="#3f3f3f", font=("Segoe UI", 7), tags=("layer_handles", "layer_depth_label", h_tag))
             self._layer_handle_hitbox.append({"kind": "boundary", "ti": ti, "boundary": bi, "tag": h_tag, "bbox": (handle_x - 6, y - 6, handle_x + 6, y + 6)})
@@ -4658,7 +4659,21 @@ class GeoCanvasEditor(tk.Tk):
             self._inline_edit_active = False
             return
         bx0, by0, bx1, by1 = target.get("bbox", (0, 0, 0, 0))
-        entry = ttk.Entry(self, width=6)
+        entry = tk.Entry(
+            self,
+            width=6,
+            justify="center",
+            bg="#ffffff",
+            fg="#111111",
+            insertbackground="#111111",
+            selectbackground="#2f80ed",
+            selectforeground="#ffffff",
+            relief="solid",
+            bd=1,
+            highlightthickness=1,
+            highlightbackground="#666666",
+            highlightcolor="#2f80ed",
+        )
         t = self.tests[ti]
         layers = self._ensure_test_layers(t)
         cur = float(layers[boundary].top_m) if 0 <= boundary < len(layers) else 0.0
@@ -4704,8 +4719,8 @@ class GeoCanvasEditor(tk.Tk):
             entry.place(
                 x=root_x,
                 y=root_y,
-                width=max(24, int(bx1 - bx0)),
-                height=max(16, int(by1 - by0)),
+                width=max(44, int(bx1 - bx0)),
+                height=max(18, int(by1 - by0)),
             )
         except Exception:
             pass
@@ -4844,14 +4859,21 @@ class GeoCanvasEditor(tk.Tk):
             snapped_depth = float(t.layers[boundary].top_m) if 0 <= boundary < len(t.layers) else float(depth)
             tip = f"Граница: {snapped_depth:.2f} м"
             self.status.set(tip)
-            self._sync_layers_panel()
             self._redraw_graphs_now()
         except Exception:
             pass
 
     def _on_layer_drag_release(self, _event):
-        if getattr(self, "_layer_drag", None):
+        drag = getattr(self, "_layer_drag", None)
+        if drag:
+            ti = int(drag.get("ti", -1))
             self._layer_drag = None
+            try:
+                if 0 <= ti < len(self.tests):
+                    self._calc_layer_params_for_test(int(ti))
+                    self._sync_layers_panel()
+            except Exception:
+                pass
             self._redraw()
             self.schedule_graph_redraw()
 
@@ -4897,44 +4919,49 @@ class GeoCanvasEditor(tk.Tk):
 
     def _on_motion(self, event):
         self._evt_widget = event.widget
+        self._hide_canvas_tip()
+
+        def _set_cursor(cur: str):
+            try:
+                self.canvas.configure(cursor=cur)
+            except Exception:
+                pass
+            try:
+                self.hcanvas.configure(cursor=cur)
+            except Exception:
+                pass
+
         hit = self._hit_test(event.x, event.y)
         if not hit:
             self._set_hover(None)
-            self.canvas.configure(cursor="")
+            _set_cursor("")
             return
         kind, ti, row, field = hit
         if kind in ("lock", "edit", "dup", "trash"):
             self._set_hover((kind, ti))
-            tip_text = "Блокировать/разблокировать" if kind == "lock" else ("Редактировать" if kind == "edit" else ("Копировать" if kind == "dup" else "Удалить"))
-            self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=1000)
+            _set_cursor("hand2")
         elif kind == "export":
             self._set_hover((kind, ti))
+            _set_cursor("hand2")
+        elif kind == "meter_row":
+            self._set_hover(None)
+            is_active = (ti is not None) and (not self._is_test_locked(int(ti)))
+            _set_cursor("hand2" if is_active else "")
+        elif kind == "cell" and field == "depth":
+            self._set_hover(None)
+            is_toggle = False
             try:
-                ex_on = bool(getattr(self.tests[ti], "export_on", True))
+                is_toggle = (ti is not None) and (not self._is_test_locked(int(ti))) and (self._expanded_meter_for_depth_cell(int(ti), int(row)) is not None)
             except Exception:
-                ex_on = True
-            tip_text = "Исключить из экспорта" if ex_on else "Экспортировать"
-            self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=1000)
+                is_toggle = False
+            _set_cursor("hand2" if is_toggle else "")
         elif kind in ("layer_boundary", "layer_plus", "layer_plus_top", "layer_plus_bottom", "layer_interval", "layer_boundary_depth_edit"):
             self._set_hover(None)
-            if kind == "layer_plus":
-                tip_text = "Добавить средний слой 1.00 м"
-            elif kind == "layer_plus_top":
-                tip_text = "Добавить верхний слой 1.00 м вниз"
-            elif kind == "layer_plus_bottom":
-                tip_text = "Добавить нижний слой 1.00 м вверх"
-            elif kind == "layer_interval":
-                tip_text = None
-            elif kind == "layer_boundary_depth_edit":
-                tip_text = "Ввести глубину границы"
-            else:
-                tip_text = "Перетащить границу слоя"
-            if tip_text:
-                self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=700)
-            self.canvas.configure(cursor="hand2")
+            is_active = (ti is not None) and (not self._is_test_locked(int(ti)))
+            _set_cursor("hand2" if is_active else "")
         else:
             self._set_hover(None)
-            self.canvas.configure(cursor="")
+            _set_cursor("")
 
     def _is_test_locked(self, ti: int) -> bool:
         try:
