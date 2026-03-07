@@ -3826,35 +3826,24 @@ class GeoCanvasEditor(tk.Tk):
 
 
     def _test_effective_data_depth_range(self, t) -> tuple[float, float]:
-        """Фактический диапазон данных (по непустым qc/fs) для отрисовки оверлея."""
-        top_fallback, bot_fallback = self._test_depth_range(t)
-        qarr = getattr(t, "qc", []) or []
-        farr = getattr(t, "fs", []) or []
-        first = None
-        last = None
-        for i in range(max(len(qarr), len(farr))):
-            q_raw = _parse_cell_int(qarr[i]) if i < len(qarr) else None
-            f_raw = _parse_cell_int(farr[i]) if i < len(farr) else None
-            if q_raw is None and f_raw is None:
-                continue
-            if first is None:
-                first = i
-            last = i
-        if first is None or last is None:
-            return float(top_fallback), float(bot_fallback)
-        top = float(self._depth_at_index(t, int(first)))
-        bot = float(self._depth_at_index(t, int(last)))
-        step = float(getattr(self, "step_m", 0.05) or 0.05)
+        """Фактический диапазон глубин опыта по depth-массиву (без ухода за пределы данных)."""
         d_arr = getattr(t, "depth", []) or []
-        if int(last) + 1 < len(d_arr):
-            dn = _parse_depth_float(d_arr[int(last) + 1])
-            dl = _parse_depth_float(d_arr[int(last)])
-            if dn is not None and dl is not None:
-                step = max(0.01, abs(float(dn) - float(dl)))
-        bot = bot + max(step, 0.05)
+        dvals: list[float] = []
+        for ds in d_arr:
+            dv = _parse_depth_float(ds)
+            if dv is not None:
+                dvals.append(float(dv))
+        if not dvals:
+            return self._test_depth_range(t)
+        top = min(dvals)
+        bot_base = max(dvals)
+        step = float(getattr(self, "step_m", 0.05) or 0.05)
+        if len(dvals) >= 2:
+            step = max(0.01, abs(dvals[1] - dvals[0]))
+        bot = bot_base + max(step, 0.05)
         if bot <= top:
-            return float(top_fallback), float(bot_fallback)
-        return top, bot
+            return self._test_depth_range(t)
+        return float(top), float(bot)
 
     def _ensure_test_layers(self, t) -> list[Layer]:
         raw = list(getattr(t, "layers", []) or [])
@@ -4394,8 +4383,8 @@ class GeoCanvasEditor(tk.Tk):
             top_y = self._depth_to_canvas_y(float(layers[0].top_m))
             bot_y = self._depth_to_canvas_y(float(layers[-1].bot_m))
             if top_y is not None:
-                _draw_plus(f"layer_plus_top_{ti}", top_y, 0, "plus_top", active=self._can_insert_layer_from_top(int(ti)))
-                _draw_minus(f"layer_minus_top_{ti}", top_y + 14, 0, "minus_top", active=(len(layers) > 1))
+                _draw_plus(f"layer_plus_top_{ti}", top_y + 6, 0, "plus_top", active=self._can_insert_layer_from_top(int(ti)))
+                _draw_minus(f"layer_minus_top_{ti}", top_y + 20, 0, "minus_top", active=(len(layers) > 1))
             if bot_y is not None:
                 _draw_plus(f"layer_plus_bottom_{ti}", bot_y, len(layers), "plus_bottom", active=self._can_insert_layer_from_bottom(int(ti)))
                 _draw_minus(f"layer_minus_bottom_{ti}", bot_y + 14, len(layers) - 1, "minus_bottom", active=(len(layers) > 1))
