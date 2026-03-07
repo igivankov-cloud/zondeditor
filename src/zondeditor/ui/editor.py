@@ -3824,7 +3824,26 @@ class GeoCanvasEditor(tk.Tk):
         return depth0, depth0 + 1.0
 
     def _ensure_test_layers(self, t) -> list[Layer]:
-        layers = self.layer_store.get_layers(t, self._test_depth_range)
+        raw = list(getattr(t, "layers", []) or [])
+        layers: list[Layer] = []
+        for item in raw:
+            if isinstance(item, Layer):
+                layers.append(item)
+            elif isinstance(item, dict):
+                try:
+                    layers.append(layer_from_dict(item))
+                except Exception:
+                    pass
+        if not layers:
+            layers = self.layer_store.get_layers(t, self._test_depth_range)
+        else:
+            try:
+                layers = normalize_layers(layers)
+                validate_layers(layers)
+            except Exception:
+                top, bot = self._test_depth_range(t)
+                layers = build_default_layers(top, bot)
+            t.layers = layers
         for lyr in layers:
             self._apply_ige_to_layer(lyr)
         return layers
@@ -4252,22 +4271,21 @@ class GeoCanvasEditor(tk.Tk):
             if active:
                 self._layer_handle_hitbox.append({"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (plus_x - 10, y_pos - 10, plus_x + 10, y_pos + 10)})
 
-        def _draw_minus(tag: str, y_pos: float, boundary: int, kind: str):
+        def _draw_minus(tag: str, y_pos: float, boundary: int, kind: str, *, active: bool = True):
             self.canvas.create_rectangle(plus_x - 6, y_pos - 6, plus_x + 6, y_pos + 6, fill="#ffffff", outline="#8f8f8f", width=1, tags=("layer_handles", "layer_minus_box", tag))
-            self.canvas.create_text(plus_x, y_pos, text="−", fill="#7c1d1d", font=("Segoe UI", 9, "bold"), tags=("layer_handles", "layer_minus", tag))
-            self._layer_handle_hitbox.append({"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (plus_x - 10, y_pos - 10, plus_x + 10, y_pos + 10)})
+            self.canvas.create_text(plus_x, y_pos, text="−", fill=("#7c1d1d" if active else "#bdbdbd"), font=("Segoe UI", 9, "bold"), tags=("layer_handles", "layer_minus", tag))
+            if active:
+                self._layer_handle_hitbox.append({"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (plus_x - 10, y_pos - 10, plus_x + 10, y_pos + 10)})
 
         if layers:
             top_y = self._depth_to_canvas_y(float(layers[0].top_m))
             bot_y = self._depth_to_canvas_y(float(layers[-1].bot_m))
             if top_y is not None:
                 _draw_plus(f"layer_plus_top_{ti}", top_y, 0, "plus_top", active=self._can_insert_layer_from_top(int(ti)))
-                if len(layers) > 1:
-                    _draw_minus(f"layer_minus_top_{ti}", top_y + 14, 0, "minus_top")
+                _draw_minus(f"layer_minus_top_{ti}", top_y + 14, 0, "minus_top", active=(len(layers) > 1))
             if bot_y is not None:
                 _draw_plus(f"layer_plus_bottom_{ti}", bot_y, len(layers), "plus_bottom", active=self._can_insert_layer_from_bottom(int(ti)))
-                if len(layers) > 1:
-                    _draw_minus(f"layer_minus_bottom_{ti}", bot_y + 14, len(layers) - 1, "minus_bottom")
+                _draw_minus(f"layer_minus_bottom_{ti}", bot_y + 14, len(layers) - 1, "minus_bottom", active=(len(layers) > 1))
 
         for bi in range(1, len(layers)):
             boundary = layers[bi].top_m
