@@ -3836,11 +3836,7 @@ class GeoCanvasEditor(tk.Tk):
         if not dvals:
             return self._test_depth_range(t)
         top = min(dvals)
-        bot_base = max(dvals)
-        step = float(getattr(self, "step_m", 0.05) or 0.05)
-        if len(dvals) >= 2:
-            step = max(0.01, abs(dvals[1] - dvals[0]))
-        bot = bot_base + max(step, 0.05)
+        bot = max(dvals)
         if bot <= top:
             return self._test_depth_range(t)
         return float(top), float(bot)
@@ -4535,7 +4531,15 @@ class GeoCanvasEditor(tk.Tk):
             if self._is_test_locked(int(ti)):
                 self._set_status("Опыт заблокирован")
                 return
-            self._show_ige_picker_at_click(event, int(ti), float(field if field is not None else 0.0))
+            # Клик по телу слоя только выбирает опыт/слой, но не открывает picker ИГЭ.
+            try:
+                layers = self._ensure_test_layers(self.tests[int(ti)])
+                depth = float(field if field is not None else 0.0)
+                target = next((lyr for lyr in layers if float(lyr.top_m) <= depth <= float(lyr.bot_m)), None)
+                if target is not None:
+                    self._select_ige_for_ribbon(self._layer_ige_id(target))
+            except Exception:
+                pass
             return
         if kind == "layer_label":
             if self._is_test_locked(int(ti)):
