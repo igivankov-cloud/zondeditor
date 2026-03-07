@@ -4740,44 +4740,6 @@ class GeoCanvasEditor(tk.Tk):
                 pass
         self._layer_ige_picker = None
 
-    def _maybe_hide_layer_ige_picker_on_focus_out(self, _event=None):
-        def _check_focus():
-            win = getattr(self, "_layer_ige_picker", None)
-            if win is None:
-                return
-            try:
-                if not win.winfo_exists():
-                    self._layer_ige_picker = None
-                    return
-            except Exception:
-                self._layer_ige_picker = None
-                return
-            try:
-                focus_widget = self.focus_get()
-            except Exception:
-                focus_widget = None
-            if focus_widget is None:
-                self._hide_layer_ige_picker()
-                return
-            try:
-                focus_path = str(focus_widget)
-            except Exception:
-                focus_path = ""
-            if focus_path.startswith(str(win)):
-                return
-            try:
-                for child in win.winfo_children():
-                    if not isinstance(child, ttk.Combobox):
-                        continue
-                    popdown_path = str(win.tk.call("ttk::combobox::PopdownWindow", str(child)))
-                    if focus_path.startswith(popdown_path):
-                        return
-            except Exception:
-                pass
-            self._hide_layer_ige_picker()
-
-        self.after_idle(_check_focus)
-
     def _show_ige_picker_at_click(self, event, ti: int, depth: float):
         if ti < 0 or ti >= len(self.tests):
             return
@@ -4792,8 +4754,7 @@ class GeoCanvasEditor(tk.Tk):
         self._hide_layer_ige_picker()
         win = tk.Toplevel(self)
         win.overrideredirect(True)
-        win.transient(self)
-        win.lift(self)
+        win.attributes("-topmost", True)
         values = []
         ids = sorted(self.ige_registry.keys(), key=self._ige_id_to_num)
         for ige_id in ids:
@@ -4823,8 +4784,6 @@ class GeoCanvasEditor(tk.Tk):
         cb.bind("<<ComboboxSelected>>", _apply)
         cb.bind("<Return>", _apply)
         cb.bind("<Escape>", lambda _e: self._hide_layer_ige_picker())
-        win.bind("<FocusOut>", self._maybe_hide_layer_ige_picker_on_focus_out)
-        win.grab_set()
         cb.focus_set()
         self._layer_ige_picker = win
 
