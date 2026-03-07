@@ -217,6 +217,7 @@ class GeoCanvasEditor(tk.Tk):
         self._layer_handle_hitbox = []
         self._layer_depth_box_hitbox = []
         self._layer_plot_hitbox = []
+        self._layer_label_hitbox = []
         self._layer_ige_picker = None
         self._boundary_depth_editor = None
         self._editor_just_opened = False
@@ -4105,7 +4106,15 @@ class GeoCanvasEditor(tk.Tk):
                 hatch_color = style.get("hatch_color") or "#000000"
                 self._draw_layer_hatch(x0, ty0, x1, ty1, color=hatch_color, hatch=hatch, tags=tags)
             self._layer_plot_hitbox.append({"kind": "interval", "ti": ti, "ige_id": ige_id, "top": float(lyr.top_m), "bot": float(lyr.bot_m), "bbox": (x0, ty0, x1, ty1)})
-            label_spans.append({"x0": x0, "x1": x1, "y0": ty0, "y1": ty1, "ige": str(ige_id)})
+            label_spans.append({
+                "x0": x0,
+                "x1": x1,
+                "y0": ty0,
+                "y1": ty1,
+                "ige": str(ige_id),
+                "ti": int(ti),
+                "depth": (float(lyr.top_m) + float(lyr.bot_m)) * 0.5,
+            })
         return label_spans
 
     def _draw_layer_label_chip(self, span: dict, tags):
@@ -4114,6 +4123,8 @@ class GeoCanvasEditor(tk.Tk):
         y0 = float(span.get("y0", 0.0))
         y1 = float(span.get("y1", 0.0))
         text = str(span.get("ige", "") or "")
+        ti = int(span.get("ti", -1) or -1)
+        depth = float(span.get("depth", 0.0) or 0.0)
         if not text or x1 <= x0 or y1 <= y0:
             return
         available_h = y1 - y0
@@ -4144,6 +4155,19 @@ class GeoCanvasEditor(tk.Tk):
                     tags=tags,
                 )
                 self.canvas.create_text(cx, cy, text=text, fill="#4e4335", font=font, tags=tags)
+                try:
+                    self._layer_label_hitbox.append({
+                        "ti": int(ti),
+                        "depth": float(depth),
+                        "bbox": (
+                            float(cx - chip_w * 0.5),
+                            float(cy - chip_h * 0.5),
+                            float(cx + chip_w * 0.5),
+                            float(cy + chip_h * 0.5),
+                        ),
+                    })
+                except Exception:
+                    pass
                 return
 
     def _draw_graph_lines_for_test(self, ti: int, rect, y_points, qc_mpa, fs_kpa, qmax: float, fmax: float):
@@ -4210,6 +4234,7 @@ class GeoCanvasEditor(tk.Tk):
         self._layer_handle_hitbox = []
         self._layer_depth_box_hitbox = []
         self._layer_plot_hitbox = []
+        self._layer_label_hitbox = []
 
         self._refresh_display_order()
         for ti in self.display_cols:
@@ -4475,6 +4500,18 @@ class GeoCanvasEditor(tk.Tk):
                 return
             self._show_ige_picker_at_click(event, int(ti), float(field if field is not None else 0.0))
             return
+        if kind == "layer_label":
+            if self._is_test_locked(int(ti)):
+                self._set_status("Опыт заблокирован")
+                return
+            meta = field if isinstance(field, dict) else {}
+            self._show_ige_picker_at_click(
+                event,
+                int(ti),
+                float(meta.get("depth", 0.0) if meta else 0.0),
+                anchor_bbox=(meta.get("bbox") if meta else None),
+            )
+            return
         if kind == "meter_row":
             if self._is_test_locked(int(ti)):
                 self._set_status("Опыт заблокирован")
@@ -4688,7 +4725,7 @@ class GeoCanvasEditor(tk.Tk):
                 pass
         self._layer_ige_picker = None
 
-    def _show_ige_picker_at_click(self, event, ti: int, depth: float):
+    def _show_ige_picker_at_click(self, event, ti: int, depth: float, *, anchor_bbox=None):
         if ti < 0 or ti >= len(self.tests):
             return
         layers = self._ensure_test_layers(self.tests[ti])
@@ -4715,20 +4752,34 @@ class GeoCanvasEditor(tk.Tk):
         current_label = f"{current_ige} ({current_soil})"
         if current_label in values:
             cb.set(current_label)
-        # Открываем picker по ширине всей колонки графики/слоёв текущего опыта.
-        gx0 = event.x_root
-        col_w = 240
-        try:
-            rect = self._graph_rect_for_test(int(ti))
-            if rect:
-                x0, x1, _y0, _y1 = rect
-                gx0 = int(self.canvas.winfo_rootx() - self.winfo_rootx() + float(x0))
-                col_w = max(80, int(float(x1) - float(x0)))
-        except Exception:
-            pass
-        cb.configure(width=max(10, int((col_w - 12) / 8)))
-        cb.pack(fill="x")
-        win.geometry(f"{col_w}x24+{gx0}+{event.y_root}")
+        # Для label-клика (особенно в свернутом режиме) — открываем ровно по bbox надписи.
+        if anchor_bbox is not None:
+            try:
+                bx0, by0, bx1, by1 = anchor_bbox
+                gx0 = int(self.canvas.winfo_rootx() - self.winfo_rootx() + float(bx0))
+                gy0 = int(self.canvas.winfo_rooty() - self.winfo_rooty() + float(by0))
+                col_w = max(80, int(float(bx1) - float(bx0)))
+                cb.configure(width=max(10, int((col_w - 8) / 8)))
+                cb.pack(fill="x")
+                win.geometry(f"{col_w}x24+{gx0}+{gy0}")
+            except Exception:
+                anchor_bbox = None
+
+        # Обычный клик по интервалу (развернутый режим): по ширине всей колонки.
+        if anchor_bbox is None:
+            gx0 = event.x_root
+            col_w = 240
+            try:
+                rect = self._graph_rect_for_test(int(ti))
+                if rect:
+                    x0, x1, _y0, _y1 = rect
+                    gx0 = int(self.canvas.winfo_rootx() - self.winfo_rootx() + float(x0))
+                    col_w = max(80, int(float(x1) - float(x0)))
+            except Exception:
+                pass
+            cb.configure(width=max(10, int((col_w - 12) / 8)))
+            cb.pack(fill="x")
+            win.geometry(f"{col_w}x24+{gx0}+{event.y_root}")
 
         def _apply(_ev=None):
             label = str(cb.get() or "")
@@ -5145,10 +5196,17 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 is_toggle = False
             _set_cursor("hand2" if is_toggle else "")
-        elif kind in ("layer_boundary", "layer_plus", "layer_plus_top", "layer_plus_bottom", "layer_minus", "layer_minus_top", "layer_minus_bottom", "layer_interval", "layer_boundary_depth_edit"):
+        elif kind == "layer_label":
             self._set_hover(None)
             is_active = (ti is not None) and (not self._is_test_locked(int(ti)))
             _set_cursor("hand2" if is_active else "")
+        elif kind in ("layer_boundary", "layer_plus", "layer_plus_top", "layer_plus_bottom", "layer_minus", "layer_minus_top", "layer_minus_bottom", "layer_boundary_depth_edit"):
+            self._set_hover(None)
+            is_active = (ti is not None) and (not self._is_test_locked(int(ti)))
+            _set_cursor("hand2" if is_active else "")
+        elif kind == "layer_interval":
+            self._set_hover(None)
+            _set_cursor("")
         else:
             self._set_hover(None)
             _set_cursor("")
@@ -5709,6 +5767,11 @@ class GeoCanvasEditor(tk.Tk):
                     return ("layer_minus_top", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
                 if hit.get("kind") == "minus_bottom":
                     return ("layer_minus_bottom", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
+
+        for hit in (getattr(self, "_layer_label_hitbox", []) or []):
+            bx0, by0, bx1, by1 = hit.get("bbox", (0, 0, 0, 0))
+            if bx0 <= cx <= bx1 and by0 <= cy <= by1:
+                return ("layer_label", int(hit.get("ti", -1)), None, {"depth": float(hit.get("depth", 0.0)), "bbox": (bx0, by0, bx1, by1)})
 
         for hit in (getattr(self, "_layer_plot_hitbox", []) or []):
             bx0, by0, bx1, by1 = hit.get("bbox", (0, 0, 0, 0))
