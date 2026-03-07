@@ -4398,12 +4398,12 @@ class GeoCanvasEditor(tk.Tk):
                 return
 
             if field == "depth":
+                if row == start_r:
+                    self._begin_edit_depth0(ti, display_row=row)
+                    return
                 meter_n = self._expanded_meter_for_depth_cell(ti, row)
                 if meter_n is not None:
                     self._toggle_meter_expanded(meter_n, push_undo=True)
-                    return
-                if row == start_r:
-                    self._begin_edit_depth0(ti, display_row=row)
                 return
 
             # qc/fs cells
