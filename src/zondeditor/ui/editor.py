@@ -5740,6 +5740,87 @@ class GeoCanvasEditor(tk.Tk):
 
         self._delete_range_indices(ti, r0, r1)
 
+    def _sync_test_after_trim_or_depth0_change(self, ti: int, *, depth_shift: float = 0.0):
+        """Локальная синхронизация одного опыта после trim/depth[0] изменения."""
+        if ti < 0 or ti >= len(self.tests):
+            return
+        t = self.tests[ti]
+
+        # 1) Сдвиг слоёв вместе с опытом при ручном изменении depth[0].
+        if abs(float(depth_shift or 0.0)) > 1e-12:
+            shifted = []
+            for lyr in (getattr(t, "layers", []) or []):
+                try:
+                    c = layer_from_dict(layer_to_dict(lyr))
+                except Exception:
+                    continue
+                c.top_m = float(c.top_m) + float(depth_shift)
+                c.bot_m = float(c.bot_m) + float(depth_shift)
+                shifted.append(c)
+            if shifted:
+                t.layers = shifted
+
+        # 2) Фактический диапазон глубин опыта по текущим строкам.
+        top, bot = self._test_depth_range(t)
+        top = float(top)
+        bot = float(bot)
+
+        # 3) Синхронизируем depth0_by_tid по первой валидной глубине текущего опыта.
+        try:
+            tid = int(getattr(t, "tid", 0) or 0)
+            if tid:
+                d0 = None
+                for dv in (getattr(t, "depth", []) or []):
+                    d0 = _parse_depth_float(dv)
+                    if d0 is not None:
+                        break
+                if d0 is not None:
+                    self.depth0_by_tid[tid] = float(d0)
+                elif hasattr(self, "depth0_by_tid"):
+                    self.depth0_by_tid.pop(tid, None)
+        except Exception:
+            pass
+
+        # 4) Подрезаем слои только у текущего опыта под новый диапазон.
+        try:
+            src_layers = []
+            for lyr in (getattr(t, "layers", []) or []):
+                try:
+                    src_layers.append(layer_from_dict(layer_to_dict(lyr)))
+                except Exception:
+                    continue
+            src_layers.sort(key=lambda x: float(x.top_m))
+
+            clipped = []
+            for lyr in src_layers:
+                lt = max(float(lyr.top_m), top)
+                lb = min(float(lyr.bot_m), bot)
+                if lb - lt <= 1e-9:
+                    continue
+                lyr.top_m = lt
+                lyr.bot_m = lb
+                clipped.append(lyr)
+
+            if not clipped:
+                t.layers = build_default_layers(top, bot)
+            else:
+                clipped[0].top_m = top
+                for i in range(1, len(clipped)):
+                    clipped[i].top_m = float(clipped[i - 1].bot_m)
+                clipped[-1].bot_m = bot
+                t.layers = normalize_layers(clipped)
+        except Exception:
+            t.layers = build_default_layers(top, bot)
+
+        try:
+            self._calc_layer_params_for_test(int(ti))
+        except Exception:
+            pass
+        try:
+            self._sync_layers_panel()
+        except Exception:
+            pass
+
     def _delete_range_indices(self, ti, r0, r1):
         if ti < 0 or ti >= len(self.tests):
             return
@@ -5821,25 +5902,7 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
 
-        # K4: после удаления строк пересчитываем начальную глубину опыта по первой строке (на всякий случай)
-        try:
-            if getattr(self, "geo_kind", "K2") == "K4":
-                tid = int(getattr(t, "tid", 0) or 0)
-                d0 = None
-                for dv in (getattr(t, "depth", []) or []):
-                    try:
-                        dd = float(str(dv).strip().replace(',', '.'))
-                    except Exception:
-                        dd = None
-                    if dd is not None:
-                        d0 = dd
-                        break
-                if d0 is not None and tid:
-                    self.depth0_by_tid[tid] = float(d0)
-                elif tid and hasattr(self, "depth0_by_tid"):
-                    self.depth0_by_tid.pop(tid, None)
-        except Exception:
-            pass
+        self._sync_test_after_trim_or_depth0_change(int(ti))
 
         try:
             self._build_grid()
@@ -6213,6 +6276,8 @@ class GeoCanvasEditor(tk.Tk):
             else:
                 new_depth.append(f"{(d + delta):.2f}")
         t.depth = new_depth
+
+        self._sync_test_after_trim_or_depth0_change(int(ti), depth_shift=float(delta))
 
         # Не сбрасываем подсветку/флаги при сдвиге глубины: qc/fs не менялись
         # (иначе пропадает фиолетовая отметка ручных правок и др. подсветки)
