@@ -5923,20 +5923,25 @@ class GeoCanvasEditor(tk.Tk):
 
         self._sync_test_after_trim_or_depth0_change(int(ti))
 
+        # Сохраняем текущую горизонтальную позицию, чтобы delete не уводил вправо.
+        xview_before = None
+        try:
+            xview_before = tuple(self.canvas.xview())
+        except Exception:
+            xview_before = None
+
         try:
             self._build_grid()
         except Exception:
             pass
         self._redraw()
-        self.schedule_graph_redraw()
-        # если опыт не помещается на экран — прокручиваем по X так, чтобы он попал в видимую область
-        try:
-            self._ensure_cell_visible(insert_at, 0, 'depth', pad=12)
-        except Exception:
+        if xview_before is not None:
             try:
-                self.canvas.xview_moveto(1.0)
+                self.canvas.xview_moveto(float(xview_before[0]))
+                self._sync_header_body_after_scroll()
             except Exception:
                 pass
+        self.schedule_graph_redraw()
 
         try:
             self.status.set(f"Удалено строк: {r1 - r0 + 1} (опыт {ti+1})")
