@@ -5071,12 +5071,13 @@ class GeoCanvasEditor(tk.Tk):
             elif kind == "layer_plus_bottom":
                 tip_text = "Добавить нижний слой 1.00 м вверх"
             elif kind == "layer_interval":
-                tip_text = "Выбрать ИГЭ"
+                tip_text = None
             elif kind == "layer_boundary_depth_edit":
                 tip_text = "Ввести глубину границы"
             else:
                 tip_text = "Перетащить границу слоя"
-            self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=700)
+            if tip_text:
+                self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=700)
             self.canvas.configure(cursor="hand2")
         else:
             self._set_hover(None)
@@ -6019,8 +6020,6 @@ class GeoCanvasEditor(tk.Tk):
         win = tk.Toplevel(self)
         win.title("Параметры зондирования")
         win.resizable(False, False)
-        win.transient(self)
-        win.grab_set()
         # ВАЖНО: центрирование делаем ПОСЛЕ построения виджетов.
         # Иначе на Windows (особенно при масштабировании 125–175%) окно
         # центрируется по «пустому» reqsize и может оказаться меньше, чем нужно.
@@ -7395,7 +7394,6 @@ class GeoCanvasEditor(tk.Tk):
         win = tk.Toplevel(self)
         win.title("Карта проекта")
         win.geometry("860x640")
-        win.transient(self)
         try:
             win.iconbitmap(self._icon_path)  # type: ignore[attr-defined]
         except Exception:
