@@ -1545,7 +1545,7 @@ class GeoCanvasEditor(tk.Tk):
         for _k in ("<Up>", "<Down>", "<Left>", "<Right>"):
             self.bind(_k, self._on_arrow_key)
         self.canvas.bind("<Motion>", self._on_motion)
-        self.canvas.bind("<Leave>", lambda _e: self._set_hover(None))
+        self.canvas.bind("<Leave>", lambda _e: (self._set_hover(None), self.canvas.configure(cursor=""), self.hcanvas.configure(cursor="")))
 
         # события шапки (клики по иконкам/галочке)
         self.hcanvas.bind("<Button-1>", self._on_left_click)
@@ -1554,7 +1554,7 @@ class GeoCanvasEditor(tk.Tk):
         self.hcanvas.bind("<Button-4>", lambda e: self._on_mousewheel_linux_x(-1))
         self.hcanvas.bind("<Button-5>", lambda e: self._on_mousewheel_linux_x(1))
         self.hcanvas.bind("<Motion>", self._on_motion)
-        self.hcanvas.bind("<Leave>", lambda _e: self._set_hover(None))
+        self.hcanvas.bind("<Leave>", lambda _e: (self._set_hover(None), self.canvas.configure(cursor=""), self.hcanvas.configure(cursor="")))
         self._ctx_menu = tk.Menu(self, tearoff=0)
         self._ctx_menu.add_command(label="Удалить выше (вкл.)", command=self._ctx_delete_above)
         self._ctx_menu.add_command(label="Удалить ниже (вкл.)", command=self._ctx_delete_below)
@@ -4898,44 +4898,37 @@ class GeoCanvasEditor(tk.Tk):
 
     def _on_motion(self, event):
         self._evt_widget = event.widget
+        self._hide_canvas_tip()
+
+        def _set_canvas_cursor(cur: str):
+            try:
+                self.canvas.configure(cursor=cur)
+            except Exception:
+                pass
+            try:
+                self.hcanvas.configure(cursor=cur)
+            except Exception:
+                pass
+
         hit = self._hit_test(event.x, event.y)
         if not hit:
             self._set_hover(None)
-            self.canvas.configure(cursor="")
+            _set_canvas_cursor("")
             return
         kind, ti, row, field = hit
         if kind in ("lock", "edit", "dup", "trash"):
             self._set_hover((kind, ti))
-            tip_text = "Блокировать/разблокировать" if kind == "lock" else ("Редактировать" if kind == "edit" else ("Копировать" if kind == "dup" else "Удалить"))
-            self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=1000)
+            _set_canvas_cursor("hand2")
         elif kind == "export":
             self._set_hover((kind, ti))
-            try:
-                ex_on = bool(getattr(self.tests[ti], "export_on", True))
-            except Exception:
-                ex_on = True
-            tip_text = "Исключить из экспорта" if ex_on else "Экспортировать"
-            self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=1000)
+            _set_canvas_cursor("hand2")
         elif kind in ("layer_boundary", "layer_plus", "layer_plus_top", "layer_plus_bottom", "layer_interval", "layer_boundary_depth_edit"):
             self._set_hover(None)
-            if kind == "layer_plus":
-                tip_text = "Добавить средний слой 1.00 м"
-            elif kind == "layer_plus_top":
-                tip_text = "Добавить верхний слой 1.00 м вниз"
-            elif kind == "layer_plus_bottom":
-                tip_text = "Добавить нижний слой 1.00 м вверх"
-            elif kind == "layer_interval":
-                tip_text = None
-            elif kind == "layer_boundary_depth_edit":
-                tip_text = "Ввести глубину границы"
-            else:
-                tip_text = "Перетащить границу слоя"
-            if tip_text:
-                self._schedule_canvas_tip(tip_text, event.x_root, event.y_root, delay_ms=700)
-            self.canvas.configure(cursor="hand2")
+            is_active = (ti is not None) and (not self._is_test_locked(int(ti)))
+            _set_canvas_cursor("hand2" if is_active else "")
         else:
             self._set_hover(None)
-            self.canvas.configure(cursor="")
+            _set_canvas_cursor("")
 
     def _is_test_locked(self, ti: int) -> bool:
         try:
