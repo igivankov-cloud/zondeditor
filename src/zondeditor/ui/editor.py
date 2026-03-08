@@ -1750,6 +1750,25 @@ class GeoCanvasEditor(tk.Tk):
         """Открыть окно параметров GEO для текущего файла."""
         if not getattr(self, "tests", None):
             return
+
+        # Перед открытием окна принудительно коммитим активное редактирование
+        # (особенно первой глубины), чтобы читать только актуальную модель.
+        try:
+            if getattr(self, "_editing", None):
+                try:
+                    if len(self._editing) >= 4:
+                        ti, row, field, e = self._editing[0], self._editing[1], self._editing[2], self._editing[3]
+                    else:
+                        ti, row, field, e = self._editing
+                except Exception:
+                    ti, row, field, e = None, None, None, None
+                if field == "depth" and ti is not None and e is not None:
+                    self._end_edit_depth0(int(ti), e, commit=True)
+                elif field is not None:
+                    self._end_edit(commit=True)
+        except Exception:
+            pass
+
         # Снимок для Undo делаем только если пользователь нажмёт OK
         snap = None
         try:
@@ -2077,7 +2096,8 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             common_depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
         common_var = tk.StringVar(master=self, value=f"{common_depth0:g}")
-        apply_all_var = tk.BooleanVar(master=self, value=(False if getattr(self, 'geo_kind', 'K2')=='K4' else True))
+        # По умолчанию выключено: массовое применение только как явное действие пользователя.
+        apply_all_var = tk.BooleanVar(master=self, value=False)
 
         # объект (встроено)
         obj_var = tk.StringVar(master=self, value=(getattr(self, "object_code", "") or ""))
@@ -2262,17 +2282,19 @@ class GeoCanvasEditor(tk.Tk):
             recompute_busy = True
             try:
                 msg_var.set("")
-                is_k4 = (getattr(self, 'geo_kind', 'K2') == 'K4')
 
                 # Если apply_all выключен и глубины разные — показываем '(разные)' в общей ячейке.
-                # Важно: не мешаем пользователю вводить число в общую ячейку — переписываем только если там пусто/скобки.
+                # Важно: не подставлять скрыто 0 как fallback.
                 if (not apply_all_var.get()):
                     try:
                         vals = []
                         for (_t, tid, h0_var, _ent, _dt_var, _dt_lbl) in row_vars:
                             dv = _parse_depth_str(h0_var.get())
                             if dv is None:
-                                dv = float(self.depth0_by_tid.get(int(tid), 0.0) or 0.0)
+                                try:
+                                    dv = float((getattr(self, "depth0_by_tid", {}) or {}).get(int(tid), self._current_start_depth_for_test(_t)))
+                                except Exception:
+                                    dv = float(self._current_start_depth_for_test(_t))
                             vals.append(float(dv))
                         uniq_h0 = sorted({round(float(v), 6) for v in vals})
                     except Exception:
@@ -2288,29 +2310,26 @@ class GeoCanvasEditor(tk.Tk):
                             common_var.set(f"{v0:g}")
 
                 cd = _parse_depth_str(common_var.get())
-                if cd is None:
-                    cd = 0.0
 
                 if apply_all_var.get():
-                    # применяем ко всем и блокируем индивидуальные поля
-                    for (_t, _tid, h0_var, ent, _dt_var, _dt_lbl) in row_vars:
-                        h0_var.set(f"{cd:g}")
+                    # Массовое применение — только если явно введено валидное общее значение.
+                    if cd is not None:
+                        for (_t, _tid, h0_var, _ent, _dt_var, _dt_lbl) in row_vars:
+                            h0_var.set(f"{cd:g}")
+                    for (_t, _tid, _h0_var, ent, _dt_var, _dt_lbl) in row_vars:
                         try:
                             ent.config(state="disabled")
                         except Exception:
                             pass
                 else:
-                    # индивидуальные значения (для K4 — из файла)
-                    for (_t, tid, h0_var, ent, _dt_var, _dt_lbl) in row_vars:
-                        # K4: не перезаписываем h0_var при apply_all=False (чтобы не ломать редактирование)
+                    for (_t, _tid, _h0_var, ent, _dt_var, _dt_lbl) in row_vars:
                         try:
                             ent.config(state="normal")
                         except Exception:
                             pass
 
-                # управление общей ячейкой
+                # общая ячейка всегда доступна
                 try:
-                    # разрешаем редактировать общую ячейку и в K4 (при apply_all=False там может быть '(разные)')
                     common_ent.config(state="normal")
                 except Exception:
                     pass
@@ -2338,11 +2357,9 @@ class GeoCanvasEditor(tk.Tk):
             def _on_row_change(*_):
                 cd = _parse_depth_str(common_var.get())
                 dv = _parse_depth_str(h0_var.get())
-                if cd is None:
-                    cd = 0.0
                 if dv is None:
                     return
-                if abs(dv - cd) > 1e-9 and apply_all_var.get():
+                if (cd is not None) and abs(dv - cd) > 1e-9 and apply_all_var.get():
                     apply_all_var.set(False)
                 _recompute_apply_state()
             h0_var.trace_add("write", _on_row_change)
@@ -2439,11 +2456,13 @@ class GeoCanvasEditor(tk.Tk):
             prev_depth0 = dict(getattr(self, "depth0_by_tid", {}) or {})
             new_depth0 = dict(prev_depth0)
             for (t, tid, h0_var, ent, dt_var, dt_lbl) in row_vars:
-                dv = _parse_depth_str(h0_var.get())
-                if dv is None:
-                    if cd is not None:
-                        dv = cd
-                    else:
+                if apply_all_var.get():
+                    # Явное массовое применение: всем назначаем только общее значение.
+                    dv = cd
+                else:
+                    dv = _parse_depth_str(h0_var.get())
+                    if dv is None:
+                        # При apply_all=False никаких скрытых подстановок из common/0.
                         try:
                             dv = float(prev_depth0.get(int(tid), self._current_start_depth_for_test(t)))
                         except Exception:
@@ -2470,6 +2489,13 @@ class GeoCanvasEditor(tk.Tk):
                     d0 = float(self.depth0_by_tid.get(int(tid), float(self.depth_start or 0.0)))
                     if getattr(t, "qc", None) is not None:
                         t.depth = [f"{(d0 + i * step):g}" for i in range(len(t.qc))]
+                    try:
+                        for _ti, _tt in enumerate(self.tests):
+                            if int(getattr(_tt, "tid", 0) or 0) == int(tid):
+                                self._sync_layers_to_test_depth_range(int(_ti))
+                                break
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
