@@ -4157,7 +4157,8 @@ class GeoCanvasEditor(tk.Tk):
         y0 = float(span.get("y0", 0.0))
         y1 = float(span.get("y1", 0.0))
         text = str(span.get("ige", "") or "")
-        ti = int(span.get("ti", -1) or -1)
+        ti_raw = span.get("ti", -1)
+        ti = -1 if ti_raw is None else int(ti_raw)
         depth = float(span.get("depth", 0.0) or 0.0)
         if not text or x1 <= x0 or y1 <= y0:
             return
@@ -4547,6 +4548,7 @@ class GeoCanvasEditor(tk.Tk):
                         break
                 if label_hit is not None:
                     depth_hit, bbox_hit = label_hit
+                    self._ige_picker_log(f"click_resolved ti={int(ti)} source=layer_interval_near_label depth={float(depth_hit):.4f}")
                     self._show_ige_picker_at_click(event, int(ti), float(depth_hit), anchor_bbox=bbox_hit)
                     return
             except Exception:
@@ -4567,6 +4569,7 @@ class GeoCanvasEditor(tk.Tk):
                 self._set_status("Опыт заблокирован")
                 return
             meta = field if isinstance(field, dict) else {}
+            self._ige_picker_log(f"click_resolved ti={int(ti)} source=layer_label depth={float(meta.get('depth', 0.0) if meta else 0.0):.4f}")
             self._show_ige_picker_at_click(
                 event,
                 int(ti),
