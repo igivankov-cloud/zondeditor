@@ -792,6 +792,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.set_show_geology_column(self.show_geology_column)
         except Exception:
             pass
+        self._build_grid()
         self._redraw()
         self.schedule_graph_redraw()
 
@@ -3500,8 +3501,11 @@ class GeoCanvasEditor(tk.Tk):
     def _table_col_width(self) -> int:
         return self.w_depth + self.w_val*2 + (self.w_val if getattr(self, "geo_kind", "K2")=="K4" else 0)
 
+    def _is_graph_panel_visible(self) -> bool:
+        return bool(getattr(self, "show_graphs", False) or getattr(self, "show_geology_column", True))
+
     def _column_block_width(self) -> int:
-        graph_w = int(getattr(self, "graph_w", 150) or 150) if bool(getattr(self, "show_graphs", False)) else 0
+        graph_w = int(getattr(self, "graph_w", 150) or 150) if self._is_graph_panel_visible() else 0
         return self._table_col_width() + graph_w
 
     def _column_x0(self, col: int) -> int:
@@ -3538,7 +3542,7 @@ class GeoCanvasEditor(tk.Tk):
             col = int(self.display_cols.index(ti))
         except Exception:
             return None
-        if not bool(getattr(self, "show_graphs", False)):
+        if not self._is_graph_panel_visible():
             return None
         x0 = self._column_x0(col) + self._table_col_width()
         x1 = x0 + int(getattr(self, "graph_w", 150) or 150)
@@ -3726,7 +3730,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.after_cancel(prev)
             except Exception:
                 pass
-        if not bool(getattr(self, "show_graphs", False)):
+        if not self._is_graph_panel_visible():
             self._clear_graph_layers()
             self._graph_redraw_after_id = None
             return
@@ -4307,7 +4311,7 @@ class GeoCanvasEditor(tk.Tk):
     def _redraw_graphs_now(self):
         self._graph_redraw_after_id = None
         self._clear_graph_layers()
-        if not bool(getattr(self, "show_graphs", False)):
+        if not self._is_graph_panel_visible():
             return
         if not getattr(self, "tests", None):
             return
@@ -4326,6 +4330,8 @@ class GeoCanvasEditor(tk.Tk):
                 continue
             x0, x1, y0, y1 = rect
             t = self.tests[ti]
+            show_graphs = bool(getattr(self, "show_graphs", False))
+            show_geology = bool(getattr(self, "show_geology_column", True))
 
             y_points = []
             qc_vals = []
@@ -4371,35 +4377,39 @@ class GeoCanvasEditor(tk.Tk):
             tag_overlay = ("layers_overlay", f"layers_overlay_{ti}")
             self.canvas.create_rectangle(x0, y0, x1, y1, fill="#fbfdff", outline=GUI_GRID, tags=tag_axes)
             labels = []
-            if bool(getattr(self, "show_geology_column", True)):
+            if show_geology:
                 labels = self._draw_layers_overlay_for_test(ti, plot_rect, self._depth_to_canvas_y, tag_overlay) or []
             if not y_points:
-                self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
-                self._draw_groundwater_line_for_test(ti, plot_rect)
-                self._draw_graph_lines_for_test(ti, plot_rect, [], [], [], self.graph_qc_max_mpa, self.graph_fs_max_kpa)
+                if show_graphs:
+                    self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
+                    self._draw_groundwater_line_for_test(ti, plot_rect)
+                    self._draw_graph_lines_for_test(ti, plot_rect, [], [], [], self.graph_qc_max_mpa, self.graph_fs_max_kpa)
                 for span in labels:
                     self._draw_layer_label_chip(span, tag_overlay)
-                self._draw_layer_handles_for_test(ti, plot_rect)
+                if show_geology:
+                    self._draw_layer_handles_for_test(ti, plot_rect)
                 continue
             packed = sorted(zip(y_points, qc_vals, fs_vals), key=lambda x: x[0])
             y_points = [x[0] for x in packed]
             qc_vals = [x[1] for x in packed]
             fs_vals = [x[2] for x in packed]
 
-            self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
-            self._draw_groundwater_line_for_test(ti, plot_rect)
-            self._draw_graph_lines_for_test(
-                ti,
-                plot_rect,
-                y_points,
-                qc_vals,
-                fs_vals,
-                self.graph_qc_max_mpa,
-                self.graph_fs_max_kpa,
-            )
+            if show_graphs:
+                self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
+                self._draw_groundwater_line_for_test(ti, plot_rect)
+                self._draw_graph_lines_for_test(
+                    ti,
+                    plot_rect,
+                    y_points,
+                    qc_vals,
+                    fs_vals,
+                    self.graph_qc_max_mpa,
+                    self.graph_fs_max_kpa,
+                )
             for span in labels:
                 self._draw_layer_label_chip(span, tag_overlay)
-            self._draw_layer_handles_for_test(ti, plot_rect)
+            if show_geology:
+                self._draw_layer_handles_for_test(ti, plot_rect)
             if bool(getattr(self, "_debug_layers_overlay", False)) and bool(getattr(self, "compact_1m", False)) and bool(getattr(self, "expanded_meters", set())):
                 t_layers = self._ensure_test_layers(t)
                 dbg = f"LAYERS:{len(t_layers)} EDIT:True TEST:{getattr(t, 'tid', ti)}"
@@ -5910,7 +5920,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.hcanvas.create_rectangle(x0, y0, x1, y1, fill="#d0d0d0", outline="", stipple="gray50")
 
         self._update_scrollregion()
-        if bool(getattr(self, "show_graphs", False)):
+        if self._is_graph_panel_visible():
             self._redraw_graphs_now()
         else:
             self._clear_graph_layers()
