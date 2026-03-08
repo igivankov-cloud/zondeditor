@@ -2312,11 +2312,10 @@ class GeoCanvasEditor(tk.Tk):
         """Окно после открытия GEO:
         - по центру рабочей области
         - шаг 10/5 см (по умолчанию 10)
-        - поле 'Объект' сверху
-        - общая начальная глубина + 'Применить ко всем'
+        - общая начальная глубина + кнопка 'Применить ко всем'
         - список опытов: h0 + дата/время + кнопка календаря
         - Enter перескакивает по ячейкам h0
-        - клик по неактивной ячейке снимает 'Применить ко всем' и активирует все поля
+        - кнопка 'Применить ко всем' копирует общую глубину и выбранный шаг во все СЗ
         """
         dlg = tk.Toplevel(self)
         dlg.title("Параметры зондирований")
@@ -2343,22 +2342,11 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             common_depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
         common_var = tk.StringVar(master=self, value=f"{common_depth0:g}")
-        # По умолчанию выключено: массовое применение только как явное действие пользователя.
-        apply_all_var = tk.BooleanVar(master=self, value=False)
-
-        # объект (встроено)
-        obj_var = tk.StringVar(master=self, value=(getattr(self, "object_code", "") or ""))
-
         # сообщение об ошибке
         msg_var = tk.StringVar(master=self, value="")
         # msg_lbl будет создан ниже, перед кнопками
 
-        # --- объект ---
         r = 1
-        ttk.Label(frm, text="Объект:").grid(row=r, column=0, sticky="w", padx=(0, 8), pady=2)
-        obj_ent = ttk.Entry(frm, textvariable=obj_var, width=52)
-        obj_ent.grid(row=r, column=1, columnspan=4, sticky="we", pady=2)
-        r += 1
 
         # --- шаг ---
         if need_step:
@@ -2391,8 +2379,8 @@ class GeoCanvasEditor(tk.Tk):
 
         common_ent.bind("<FocusIn>", _on_common_focus_in)
 
-        apply_all_chk = ttk.Checkbutton(frm, text="Применить ко всем", variable=apply_all_var)
-        apply_all_chk.grid(row=r, column=2, columnspan=3, sticky="w", padx=(12, 0), pady=2)
+        apply_all_btn = ttk.Button(frm, text="Применить ко всем")
+        apply_all_btn.grid(row=r, column=2, columnspan=3, sticky="w", padx=(12, 0), pady=2)
         r += 1
 
         ttk.Separator(frm).grid(row=r, column=0, columnspan=5, sticky="ew", pady=(8, 8))
@@ -2520,6 +2508,28 @@ class GeoCanvasEditor(tk.Tk):
 
             row_vars.append((t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, gwl_on_var, gwl_var, gwl_ent))
 
+        def _apply_common_to_all_rows(_ev=None):
+            cd = _parse_depth_str(common_var.get())
+            if cd is None:
+                msg_var.set("Введите корректную общую начальную глубину (например 1.2).")
+                return
+            if not (0.0 <= cd <= 4.0):
+                msg_var.set("Начальная глубина должна быть в диапазоне 0..4 м.")
+                return
+            step_cm_txt = (step_var.get() or "").strip()
+            if step_cm_txt not in ("5", "10"):
+                msg_var.set("Выберите шаг 5 или 10 см.")
+                return
+            for (_t, _tid, h0_var, _ent, step_var_row, _step_ent, _dt_var, _dt_lbl, *_rest) in row_vars:
+                h0_var.set(f"{cd:g}")
+                step_var_row.set(step_cm_txt)
+            msg_var.set("")
+
+        try:
+            apply_all_btn.configure(command=_apply_common_to_all_rows)
+        except Exception:
+            pass
+
         def _open_dt_calendar(row_tuple):
             t, tid, h0_var, ent, _step_var_row, _step_ent, dt_var, dt_lbl, *_rest = row_tuple
             # подсветка строки на время редактирования
@@ -2552,113 +2562,44 @@ class GeoCanvasEditor(tk.Tk):
         for row in row_vars:
             row[7].bind("<Button-1>", lambda e, r=row: _open_dt_calendar(r))
         recompute_busy = False
-        def _recompute_apply_state():
+        def _recompute_common_depth_marker():
             nonlocal recompute_busy
             if recompute_busy:
                 return
             recompute_busy = True
             try:
                 msg_var.set("")
-
-                # Если apply_all выключен и глубины разные — показываем '(разные)' в общей ячейке.
-                # Важно: не подставлять скрыто 0 как fallback.
-                if (not apply_all_var.get()):
-                    try:
-                        vals = []
-                        for (_t, tid, h0_var, _ent, _step_var_row, _step_ent, _dt_var, _dt_lbl, *_rest) in row_vars:
-                            dv = _parse_depth_str(h0_var.get())
-                            if dv is None:
-                                try:
-                                    dv = float((getattr(self, "depth0_by_tid", {}) or {}).get(int(tid), self._current_start_depth_for_test(_t)))
-                                except Exception:
-                                    dv = float(self._current_start_depth_for_test(_t))
-                            vals.append(float(dv))
-                        uniq_h0 = sorted({round(float(v), 6) for v in vals})
-                    except Exception:
-                        uniq_h0 = []
-                    cur_txt = (common_var.get() or '').strip()
-                    cur_can_override = (cur_txt == '' or cur_txt.startswith('('))
-                    if len(uniq_h0) > 1:
-                        if cur_can_override and cur_txt != "(разные)":
-                            common_var.set("(разные)")
-                    elif len(uniq_h0) == 1:
-                        v0 = float(uniq_h0[0])
-                        if cur_can_override and cur_txt != f"{v0:g}":
-                            common_var.set(f"{v0:g}")
-
-                cd = _parse_depth_str(common_var.get())
-
-                if apply_all_var.get():
-                    # Массовое применение — только если явно введено валидное общее значение.
-                    if cd is not None:
-                        for (_t, _tid, h0_var, _ent, _step_var_row, _step_ent, _dt_var, _dt_lbl, *_rest) in row_vars:
-                            h0_var.set(f"{cd:g}")
-                    for (_t, _tid, _h0_var, ent, _step_var_row, _step_ent, _dt_var, _dt_lbl, *_rest) in row_vars:
+                vals = []
+                for (_t, tid, h0_var, _ent, _step_var_row, _step_ent, _dt_var, _dt_lbl, *_rest) in row_vars:
+                    dv = _parse_depth_str(h0_var.get())
+                    if dv is None:
                         try:
-                            ent.config(state="disabled")
+                            dv = float((getattr(self, "depth0_by_tid", {}) or {}).get(int(tid), self._current_start_depth_for_test(_t)))
                         except Exception:
-                            pass
-                else:
-                    for (_t, _tid, _h0_var, ent, _step_var_row, _step_ent, _dt_var, _dt_lbl, *_rest) in row_vars:
-                        try:
-                            ent.config(state="normal")
-                        except Exception:
-                            pass
-
-                # общая ячейка всегда доступна
-                try:
-                    common_ent.config(state="normal")
-                except Exception:
-                    pass
+                            dv = float(self._current_start_depth_for_test(_t))
+                    vals.append(float(dv))
+                uniq_h0 = sorted({round(float(v), 6) for v in vals})
+                cur_txt = (common_var.get() or '').strip()
+                cur_can_override = (cur_txt == '' or cur_txt.startswith('('))
+                if len(uniq_h0) > 1:
+                    if cur_can_override and cur_txt != "(разные)":
+                        common_var.set("(разные)")
+                elif len(uniq_h0) == 1:
+                    v0 = float(uniq_h0[0])
+                    if cur_can_override and cur_txt != f"{v0:g}":
+                        common_var.set(f"{v0:g}")
             finally:
                 recompute_busy = False
 
-
-        def _on_common_change(*_):
-            nonlocal recompute_busy
-            if recompute_busy:
-                return
-            if apply_all_var.get():
-                _recompute_apply_state()
-
-        def _on_apply_toggle(*_):
-            _recompute_apply_state()
-
-        common_var.trace_add("write", _on_common_change)
-        apply_all_var.trace_add("write", _on_apply_toggle)
-
-        _recompute_apply_state()
-
-        # если пользователь ввёл в строке значение != общего — снимаем apply_all
         def _make_row_trace(h0_var):
             def _on_row_change(*_):
-                cd = _parse_depth_str(common_var.get())
-                dv = _parse_depth_str(h0_var.get())
-                if dv is None:
-                    return
-                if (cd is not None) and abs(dv - cd) > 1e-9 and apply_all_var.get():
-                    apply_all_var.set(False)
-                _recompute_apply_state()
+                _recompute_common_depth_marker()
             h0_var.trace_add("write", _on_row_change)
 
         for (t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, *_rest) in row_vars:
             _make_row_trace(h0_var)
-
-        # клик по неактивной ячейке: активировать все и снять галочку
-        def _on_entry_click(event, ent_ref):
-            try:
-                st = str(ent_ref.cget("state"))
-            except Exception:
-                st = "normal"
-            if st == "disabled":
-                apply_all_var.set(False)
-                dlg.after(0, lambda: (ent_ref.focus_set(), ent_ref.selection_range(0, "end")))
-                return "break"
-            return None
-
-        for (t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, *_rest) in row_vars:
-            ent.bind("<Button-1>", lambda e, ee=ent: _on_entry_click(e, ee), add="+")
             ent.bind("<FocusIn>", lambda e, ee=ent: ee.selection_range(0, "end"), add="+")
+
         # (кнопки календаря убраны: редактирование по клику на дате)
 
         # Enter = переход к следующей ячейке h0
@@ -2678,7 +2619,7 @@ class GeoCanvasEditor(tk.Tk):
             ent.bind("<Return>", lambda e, k=idx: _focus_next(k))
 
         # применить начальные состояния
-        _recompute_apply_state()
+        _recompute_common_depth_marker()
 
         # --- сообщение об ошибке + кнопки ---
         msg_lbl = ttk.Label(frm, textvariable=msg_var, foreground="#b00020")
@@ -2698,32 +2639,15 @@ class GeoCanvasEditor(tk.Tk):
                     msg_var.set("Выберите шаг 5 или 10 см.")
                     return
 
-            # общая глубина:
-            # - при apply_all=True: обязана быть числом 0..4
-            # - при apply_all=False: допускается '(разные)' / пусто, тогда валидируем только строки
+            # общая глубина (в шапке может быть число или '(разные)')
             common_txt = (common_var.get() or "").strip()
             cd = _parse_depth_str(common_txt)
-            if apply_all_var.get():
-                if cd is None:
-                    msg_var.set("Некорректная начальная глубина. Пример: 1.2")
-                    return
-                if not (0.0 <= cd <= 4.0):
-                    msg_var.set("Начальная глубина должна быть в диапазоне 0..4 м.")
-                    return
-            else:
-                # когда глубины разные — common может быть '(разные)' и это ОК
-                if cd is not None and not (0.0 <= cd <= 4.0):
-                    msg_var.set("Начальная глубина должна быть в диапазоне 0..4 м.")
-                    return
-
-            # объект
-            self.object_code = (obj_var.get() or "").strip()
+            if cd is not None and not (0.0 <= cd <= 4.0):
+                msg_var.set("Начальная глубина должна быть в диапазоне 0..4 м.")
+                return
 
             # сохранить общие
-            # depth_start определим ниже: либо из общей ячейки (apply_all), либо из строк (если глубины разные)
             self._depth_confirmed = True
-            if apply_all_var.get() and cd is not None:
-                self.depth_start = float(cd)
 
             if need_step:
                 self.step_m = 0.05 if step_var.get().strip() == "5" else 0.10
@@ -2733,17 +2657,12 @@ class GeoCanvasEditor(tk.Tk):
             prev_depth0 = dict(getattr(self, "depth0_by_tid", {}) or {})
             new_depth0 = dict(prev_depth0)
             for (t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, *_rest) in row_vars:
-                if apply_all_var.get():
-                    # Явное массовое применение: всем назначаем только общее значение.
-                    dv = cd
-                else:
-                    dv = _parse_depth_str(h0_var.get())
-                    if dv is None:
-                        # При apply_all=False никаких скрытых подстановок из common/0.
-                        try:
-                            dv = float(prev_depth0.get(int(tid), self._current_start_depth_for_test(t)))
-                        except Exception:
-                            dv = float(self._current_start_depth_for_test(t))
+                dv = _parse_depth_str(h0_var.get())
+                if dv is None:
+                    try:
+                        dv = float(prev_depth0.get(int(tid), self._current_start_depth_for_test(t)))
+                    except Exception:
+                        dv = float(self._current_start_depth_for_test(t))
                 if not (0.0 <= dv <= 4.0):
                     msg_var.set(f"СЗ-{tid}: начальная глубина должна быть 0..4 м.")
                     return
@@ -2773,11 +2692,11 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
 
-            # если глубины разные (apply_all=False) — depth_start берём как минимум из строк
+            # depth_start = минимум по текущим индивидуальным глубинам
             try:
-                if (not apply_all_var.get()) and self.depth0_by_tid:
+                if self.depth0_by_tid:
                     self.depth_start = float(min(self.depth0_by_tid.values()))
-                elif (not apply_all_var.get()) and (cd is not None):
+                elif cd is not None:
                     self.depth_start = float(cd)
             except Exception:
                 pass
