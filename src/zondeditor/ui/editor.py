@@ -4365,17 +4365,19 @@ class GeoCanvasEditor(tk.Tk):
         handle_x = x1 - 2
         plus_x = x0 + 10
 
-        def _draw_plus(tag: str, y_pos: float, boundary: int, kind: str, *, active: bool = True):
-            self.canvas.create_rectangle(plus_x - 6, y_pos - 6, plus_x + 6, y_pos + 6, fill="#ffffff", outline="#8f8f8f", width=1, tags=("layer_handles", "layer_plus_box", tag))
-            self.canvas.create_text(plus_x, y_pos, text="+", fill=("#1d4f7c" if active else "#bdbdbd"), font=("Segoe UI", 9, "bold"), tags=("layer_handles", "layer_plus", tag))
+        def _draw_plus(tag: str, y_pos: float, boundary: int, kind: str, *, active: bool = True, x_pos: float | None = None):
+            px = float(plus_x if x_pos is None else x_pos)
+            self.canvas.create_rectangle(px - 6, y_pos - 6, px + 6, y_pos + 6, fill="#ffffff", outline="#8f8f8f", width=1, tags=("layer_handles", "layer_plus_box", tag))
+            self.canvas.create_text(px, y_pos, text="+", fill=("#1d4f7c" if active else "#bdbdbd"), font=("Segoe UI", 9, "bold"), tags=("layer_handles", "layer_plus", tag))
             if active:
-                self._layer_handle_hitbox.append({"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (plus_x - 10, y_pos - 10, plus_x + 10, y_pos + 10)})
+                self._layer_handle_hitbox.append({"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (px - 10, y_pos - 10, px + 10, y_pos + 10)})
 
-        def _draw_minus(tag: str, y_pos: float, boundary: int, kind: str, *, active: bool = True):
-            self.canvas.create_rectangle(plus_x - 6, y_pos - 6, plus_x + 6, y_pos + 6, fill="#ffffff", outline="#8f8f8f", width=1, tags=("layer_handles", "layer_minus_box", tag))
-            self.canvas.create_text(plus_x, y_pos, text="−", fill=("#7c1d1d" if active else "#bdbdbd"), font=("Segoe UI", 9, "bold"), tags=("layer_handles", "layer_minus", tag))
+        def _draw_minus(tag: str, y_pos: float, boundary: int, kind: str, *, active: bool = True, x_pos: float | None = None):
+            px = float(plus_x if x_pos is None else x_pos)
+            self.canvas.create_rectangle(px - 6, y_pos - 6, px + 6, y_pos + 6, fill="#ffffff", outline="#8f8f8f", width=1, tags=("layer_handles", "layer_minus_box", tag))
+            self.canvas.create_text(px, y_pos, text="−", fill=("#7c1d1d" if active else "#bdbdbd"), font=("Segoe UI", 9, "bold"), tags=("layer_handles", "layer_minus", tag))
             if active:
-                self._layer_handle_hitbox.append({"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (plus_x - 10, y_pos - 10, plus_x + 10, y_pos + 10)})
+                self._layer_handle_hitbox.append({"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (px - 10, y_pos - 10, px + 10, y_pos + 10)})
 
         if layers:
             top_y = self._depth_to_canvas_y(float(layers[0].top_m))
@@ -4385,7 +4387,7 @@ class GeoCanvasEditor(tk.Tk):
                 _draw_minus(f"layer_minus_top_{ti}", top_y + 20, 0, "minus_top", active=(len(layers) > 1))
             if bot_y is not None:
                 _draw_plus(f"layer_plus_bottom_{ti}", bot_y, len(layers), "plus_bottom", active=self._can_insert_layer_from_bottom(int(ti)))
-                _draw_minus(f"layer_minus_bottom_{ti}", bot_y + 14, len(layers) - 1, "minus_bottom", active=(len(layers) > 1))
+                _draw_minus(f"layer_minus_bottom_{ti}", bot_y, len(layers) - 1, "minus_bottom", active=(len(layers) > 1), x_pos=(plus_x + 14))
 
         for bi in range(1, len(layers)):
             boundary = layers[bi].top_m
@@ -5744,6 +5746,8 @@ class GeoCanvasEditor(tk.Tk):
                             meter_fs_max = float(fs_kpa) if meter_fs_max is None else max(float(meter_fs_max), float(fs_kpa))
                     qc_txt = "" if meter_qc_max is None else (f"{meter_qc_max:.2f}".rstrip("0").rstrip("."))
                     fs_txt = "" if meter_fs_max is None else str(int(round(float(meter_fs_max))))
+                    if meter_qc_max is None and meter_fs_max is None:
+                        depth_txt = ""
                     if getattr(self, "geo_kind", "K2") == "K4":
                         incl_txt = ""
 
@@ -5778,8 +5782,8 @@ class GeoCanvasEditor(tk.Tk):
 
                 if is_meter_row:
                     depth_fill = "#f3f6fb"
-                elif r == start_r and has_row:
-                    depth_fill = "white"   # editable cell
+                elif has_row and int(data_i) == 0:
+                    depth_fill = "white"   # editable cell (только абсолютная первая data-row)
                 else:
                     depth_fill = (GUI_DEPTH_BG if has_row else "white")
 
