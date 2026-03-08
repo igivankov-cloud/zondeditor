@@ -170,6 +170,8 @@ class GeoCanvasEditor(tk.Tk):
         # Для GEO: индивидуальная начальная глубина по каждому опыту (tid -> h0)
         # Если не задано — используется self.depth_start.
         self.depth0_by_tid = {}
+        self.step_by_tid = {}  # tid -> step_m (float), задел под индивидуальный шаг
+        self.gwl_by_tid = {}  # tid -> {"enabled": bool, "value": float|None}
 
         self.undo_stack: list[dict] = []
         self.redo_stack: list[dict] = []
@@ -525,6 +527,8 @@ class GeoCanvasEditor(tk.Tk):
             "flags": flags_snap,
             "step_m": float(getattr(self, "step_m", 0.05) or 0.05),
             "depth0_by_tid": dict(getattr(self, "depth0_by_tid", {}) or {}),
+            "step_by_tid": dict(getattr(self, "step_by_tid", {}) or {}),
+            "gwl_by_tid": copy.deepcopy(dict(getattr(self, "gwl_by_tid", {}) or {})),
             "compact_1m": bool(getattr(self, "compact_1m", False)),
             "show_geology_column": bool(getattr(self, "show_geology_column", True)),
             "display_sort_mode": str(getattr(self, "display_sort_mode", "date") or "date"),
@@ -550,6 +554,14 @@ class GeoCanvasEditor(tk.Tk):
             self.depth0_by_tid = dict((snap.get("depth0_by_tid") or {}))
         except Exception:
             self.depth0_by_tid = {}
+        try:
+            self.step_by_tid = dict((snap.get("step_by_tid") or {}))
+        except Exception:
+            self.step_by_tid = {}
+        try:
+            self.gwl_by_tid = copy.deepcopy(dict((snap.get("gwl_by_tid") or {})) or {})
+        except Exception:
+            self.gwl_by_tid = {}
 
         try:
             self.compact_1m = bool(snap.get("compact_1m", getattr(self, "compact_1m", False)))
@@ -792,6 +804,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.set_show_geology_column(self.show_geology_column)
         except Exception:
             pass
+        self._build_grid()
         self._redraw()
         self.schedule_graph_redraw()
 
@@ -1338,7 +1351,7 @@ class GeoCanvasEditor(tk.Tk):
         make_btn(btns, "🛠", "Корректировка", self.fix_by_algorithm, ).grid(row=0, column=1, padx=4)
         make_btn(btns, "10→5", "Конвертировать шаг 10 см → 5 см", self.convert_10_to_5, w=5).grid(row=0, column=2, padx=4)  
         
-        make_btn(btns, "⚙", "Параметры зондирований (GEO)", self.open_geo_params_dialog, w=3).grid(row=0, column=3, padx=4)
+        make_btn(btns, "⚙", "Параметры зондирований", self.open_geo_params_dialog, w=3).grid(row=0, column=3, padx=4)
         self._show_graphs_var = tk.BooleanVar(master=self, value=bool(getattr(self, "show_graphs", False)))
         graphs_chk = ttk.Checkbutton(btns, text="Графики", variable=self._show_graphs_var, command=self._toggle_show_graphs_from_ui)
         graphs_chk.grid(row=0, column=4, padx=6)
@@ -1361,6 +1374,8 @@ class GeoCanvasEditor(tk.Tk):
         self.fsleeve_var = tk.StringVar(master=self, value="10")
         self.acon_var = tk.StringVar(master=self, value="10")
         self.asl_var = tk.StringVar(master=self, value="350")
+        self.controller_type_var = tk.StringVar(master=self, value="")
+        self.probe_type_var = tk.StringVar(master=self, value="")
 
         def p_row(r, c, label, var, tip):
             ttk.Label(params, text=label).grid(row=r, column=c, sticky="w", padx=(8, 4), pady=2)
@@ -1408,6 +1423,7 @@ class GeoCanvasEditor(tk.Tk):
                 "export_dxf": self.export_dxf,
                 "export_cpt_protocol": self.export_cpt_protocol,
                 "geo_params": self.open_geo_params_dialog,
+                "common_params_changed": self._on_common_params_changed,
                 "fix_algo": self.fix_by_algorithm,
                 "reduce_step": self.convert_10_to_5,
                 "toggle_graphs": self._toggle_show_graphs,
@@ -1427,6 +1443,7 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view = RibbonView(self, commands=commands, icon_font=_pick_icon_font(11))
             self.ribbon_view.pack(side="top", fill="x", before=ribbon)
             self.ribbon_view.set_object_name(self.object_name)
+            self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
             self.ribbon_view.set_show_graphs(bool(getattr(self, "show_graphs", False)))
             self.ribbon_view.set_show_geology_column(bool(getattr(self, "show_geology_column", True)))
             self.ribbon_view.set_compact_1m(bool(getattr(self, "compact_1m", False)))
@@ -1721,10 +1738,284 @@ class GeoCanvasEditor(tk.Tk):
         self._ensure_object_code()
         self._update_window_title()
 
+    def _current_start_depth_for_test(self, t) -> float:
+        """Текущая начальная глубина опыта из модели (единый источник)."""
+        tid = int(getattr(t, "tid", 0) or 0)
+        try:
+            if getattr(self, "depth0_by_tid", None) and tid in self.depth0_by_tid:
+                return float(self.depth0_by_tid[tid])
+        except Exception:
+            pass
+        try:
+            d0 = _parse_depth_float((getattr(t, "depth", []) or [""])[0])
+            if d0 is not None:
+                return float(d0)
+        except Exception:
+            pass
+        return float(getattr(self, "depth_start", 0.0) or 0.0)
+
+    def _set_start_depth_for_test(self, t, depth0: float):
+        """Обновляет модель начальной глубины для опыта."""
+        tid = int(getattr(t, "tid", 0) or 0)
+        try:
+            self.depth0_by_tid[int(tid)] = float(depth0)
+        except Exception:
+            pass
+
+    def _current_step_for_test(self, t) -> float:
+        """Текущий шаг опыта из модели (задел под индивидуальный шаг)."""
+        tid = int(getattr(t, "tid", 0) or 0)
+        try:
+            if getattr(self, "step_by_tid", None) and tid in self.step_by_tid:
+                return float(self.step_by_tid[tid])
+        except Exception:
+            pass
+        try:
+            if getattr(t, "depth", None) and len(t.depth) >= 2:
+                d0 = _parse_depth_float(t.depth[0])
+                d1 = _parse_depth_float(t.depth[1])
+                if d0 is not None and d1 is not None:
+                    dv = float(d1 - d0)
+                    if dv > 0:
+                        return dv
+        except Exception:
+            pass
+        return float(getattr(self, "step_m", 0.1) or 0.1)
+
+    def _set_step_for_test(self, t, step_m: float):
+        """Обновляет шаг опыта в модели (tid -> step_m)."""
+        tid = int(getattr(t, "tid", 0) or 0)
+        try:
+            step_f = float(step_m)
+            if step_f > 0:
+                self.step_by_tid[int(tid)] = step_f
+        except Exception:
+            pass
+
+    def _parse_probe_type_values(self, probe_type: str) -> dict[str, str]:
+        """Parse probe type like A3/50/20/10/350 [№115]."""
+        s = str(probe_type or "").strip()
+        m = re.search(r"([A-Za-zА-Яа-я]\d+)\s*/\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)", s)
+        if not m:
+            return {}
+        return {
+            "probe_type": f"{m.group(1)}/{m.group(2)}/{m.group(3)}/{m.group(4)}/{m.group(5)}",
+            "cone_kn": m.group(2),
+            "sleeve_kn": m.group(3),
+            "cone_area_cm2": m.group(4),
+            "sleeve_area_cm2": m.group(5),
+        }
+
+    def _extract_sounding_params_from_geo_bytes(self, data: bytes, geo_kind: str) -> dict[str, str]:
+        params = {
+            "controller_type": "ТЕСТ-К4" if str(geo_kind).upper() == "K4" else "ТЕСТ-К2",
+            "controller_scale_div": (self.scale_var.get().strip() if hasattr(self, "scale_var") else "250") or "250",
+            "probe_type": (self.probe_type_var.get().strip() if hasattr(self, "probe_type_var") else "") or "",
+            "cone_kn": (self.fcone_var.get().strip() if hasattr(self, "fcone_var") else "30") or "30",
+            "sleeve_kn": (self.fsleeve_var.get().strip() if hasattr(self, "fsleeve_var") else "10") or "10",
+            "cone_area_cm2": (self.acon_var.get().strip() if hasattr(self, "acon_var") else "10") or "10",
+            "sleeve_area_cm2": (self.asl_var.get().strip() if hasattr(self, "asl_var") else "350") or "350",
+        }
+        if str(geo_kind).upper() == "K4":
+            params["controller_type"] = "ТЕСТ-К4М" if (bytes([0xCA,0x34,0xCC]) in data or b"K4M" in data.upper()) else "ТЕСТ-К4"
+            # try textual probe type payload
+            probe_txt = ""
+            for enc in ("cp1251", "cp866", "latin1"):
+                try:
+                    txt = data.decode(enc, errors="ignore")
+                except Exception:
+                    continue
+                mm = re.search(r"[A-Za-zА-Яа-я]\d+\s*/\s*\d+\s*/\s*\d+\s*/\s*\d+\s*/\s*\d+(?:\s*\[[^\]]+\])?", txt)
+                if mm:
+                    probe_txt = mm.group(0).strip()
+                    break
+            if probe_txt:
+                params["probe_type"] = probe_txt
+                params.update(self._parse_probe_type_values(probe_txt))
+            else:
+                # fallback from first K4 block header bytes (empirical)
+                try:
+                    starts = __import__("src.zondeditor.io.k4_reader", fromlist=["_k4_find_starts"])._k4_find_starts(data)
+                    if starts:
+                        p = int(starts[0])
+                        cone = int(data[p + 15])
+                        sleeve = int(data[p + 16])
+                        cone_area = int(data[p + 18])
+                        sleeve_area = int(data[p + 19]) + (int(data[p + 20]) << 8)
+                        if 1 <= cone <= 500:
+                            params["cone_kn"] = str(cone)
+                        if 1 <= sleeve <= 500:
+                            params["sleeve_kn"] = str(sleeve)
+                        if 1 <= cone_area <= 200:
+                            params["cone_area_cm2"] = str(cone_area)
+                        if 1 <= sleeve_area <= 5000:
+                            params["sleeve_area_cm2"] = str(sleeve_area)
+                        if not params.get("probe_type"):
+                            params["probe_type"] = f"A3/{params['cone_kn']}/{params['sleeve_kn']}/{params['cone_area_cm2']}/{params['sleeve_area_cm2']}"
+                except Exception:
+                    pass
+        return params
+
+    def _apply_sounding_params(self, params: dict[str, str] | None):
+        p = dict(params or {})
+        ct = str(p.get("controller_type", "") or "")
+        sc = str(p.get("controller_scale_div", "") or "")
+        pr = str(p.get("probe_type", "") or "")
+        ckn = str(p.get("cone_kn", "") or "")
+        skn = str(p.get("sleeve_kn", "") or "")
+        ca = str(p.get("cone_area_cm2", "") or "")
+        sa = str(p.get("sleeve_area_cm2", "") or "")
+        if hasattr(self, "controller_type_var") and ct:
+            self.controller_type_var.set(ct)
+        if hasattr(self, "probe_type_var") and pr:
+            self.probe_type_var.set(pr)
+        if sc and hasattr(self, "scale_var"):
+            self.scale_var.set(sc)
+        if ckn and hasattr(self, "fcone_var"):
+            self.fcone_var.set(ckn)
+        if skn and hasattr(self, "fsleeve_var"):
+            self.fsleeve_var.set(skn)
+        if ca and hasattr(self, "acon_var"):
+            self.acon_var.set(ca)
+        if sa and hasattr(self, "asl_var"):
+            self.asl_var.set(sa)
+
+    def open_sounding_params_dialog(self):
+        """Минимальные параметры зондирования: контроллер/зонд/нагрузки/площади."""
+        dlg = tk.Toplevel(self)
+        dlg.title("Параметры зондирований")
+        dlg.transient(self)
+        dlg.grab_set()
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill="both", expand=True)
+
+        vars_map = {
+            "controller_type": tk.StringVar(master=self, value=(self.controller_type_var.get().strip() if hasattr(self, "controller_type_var") else "")),
+            "controller_scale_div": tk.StringVar(master=self, value=(self.scale_var.get().strip() if hasattr(self, "scale_var") else "250")),
+            "probe_type": tk.StringVar(master=self, value=(self.probe_type_var.get().strip() if hasattr(self, "probe_type_var") else "")),
+            "cone_kn": tk.StringVar(master=self, value=(self.fcone_var.get().strip() if hasattr(self, "fcone_var") else "30")),
+            "sleeve_kn": tk.StringVar(master=self, value=(self.fsleeve_var.get().strip() if hasattr(self, "fsleeve_var") else "10")),
+            "cone_area_cm2": tk.StringVar(master=self, value=(self.acon_var.get().strip() if hasattr(self, "acon_var") else "10")),
+            "sleeve_area_cm2": tk.StringVar(master=self, value=(self.asl_var.get().strip() if hasattr(self, "asl_var") else "350")),
+        }
+        labels = [
+            ("Тип контроллера", "controller_type"),
+            ("Шкала прибора", "controller_scale_div"),
+            ("Тип зонда", "probe_type"),
+            ("КН лоб", "cone_kn"),
+            ("КН бок", "sleeve_kn"),
+            ("Площадь конуса, см²", "cone_area_cm2"),
+            ("Площадь муфты, см²", "sleeve_area_cm2"),
+        ]
+        entries = {}
+        for i, (lbl, key) in enumerate(labels):
+            ttk.Label(frm, text=lbl).grid(row=i, column=0, sticky="w", padx=(0, 8), pady=2)
+            e = ttk.Entry(frm, textvariable=vars_map[key], width=28)
+            e.grid(row=i, column=1, sticky="ew", pady=2)
+            entries[key] = e
+        frm.columnconfigure(1, weight=1)
+
+        if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4":
+            try:
+                entries["controller_scale_div"].configure(state="disabled")
+            except Exception:
+                pass
+
+        def _on_probe_change(*_):
+            parsed = self._parse_probe_type_values(vars_map["probe_type"].get())
+            if not parsed:
+                return
+            vars_map["cone_kn"].set(parsed["cone_kn"])
+            vars_map["sleeve_kn"].set(parsed["sleeve_kn"])
+            vars_map["cone_area_cm2"].set(parsed["cone_area_cm2"])
+            vars_map["sleeve_area_cm2"].set(parsed["sleeve_area_cm2"])
+
+        vars_map["probe_type"].trace_add("write", _on_probe_change)
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=len(labels), column=0, columnspan=2, sticky="e", pady=(10, 0))
+
+        def on_ok():
+            self.controller_type_var.set(vars_map["controller_type"].get().strip())
+            self.probe_type_var.set(vars_map["probe_type"].get().strip())
+            if str(getattr(self, "geo_kind", "K2") or "K2").upper() != "K4":
+                self.scale_var.set(vars_map["controller_scale_div"].get().strip() or self.scale_var.get())
+            self.fcone_var.set(vars_map["cone_kn"].get().strip() or self.fcone_var.get())
+            self.fsleeve_var.set(vars_map["sleeve_kn"].get().strip() or self.fsleeve_var.get())
+            self.acon_var.set(vars_map["cone_area_cm2"].get().strip() or self.acon_var.get())
+            self.asl_var.set(vars_map["sleeve_area_cm2"].get().strip() or self.asl_var.get())
+            try:
+                self._redraw()
+                self.schedule_graph_redraw()
+            except Exception:
+                pass
+            dlg.destroy()
+
+        ttk.Button(btns, text="Отмена", command=dlg.destroy).pack(side="right")
+        ttk.Button(btns, text="OK", command=on_ok).pack(side="right", padx=(0, 8))
+        try:
+            dlg.bind("<Escape>", lambda _e: dlg.destroy())
+            dlg.bind("<Return>", lambda _e: on_ok())
+            self._center_child(dlg)
+        except Exception:
+            pass
+        self.wait_window(dlg)
+
+    def _current_common_params(self) -> dict[str, str]:
+        return {
+            "controller_type": (self.controller_type_var.get().strip() if hasattr(self, "controller_type_var") else ""),
+            "controller_scale_div": (self.scale_var.get().strip() if hasattr(self, "scale_var") else "250"),
+            "probe_type": (self.probe_type_var.get().strip() if hasattr(self, "probe_type_var") else ""),
+            "cone_kn": (self.fcone_var.get().strip() if hasattr(self, "fcone_var") else "30"),
+            "sleeve_kn": (self.fsleeve_var.get().strip() if hasattr(self, "fsleeve_var") else "10"),
+            "cone_area_cm2": (self.acon_var.get().strip() if hasattr(self, "acon_var") else "10"),
+            "sleeve_area_cm2": (self.asl_var.get().strip() if hasattr(self, "asl_var") else "350"),
+        }
+
+    def _on_common_params_changed(self, params: dict[str, str] | None = None):
+        p = dict(params or {})
+        if hasattr(self, "controller_type_var") and "controller_type" in p:
+            self.controller_type_var.set(str(p.get("controller_type", "") or ""))
+        if hasattr(self, "probe_type_var") and "probe_type" in p:
+            self.probe_type_var.set(str(p.get("probe_type", "") or ""))
+        if "controller_scale_div" in p and str(getattr(self, "geo_kind", "K2") or "K2").upper() != "K4":
+            self.scale_var.set(str(p.get("controller_scale_div", "") or self.scale_var.get()))
+        if "cone_kn" in p:
+            self.fcone_var.set(str(p.get("cone_kn", "") or self.fcone_var.get()))
+        if "sleeve_kn" in p:
+            self.fsleeve_var.set(str(p.get("sleeve_kn", "") or self.fsleeve_var.get()))
+        if "cone_area_cm2" in p:
+            self.acon_var.set(str(p.get("cone_area_cm2", "") or self.acon_var.get()))
+        if "sleeve_area_cm2" in p:
+            self.asl_var.set(str(p.get("sleeve_area_cm2", "") or self.asl_var.get()))
+        try:
+            self.schedule_graph_redraw()
+        except Exception:
+            pass
+
     def open_geo_params_dialog(self):
         """Открыть окно параметров GEO для текущего файла."""
         if not getattr(self, "tests", None):
             return
+
+        # Перед открытием окна принудительно коммитим активное редактирование
+        # (особенно первой глубины), чтобы читать только актуальную модель.
+        try:
+            if getattr(self, "_editing", None):
+                try:
+                    if len(self._editing) >= 4:
+                        ti, row, field, e = self._editing[0], self._editing[1], self._editing[2], self._editing[3]
+                    else:
+                        ti, row, field, e = self._editing
+                except Exception:
+                    ti, row, field, e = None, None, None, None
+                if field == "depth" and ti is not None and e is not None:
+                    self._end_edit_depth0(int(ti), e, commit=True)
+                elif field is not None:
+                    self._end_edit(commit=True)
+        except Exception:
+            pass
+
         # Снимок для Undo делаем только если пользователь нажмёт OK
         snap = None
         try:
@@ -2021,14 +2312,13 @@ class GeoCanvasEditor(tk.Tk):
         """Окно после открытия GEO:
         - по центру рабочей области
         - шаг 10/5 см (по умолчанию 10)
-        - поле 'Объект' сверху
-        - общая начальная глубина + 'Применить ко всем'
+        - общая начальная глубина + кнопка 'Применить ко всем'
         - список опытов: h0 + дата/время + кнопка календаря
         - Enter перескакивает по ячейкам h0
-        - клик по неактивной ячейке снимает 'Применить ко всем' и активирует все поля
+        - кнопка 'Применить ко всем' копирует общую глубину и выбранный шаг во все СЗ
         """
         dlg = tk.Toplevel(self)
-        dlg.title("Параметры GEO")
+        dlg.title("Параметры зондирований")
         dlg.transient(self)
         dlg.grab_set()
         dlg.resizable(False, False)
@@ -2045,30 +2335,18 @@ class GeoCanvasEditor(tk.Tk):
         _sm = float(getattr(self, "step_m", 0.10) or 0.10)
         _default_step = "5" if abs(_sm - 0.05) < 1e-6 else "10"
         step_var = tk.StringVar(master=self, value=_default_step)
-        # общая начальная глубина
-        if getattr(self, "depth0_by_tid", None):
-            try:
-                common_depth0 = float(min(self.depth0_by_tid.values()))
-            except Exception:
-                common_depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
-        else:
+        # общая начальная глубина — из текущей модели по загруженным опытам
+        try:
+            _vals = [float(self._current_start_depth_for_test(t)) for t in (tests_list or [])]
+            common_depth0 = float(min(_vals)) if _vals else float(getattr(self, "depth_start", 0.0) or 0.0)
+        except Exception:
             common_depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
         common_var = tk.StringVar(master=self, value=f"{common_depth0:g}")
-        apply_all_var = tk.BooleanVar(master=self, value=(False if getattr(self, 'geo_kind', 'K2')=='K4' else True))
-
-        # объект (встроено)
-        obj_var = tk.StringVar(master=self, value=(getattr(self, "object_code", "") or ""))
-
         # сообщение об ошибке
         msg_var = tk.StringVar(master=self, value="")
         # msg_lbl будет создан ниже, перед кнопками
 
-        # --- объект ---
         r = 1
-        ttk.Label(frm, text="Объект:").grid(row=r, column=0, sticky="w", padx=(0, 8), pady=2)
-        obj_ent = ttk.Entry(frm, textvariable=obj_var, width=52)
-        obj_ent.grid(row=r, column=1, columnspan=4, sticky="we", pady=2)
-        r += 1
 
         # --- шаг ---
         if need_step:
@@ -2101,8 +2379,8 @@ class GeoCanvasEditor(tk.Tk):
 
         common_ent.bind("<FocusIn>", _on_common_focus_in)
 
-        apply_all_chk = ttk.Checkbutton(frm, text="Применить ко всем", variable=apply_all_var)
-        apply_all_chk.grid(row=r, column=2, columnspan=3, sticky="w", padx=(12, 0), pady=2)
+        apply_all_btn = ttk.Button(frm, text="Применить ко всем")
+        apply_all_btn.grid(row=r, column=2, columnspan=3, sticky="w", padx=(12, 0), pady=2)
         r += 1
 
         ttk.Separator(frm).grid(row=r, column=0, columnspan=5, sticky="ew", pady=(8, 8))
@@ -2131,9 +2409,11 @@ class GeoCanvasEditor(tk.Tk):
 
         ttk.Label(table, text="Опыт", font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w", padx=(0, 10))
         ttk.Label(table, text="Нач. глубина, м", font=("Segoe UI", 9, "bold")).grid(row=0, column=1, sticky="w")
-        ttk.Label(table, text="Дата/время", font=("Segoe UI", 9, "bold")).grid(row=0, column=2, sticky="w", padx=(12, 0))
+        ttk.Label(table, text="Шаг, см", font=("Segoe UI", 9, "bold")).grid(row=0, column=2, sticky="w", padx=(12, 0))
+        ttk.Label(table, text="Дата/время", font=("Segoe UI", 9, "bold")).grid(row=0, column=3, sticky="w", padx=(12, 0))
+        ttk.Label(table, text="УГВ", font=("Segoe UI", 9, "bold")).grid(row=0, column=4, sticky="w", padx=(12, 0))
 
-        row_vars = []   # (t, tid, h0_var, ent, dt_var, dt_lbl)
+        row_vars = []   # (t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, gwl_on_var, gwl_var, gwl_ent)
 
         def _parse_depth_str(s: str):
             try:
@@ -2173,7 +2453,7 @@ class GeoCanvasEditor(tk.Tk):
             ttk.Label(table, text=f"СЗ-{tid}").grid(row=i, column=0, sticky="w", padx=(0, 10), pady=2)
 
             try:
-                init_v = float(self.depth0_by_tid.get(tid, common_depth0))
+                init_v = float(self._current_start_depth_for_test(t))
             except Exception:
                 init_v = common_depth0
 
@@ -2191,17 +2471,67 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
 
+            step_row_m = float(self._current_step_for_test(t))
+            step_row_cm = int(round(step_row_m * 100.0))
+            if step_row_cm <= 0:
+                step_row_cm = 10
+            step_var_row = tk.StringVar(master=self, value=str(step_row_cm))
+            step_ent = ttk.Entry(table, textvariable=step_var_row, width=4)
+            step_ent.grid(row=i, column=2, sticky="w", padx=(12, 0), pady=2)
+
             # дата/время (парсим из файла)
             dt0 = _norm_dt(getattr(t, "dt", None))
             dt_var = tk.StringVar(master=self, value=_fmt_dt(dt0))
 
             dt_lbl = ttk.Label(table, textvariable=dt_var, foreground="#666666", cursor="hand2")
-            dt_lbl.grid(row=i, column=2, sticky="w", padx=(12, 0), pady=2)
+            dt_lbl.grid(row=i, column=3, sticky="w", padx=(12, 0), pady=2)
 
-            row_vars.append((t, tid, h0_var, ent, dt_var, dt_lbl))
+            gwl_state = dict((getattr(self, "gwl_by_tid", {}) or {}).get(int(tid), {}) or {})
+            gwl_enabled = bool(gwl_state.get("enabled", False))
+            gwl_val = gwl_state.get("value", "")
+            gwl_on_var = tk.BooleanVar(master=self, value=gwl_enabled)
+            gwl_var = tk.StringVar(master=self, value=("" if gwl_val in (None, "") else f"{float(gwl_val):g}"))
+            gwl_box = ttk.Frame(table)
+            gwl_box.grid(row=i, column=4, sticky="w", padx=(12, 0), pady=2)
+            gwl_chk = ttk.Checkbutton(gwl_box, variable=gwl_on_var)
+            gwl_chk.pack(side="left", padx=(0, 4))
+            gwl_ent = ttk.Entry(gwl_box, textvariable=gwl_var, width=6)
+            gwl_ent.pack(side="left")
+
+            def _sync_gwl_state(_ev=None, _on=gwl_on_var, _ent=gwl_ent):
+                try:
+                    _ent.configure(state=("normal" if bool(_on.get()) else "disabled"))
+                except Exception:
+                    pass
+            gwl_chk.configure(command=_sync_gwl_state)
+            _sync_gwl_state()
+
+            row_vars.append((t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, gwl_on_var, gwl_var, gwl_ent))
+
+        def _apply_common_to_all_rows(_ev=None):
+            cd = _parse_depth_str(common_var.get())
+            if cd is None:
+                msg_var.set("Введите корректную общую начальную глубину (например 1.2).")
+                return
+            if not (0.0 <= cd <= 4.0):
+                msg_var.set("Начальная глубина должна быть в диапазоне 0..4 м.")
+                return
+            step_cm_txt = (step_var.get() or "").strip()
+            if step_cm_txt not in ("5", "10"):
+                msg_var.set("Выберите шаг 5 или 10 см.")
+                return
+            for (_t, _tid, h0_var, _ent, step_var_row, _step_ent, _dt_var, _dt_lbl, *_rest) in row_vars:
+                h0_var.set(f"{cd:g}")
+                step_var_row.set(step_cm_txt)
+            msg_var.set("")
+
+        try:
+            apply_all_btn.configure(command=_apply_common_to_all_rows)
+        except Exception:
+            pass
 
         def _open_dt_calendar(row_tuple):
-            t, tid, h0_var, ent, dt_var, dt_lbl = row_tuple
+            t, tid, h0_var, ent, _step_var_row, _step_ent, dt_var, dt_lbl, *_rest = row_tuple
             # подсветка строки на время редактирования
             old = dt_var.get()
             dt_var.set(f"[{old}]")
@@ -2230,118 +2560,46 @@ class GeoCanvasEditor(tk.Tk):
 
         # клик по дате открывает календарь
         for row in row_vars:
-            row[-1].bind("<Button-1>", lambda e, r=row: _open_dt_calendar(r))
+            row[7].bind("<Button-1>", lambda e, r=row: _open_dt_calendar(r))
         recompute_busy = False
-        def _recompute_apply_state():
+        def _recompute_common_depth_marker():
             nonlocal recompute_busy
             if recompute_busy:
                 return
             recompute_busy = True
             try:
                 msg_var.set("")
-                is_k4 = (getattr(self, 'geo_kind', 'K2') == 'K4')
-
-                # Если apply_all выключен и глубины разные — показываем '(разные)' в общей ячейке.
-                # Важно: не мешаем пользователю вводить число в общую ячейку — переписываем только если там пусто/скобки.
-                if (not apply_all_var.get()):
-                    try:
-                        vals = []
-                        for (_t, tid, h0_var, _ent, _dt_var, _dt_lbl) in row_vars:
-                            dv = _parse_depth_str(h0_var.get())
-                            if dv is None:
-                                dv = float(self.depth0_by_tid.get(int(tid), 0.0) or 0.0)
-                            vals.append(float(dv))
-                        uniq_h0 = sorted({round(float(v), 6) for v in vals})
-                    except Exception:
-                        uniq_h0 = []
-                    cur_txt = (common_var.get() or '').strip()
-                    cur_can_override = (cur_txt == '' or cur_txt.startswith('('))
-                    if len(uniq_h0) > 1:
-                        if cur_can_override and cur_txt != "(разные)":
-                            common_var.set("(разные)")
-                    elif len(uniq_h0) == 1:
-                        v0 = float(uniq_h0[0])
-                        if cur_can_override and cur_txt != f"{v0:g}":
-                            common_var.set(f"{v0:g}")
-
-                cd = _parse_depth_str(common_var.get())
-                if cd is None:
-                    cd = 0.0
-
-                if apply_all_var.get():
-                    # применяем ко всем и блокируем индивидуальные поля
-                    for (_t, _tid, h0_var, ent, _dt_var, _dt_lbl) in row_vars:
-                        h0_var.set(f"{cd:g}")
+                vals = []
+                for (_t, tid, h0_var, _ent, _step_var_row, _step_ent, _dt_var, _dt_lbl, *_rest) in row_vars:
+                    dv = _parse_depth_str(h0_var.get())
+                    if dv is None:
                         try:
-                            ent.config(state="disabled")
+                            dv = float((getattr(self, "depth0_by_tid", {}) or {}).get(int(tid), self._current_start_depth_for_test(_t)))
                         except Exception:
-                            pass
-                else:
-                    # индивидуальные значения (для K4 — из файла)
-                    for (_t, tid, h0_var, ent, _dt_var, _dt_lbl) in row_vars:
-                        # K4: не перезаписываем h0_var при apply_all=False (чтобы не ломать редактирование)
-                        try:
-                            ent.config(state="normal")
-                        except Exception:
-                            pass
-
-                # управление общей ячейкой
-                try:
-                    # разрешаем редактировать общую ячейку и в K4 (при apply_all=False там может быть '(разные)')
-                    common_ent.config(state="normal")
-                except Exception:
-                    pass
+                            dv = float(self._current_start_depth_for_test(_t))
+                    vals.append(float(dv))
+                uniq_h0 = sorted({round(float(v), 6) for v in vals})
+                cur_txt = (common_var.get() or '').strip()
+                cur_can_override = (cur_txt == '' or cur_txt.startswith('('))
+                if len(uniq_h0) > 1:
+                    if cur_can_override and cur_txt != "(разные)":
+                        common_var.set("(разные)")
+                elif len(uniq_h0) == 1:
+                    v0 = float(uniq_h0[0])
+                    if cur_can_override and cur_txt != f"{v0:g}":
+                        common_var.set(f"{v0:g}")
             finally:
                 recompute_busy = False
 
-
-        def _on_common_change(*_):
-            nonlocal recompute_busy
-            if recompute_busy:
-                return
-            if apply_all_var.get():
-                _recompute_apply_state()
-
-        def _on_apply_toggle(*_):
-            _recompute_apply_state()
-
-        common_var.trace_add("write", _on_common_change)
-        apply_all_var.trace_add("write", _on_apply_toggle)
-
-        _recompute_apply_state()
-
-        # если пользователь ввёл в строке значение != общего — снимаем apply_all
         def _make_row_trace(h0_var):
             def _on_row_change(*_):
-                cd = _parse_depth_str(common_var.get())
-                dv = _parse_depth_str(h0_var.get())
-                if cd is None:
-                    cd = 0.0
-                if dv is None:
-                    return
-                if abs(dv - cd) > 1e-9 and apply_all_var.get():
-                    apply_all_var.set(False)
-                _recompute_apply_state()
+                _recompute_common_depth_marker()
             h0_var.trace_add("write", _on_row_change)
 
-        for (t, tid, h0_var, ent, dt_var, dt_lbl) in row_vars:
+        for (t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, *_rest) in row_vars:
             _make_row_trace(h0_var)
-
-        # клик по неактивной ячейке: активировать все и снять галочку
-        def _on_entry_click(event, ent_ref):
-            try:
-                st = str(ent_ref.cget("state"))
-            except Exception:
-                st = "normal"
-            if st == "disabled":
-                apply_all_var.set(False)
-                dlg.after(0, lambda: (ent_ref.focus_set(), ent_ref.selection_range(0, "end")))
-                return "break"
-            return None
-
-        for (t, tid, h0_var, ent, dt_var, dt_lbl) in row_vars:
-            ent.bind("<Button-1>", lambda e, ee=ent: _on_entry_click(e, ee), add="+")
             ent.bind("<FocusIn>", lambda e, ee=ent: ee.selection_range(0, "end"), add="+")
+
         # (кнопки календаря убраны: редактирование по клику на дате)
 
         # Enter = переход к следующей ячейке h0
@@ -2357,11 +2615,11 @@ class GeoCanvasEditor(tk.Tk):
                 pass
             return "break"
 
-        for idx, (t, tid, h0_var, ent, dt_var, dt_lbl) in enumerate(row_vars):
+        for idx, (t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, *_rest) in enumerate(row_vars):
             ent.bind("<Return>", lambda e, k=idx: _focus_next(k))
 
         # применить начальные состояния
-        _recompute_apply_state()
+        _recompute_common_depth_marker()
 
         # --- сообщение об ошибке + кнопки ---
         msg_lbl = ttk.Label(frm, textvariable=msg_var, foreground="#b00020")
@@ -2381,59 +2639,64 @@ class GeoCanvasEditor(tk.Tk):
                     msg_var.set("Выберите шаг 5 или 10 см.")
                     return
 
-            # общая глубина:
-            # - при apply_all=True: обязана быть числом 0..4
-            # - при apply_all=False: допускается '(разные)' / пусто, тогда валидируем только строки
+            # общая глубина (в шапке может быть число или '(разные)')
             common_txt = (common_var.get() or "").strip()
             cd = _parse_depth_str(common_txt)
-            if apply_all_var.get():
-                if cd is None:
-                    msg_var.set("Некорректная начальная глубина. Пример: 1.2")
-                    return
-                if not (0.0 <= cd <= 4.0):
-                    msg_var.set("Начальная глубина должна быть в диапазоне 0..4 м.")
-                    return
-            else:
-                # когда глубины разные — common может быть '(разные)' и это ОК
-                if cd is not None and not (0.0 <= cd <= 4.0):
-                    msg_var.set("Начальная глубина должна быть в диапазоне 0..4 м.")
-                    return
-
-            # объект
-            self.object_code = (obj_var.get() or "").strip()
+            if cd is not None and not (0.0 <= cd <= 4.0):
+                msg_var.set("Начальная глубина должна быть в диапазоне 0..4 м.")
+                return
 
             # сохранить общие
-            # depth_start определим ниже: либо из общей ячейки (apply_all), либо из строк (если глубины разные)
             self._depth_confirmed = True
-            if apply_all_var.get() and cd is not None:
-                self.depth_start = float(cd)
 
             if need_step:
                 self.step_m = 0.05 if step_var.get().strip() == "5" else 0.10
                 self._step_confirmed = True
 
-            # индивидуальные h0
-            self.depth0_by_tid = {}
-            for (t, tid, h0_var, ent, dt_var, dt_lbl) in row_vars:
+            # индивидуальные h0 — обновляем из текущей модели, не затирая чужие значения дефолтами
+            prev_depth0 = dict(getattr(self, "depth0_by_tid", {}) or {})
+            new_depth0 = {}
+            for (t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, *_rest) in row_vars:
                 dv = _parse_depth_str(h0_var.get())
                 if dv is None:
-                    if cd is not None:
-                        dv = cd
-                    else:
-                        try:
-                            dv = float(self.depth0_by_tid.get(int(tid), float(getattr(self, 'depth_start', 0.0) or 0.0)))
-                        except Exception:
-                            dv = 0.0
+                    try:
+                        dv = float(prev_depth0.get(int(tid), self._current_start_depth_for_test(t)))
+                    except Exception:
+                        dv = float(self._current_start_depth_for_test(t))
                 if not (0.0 <= dv <= 4.0):
                     msg_var.set(f"СЗ-{tid}: начальная глубина должна быть 0..4 м.")
                     return
-                self.depth0_by_tid[int(tid)] = float(dv)
+                new_depth0[int(tid)] = float(dv)
+            self.depth0_by_tid = new_depth0
 
-            # если глубины разные (apply_all=False) — depth_start берём как минимум из строк
+            # индивидуальный шаг по опытам (см -> м), задел под разный шаг
             try:
-                if (not apply_all_var.get()) and self.depth0_by_tid:
+                new_step_by_tid = dict(getattr(self, "step_by_tid", {}) or {})
+                for (t, tid, _h0_var, _ent, step_var_row, _step_ent, _dt_var, _dt_lbl, *_rest) in row_vars:
+                    raw_step = str(step_var_row.get() or "").strip().replace(",", ".")
+                    if raw_step == "":
+                        step_m_row = float(getattr(self, "step_m", 0.1) or 0.1)
+                    else:
+                        try:
+                            step_cm_row = float(raw_step)
+                        except Exception:
+                            msg_var.set(f"СЗ-{tid}: шаг должен быть числом (см).")
+                            return
+                        if step_cm_row <= 0:
+                            msg_var.set(f"СЗ-{tid}: шаг должен быть больше 0.")
+                            return
+                        step_m_row = float(step_cm_row) / 100.0
+                    new_step_by_tid[int(tid)] = float(step_m_row)
+                    self._set_step_for_test(t, step_m_row)
+                self.step_by_tid = new_step_by_tid
+            except Exception:
+                pass
+
+            # depth_start = минимум по текущим индивидуальным глубинам
+            try:
+                if self.depth0_by_tid:
                     self.depth_start = float(min(self.depth0_by_tid.values()))
-                elif (not apply_all_var.get()) and (cd is not None):
+                elif cd is not None:
                     self.depth_start = float(cd)
             except Exception:
                 pass
@@ -2441,10 +2704,18 @@ class GeoCanvasEditor(tk.Tk):
             # обновить построение глубин здесь же (без перезагрузки)
             try:
                 step = float(self.step_m or 0.10)
-                for (t, tid, h0_var, ent, dt_var, dt_lbl) in row_vars:
+                for (t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, *_rest) in row_vars:
                     d0 = float(self.depth0_by_tid.get(int(tid), float(self.depth_start or 0.0)))
+                    step_t = float((getattr(self, "step_by_tid", {}) or {}).get(int(tid), step))
                     if getattr(t, "qc", None) is not None:
-                        t.depth = [f"{(d0 + i * step):g}" for i in range(len(t.qc))]
+                        t.depth = [f"{(d0 + i * step_t):g}" for i in range(len(t.qc))]
+                    try:
+                        for _ti, _tt in enumerate(self.tests):
+                            if int(getattr(_tt, "tid", 0) or 0) == int(tid):
+                                self._sync_layers_to_test_depth_range(int(_ti))
+                                break
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
@@ -2456,6 +2727,24 @@ class GeoCanvasEditor(tk.Tk):
             try:
                 if need_step:
                     self.step_choice.set(step_var.get().strip())
+            except Exception:
+                pass
+
+            # УГВ по опытам (задел для будущего отображения в колонках/ползунке)
+            try:
+                new_gwl = dict(getattr(self, "gwl_by_tid", {}) or {})
+                for (_t, tid, _h0_var, _ent, _step_var_row, _step_ent, _dt_var, _dt_lbl, gwl_on_var, gwl_var, _gwl_ent) in row_vars:
+                    enabled = bool(gwl_on_var.get())
+                    raw = str(gwl_var.get() or "").strip().replace(",", ".")
+                    gval = None
+                    if enabled and raw != "":
+                        try:
+                            gval = float(raw)
+                        except Exception:
+                            msg_var.set(f"СЗ-{tid}: УГВ должен быть числом (например 2.5).")
+                            return
+                    new_gwl[int(tid)] = {"enabled": enabled, "value": gval}
+                self.gwl_by_tid = new_gwl
             except Exception:
                 pass
 
@@ -2635,6 +2924,12 @@ class GeoCanvasEditor(tk.Tk):
                     block=getattr(s, "block", None),
                 ) for s in series_list]
                 _tests2, meta_rows, self.geo_kind = parse_geo_bytes(data)
+                try:
+                    self._apply_sounding_params(self._extract_sounding_params_from_geo_bytes(data, self.geo_kind))
+                    if getattr(self, "ribbon_view", None):
+                        self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(self.geo_kind))
+                except Exception:
+                    pass
                 # store template blocks (do not depend on current edited/deleted tests)
                 self._geo_template_blocks_info = [t.block for t in tests_list if getattr(t, 'block', None)]
                 self._geo_template_blocks_info_full = list(self._geo_template_blocks_info)
@@ -3500,8 +3795,11 @@ class GeoCanvasEditor(tk.Tk):
     def _table_col_width(self) -> int:
         return self.w_depth + self.w_val*2 + (self.w_val if getattr(self, "geo_kind", "K2")=="K4" else 0)
 
+    def _is_graph_panel_visible(self) -> bool:
+        return bool(getattr(self, "show_graphs", False) or getattr(self, "show_geology_column", True))
+
     def _column_block_width(self) -> int:
-        graph_w = int(getattr(self, "graph_w", 150) or 150) if bool(getattr(self, "show_graphs", False)) else 0
+        graph_w = int(getattr(self, "graph_w", 150) or 150) if self._is_graph_panel_visible() else 0
         return self._table_col_width() + graph_w
 
     def _column_x0(self, col: int) -> int:
@@ -3538,7 +3836,7 @@ class GeoCanvasEditor(tk.Tk):
             col = int(self.display_cols.index(ti))
         except Exception:
             return None
-        if not bool(getattr(self, "show_graphs", False)):
+        if not self._is_graph_panel_visible():
             return None
         x0 = self._column_x0(col) + self._table_col_width()
         x1 = x0 + int(getattr(self, "graph_w", 150) or 150)
@@ -3726,7 +4024,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.after_cancel(prev)
             except Exception:
                 pass
-        if not bool(getattr(self, "show_graphs", False)):
+        if not self._is_graph_panel_visible():
             self._clear_graph_layers()
             self._graph_redraw_after_id = None
             return
@@ -4307,7 +4605,7 @@ class GeoCanvasEditor(tk.Tk):
     def _redraw_graphs_now(self):
         self._graph_redraw_after_id = None
         self._clear_graph_layers()
-        if not bool(getattr(self, "show_graphs", False)):
+        if not self._is_graph_panel_visible():
             return
         if not getattr(self, "tests", None):
             return
@@ -4326,6 +4624,8 @@ class GeoCanvasEditor(tk.Tk):
                 continue
             x0, x1, y0, y1 = rect
             t = self.tests[ti]
+            show_graphs = bool(getattr(self, "show_graphs", False))
+            show_geology = bool(getattr(self, "show_geology_column", True))
 
             y_points = []
             qc_vals = []
@@ -4371,35 +4671,39 @@ class GeoCanvasEditor(tk.Tk):
             tag_overlay = ("layers_overlay", f"layers_overlay_{ti}")
             self.canvas.create_rectangle(x0, y0, x1, y1, fill="#fbfdff", outline=GUI_GRID, tags=tag_axes)
             labels = []
-            if bool(getattr(self, "show_geology_column", True)):
+            if show_geology:
                 labels = self._draw_layers_overlay_for_test(ti, plot_rect, self._depth_to_canvas_y, tag_overlay) or []
             if not y_points:
-                self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
-                self._draw_groundwater_line_for_test(ti, plot_rect)
-                self._draw_graph_lines_for_test(ti, plot_rect, [], [], [], self.graph_qc_max_mpa, self.graph_fs_max_kpa)
+                if show_graphs:
+                    self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
+                    self._draw_groundwater_line_for_test(ti, plot_rect)
+                    self._draw_graph_lines_for_test(ti, plot_rect, [], [], [], self.graph_qc_max_mpa, self.graph_fs_max_kpa)
                 for span in labels:
                     self._draw_layer_label_chip(span, tag_overlay)
-                self._draw_layer_handles_for_test(ti, plot_rect)
+                if show_geology:
+                    self._draw_layer_handles_for_test(ti, plot_rect)
                 continue
             packed = sorted(zip(y_points, qc_vals, fs_vals), key=lambda x: x[0])
             y_points = [x[0] for x in packed]
             qc_vals = [x[1] for x in packed]
             fs_vals = [x[2] for x in packed]
 
-            self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
-            self._draw_groundwater_line_for_test(ti, plot_rect)
-            self._draw_graph_lines_for_test(
-                ti,
-                plot_rect,
-                y_points,
-                qc_vals,
-                fs_vals,
-                self.graph_qc_max_mpa,
-                self.graph_fs_max_kpa,
-            )
+            if show_graphs:
+                self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
+                self._draw_groundwater_line_for_test(ti, plot_rect)
+                self._draw_graph_lines_for_test(
+                    ti,
+                    plot_rect,
+                    y_points,
+                    qc_vals,
+                    fs_vals,
+                    self.graph_qc_max_mpa,
+                    self.graph_fs_max_kpa,
+                )
             for span in labels:
                 self._draw_layer_label_chip(span, tag_overlay)
-            self._draw_layer_handles_for_test(ti, plot_rect)
+            if show_geology:
+                self._draw_layer_handles_for_test(ti, plot_rect)
             if bool(getattr(self, "_debug_layers_overlay", False)) and bool(getattr(self, "compact_1m", False)) and bool(getattr(self, "expanded_meters", set())):
                 t_layers = self._ensure_test_layers(t)
                 dbg = f"LAYERS:{len(t_layers)} EDIT:True TEST:{getattr(t, 'tid', ti)}"
@@ -5910,7 +6214,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.hcanvas.create_rectangle(x0, y0, x1, y1, fill="#d0d0d0", outline="", stipple="gray50")
 
         self._update_scrollregion()
-        if bool(getattr(self, "show_graphs", False)):
+        if self._is_graph_panel_visible():
             self._redraw_graphs_now()
         else:
             self._clear_graph_layers()
@@ -6732,6 +7036,10 @@ class GeoCanvasEditor(tk.Tk):
         delta = new0 - old0
         if abs(delta) < 1e-9:
             t.depth[0] = f"{new0:.2f}"
+            try:
+                self._set_start_depth_for_test(t, float(new0))
+            except Exception:
+                pass
             self._redraw()
             self._redraw_graphs_now()
             return
@@ -6744,6 +7052,10 @@ class GeoCanvasEditor(tk.Tk):
             else:
                 new_depth.append(f"{(d + delta):.2f}")
         t.depth = new_depth
+        try:
+            self._set_start_depth_for_test(t, float(new0))
+        except Exception:
+            pass
 
         try:
             self._sync_layers_to_test_depth_range(int(ti), depth_shift=float(delta))
@@ -7800,13 +8112,26 @@ class GeoCanvasEditor(tk.Tk):
 
     def _project_settings_from_ui(self) -> ProjectSettings:
         extras = {"cpt_calc_settings": dict(getattr(self, "cpt_calc_settings", {}) or {})}
+        scale_val = (self.scale_var.get().strip() if hasattr(self, "scale_var") else "250") or "250"
+        fcone_val = (self.fcone_var.get().strip() if hasattr(self, "fcone_var") else "30") or "30"
+        fsleeve_val = (self.fsleeve_var.get().strip() if hasattr(self, "fsleeve_var") else "10") or "10"
+        acon_val = (self.acon_var.get().strip() if hasattr(self, "acon_var") else "10") or "10"
+        asleeve_val = (self.asl_var.get().strip() if hasattr(self, "asl_var") else "350") or "350"
         return ProjectSettings(
-            scale=(self.scale_var.get().strip() if hasattr(self, "scale_var") else "250") or "250",
-            fcone=(self.fcone_var.get().strip() if hasattr(self, "fcone_var") else "30") or "30",
-            fsleeve=(self.fsleeve_var.get().strip() if hasattr(self, "fsleeve_var") else "10") or "10",
-            acon=(self.acon_var.get().strip() if hasattr(self, "acon_var") else "10") or "10",
-            asleeve=(self.asl_var.get().strip() if hasattr(self, "asl_var") else "350") or "350",
+            scale=scale_val,
+            fcone=fcone_val,
+            fsleeve=fsleeve_val,
+            acon=acon_val,
+            asleeve=asleeve_val,
+            controller_type=(self.controller_type_var.get().strip() if hasattr(self, "controller_type_var") else ""),
+            controller_scale_div=scale_val,
+            probe_type=(self.probe_type_var.get().strip() if hasattr(self, "probe_type_var") else ""),
+            cone_kn=fcone_val,
+            sleeve_kn=fsleeve_val,
+            cone_area_cm2=acon_val,
+            sleeve_area_cm2=asleeve_val,
             step_m=float(getattr(self, "step_m", 0.1) or 0.1),
+            k2k4_mode=str(getattr(self, "k2k4_mode", "") or ""),
             extras=extras,
         )
 
@@ -8052,10 +8377,28 @@ class GeoCanvasEditor(tk.Tk):
             self.fsleeve_var.set(project.settings.fsleeve)
             self.acon_var.set(project.settings.acon)
             self.asl_var.set(project.settings.asleeve)
+        if hasattr(self, "controller_type_var"):
+            self.controller_type_var.set(str(getattr(project.settings, "controller_type", "") or ""))
+        if hasattr(self, "probe_type_var"):
+            self.probe_type_var.set(str(getattr(project.settings, "probe_type", "") or ""))
+        try:
+            if str(getattr(project.settings, "controller_scale_div", "") or "").strip() and hasattr(self, "scale_var"):
+                self.scale_var.set(str(project.settings.controller_scale_div))
+            if str(getattr(project.settings, "cone_kn", "") or "").strip() and hasattr(self, "fcone_var"):
+                self.fcone_var.set(str(project.settings.cone_kn))
+            if str(getattr(project.settings, "sleeve_kn", "") or "").strip() and hasattr(self, "fsleeve_var"):
+                self.fsleeve_var.set(str(project.settings.sleeve_kn))
+            if str(getattr(project.settings, "cone_area_cm2", "") or "").strip() and hasattr(self, "acon_var"):
+                self.acon_var.set(str(project.settings.cone_area_cm2))
+            if str(getattr(project.settings, "sleeve_area_cm2", "") or "").strip() and hasattr(self, "asl_var"):
+                self.asl_var.set(str(project.settings.sleeve_area_cm2))
+        except Exception:
+            pass
         self.cpt_calc_settings = dict((project.settings.extras or {}).get("cpt_calc_settings") or self.cpt_calc_settings or {"method": METHOD_SP446, "alluvial_sands": True, "groundwater_level": None})
         self._dirty = False
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)
+            self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
         self.status.config(text=self._project_open_diagnostics(status_info))
         self._update_window_title()
 
@@ -8147,6 +8490,8 @@ class GeoCanvasEditor(tk.Tk):
         self.depth_start = 0.0
         self.step_m = step_m
         self.depth0_by_tid = {1: 0.0}
+        self.step_by_tid = {1: float(step_m)}
+        self.gwl_by_tid = {}
 
         dt_now = _dt.datetime.now().replace(microsecond=0)
         dt_text = dt_now.strftime("%Y-%m-%d %H:%M:%S")
@@ -8939,3 +9284,4 @@ if __name__ == "__main__":
         raise SystemExit(0)
 
     GeoCanvasEditor().mainloop()
+
