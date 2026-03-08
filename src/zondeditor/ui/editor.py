@@ -1722,6 +1722,30 @@ class GeoCanvasEditor(tk.Tk):
         self._ensure_object_code()
         self._update_window_title()
 
+    def _current_start_depth_for_test(self, t) -> float:
+        """Текущая начальная глубина опыта из модели (единый источник)."""
+        tid = int(getattr(t, "tid", 0) or 0)
+        try:
+            if getattr(self, "depth0_by_tid", None) and tid in self.depth0_by_tid:
+                return float(self.depth0_by_tid[tid])
+        except Exception:
+            pass
+        try:
+            d0 = _parse_depth_float((getattr(t, "depth", []) or [""])[0])
+            if d0 is not None:
+                return float(d0)
+        except Exception:
+            pass
+        return float(getattr(self, "depth_start", 0.0) or 0.0)
+
+    def _set_start_depth_for_test(self, t, depth0: float):
+        """Обновляет модель начальной глубины для опыта."""
+        tid = int(getattr(t, "tid", 0) or 0)
+        try:
+            self.depth0_by_tid[int(tid)] = float(depth0)
+        except Exception:
+            pass
+
     def open_geo_params_dialog(self):
         """Открыть окно параметров GEO для текущего файла."""
         if not getattr(self, "tests", None):
@@ -2046,13 +2070,11 @@ class GeoCanvasEditor(tk.Tk):
         _sm = float(getattr(self, "step_m", 0.10) or 0.10)
         _default_step = "5" if abs(_sm - 0.05) < 1e-6 else "10"
         step_var = tk.StringVar(master=self, value=_default_step)
-        # общая начальная глубина
-        if getattr(self, "depth0_by_tid", None):
-            try:
-                common_depth0 = float(min(self.depth0_by_tid.values()))
-            except Exception:
-                common_depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
-        else:
+        # общая начальная глубина — из текущей модели по загруженным опытам
+        try:
+            _vals = [float(self._current_start_depth_for_test(t)) for t in (tests_list or [])]
+            common_depth0 = float(min(_vals)) if _vals else float(getattr(self, "depth_start", 0.0) or 0.0)
+        except Exception:
             common_depth0 = float(getattr(self, "depth_start", 0.0) or 0.0)
         common_var = tk.StringVar(master=self, value=f"{common_depth0:g}")
         apply_all_var = tk.BooleanVar(master=self, value=(False if getattr(self, 'geo_kind', 'K2')=='K4' else True))
@@ -2174,7 +2196,7 @@ class GeoCanvasEditor(tk.Tk):
             ttk.Label(table, text=f"СЗ-{tid}").grid(row=i, column=0, sticky="w", padx=(0, 10), pady=2)
 
             try:
-                init_v = float(self.depth0_by_tid.get(tid, common_depth0))
+                init_v = float(self._current_start_depth_for_test(t))
             except Exception:
                 init_v = common_depth0
 
@@ -2413,8 +2435,9 @@ class GeoCanvasEditor(tk.Tk):
                 self.step_m = 0.05 if step_var.get().strip() == "5" else 0.10
                 self._step_confirmed = True
 
-            # индивидуальные h0
-            self.depth0_by_tid = {}
+            # индивидуальные h0 — обновляем из текущей модели, не затирая чужие значения дефолтами
+            prev_depth0 = dict(getattr(self, "depth0_by_tid", {}) or {})
+            new_depth0 = dict(prev_depth0)
             for (t, tid, h0_var, ent, dt_var, dt_lbl) in row_vars:
                 dv = _parse_depth_str(h0_var.get())
                 if dv is None:
@@ -2422,13 +2445,14 @@ class GeoCanvasEditor(tk.Tk):
                         dv = cd
                     else:
                         try:
-                            dv = float(self.depth0_by_tid.get(int(tid), float(getattr(self, 'depth_start', 0.0) or 0.0)))
+                            dv = float(prev_depth0.get(int(tid), self._current_start_depth_for_test(t)))
                         except Exception:
-                            dv = 0.0
+                            dv = float(self._current_start_depth_for_test(t))
                 if not (0.0 <= dv <= 4.0):
                     msg_var.set(f"СЗ-{tid}: начальная глубина должна быть 0..4 м.")
                     return
-                self.depth0_by_tid[int(tid)] = float(dv)
+                new_depth0[int(tid)] = float(dv)
+            self.depth0_by_tid = new_depth0
 
             # если глубины разные (apply_all=False) — depth_start берём как минимум из строк
             try:
@@ -6742,6 +6766,10 @@ class GeoCanvasEditor(tk.Tk):
         delta = new0 - old0
         if abs(delta) < 1e-9:
             t.depth[0] = f"{new0:.2f}"
+            try:
+                self._set_start_depth_for_test(t, float(new0))
+            except Exception:
+                pass
             self._redraw()
             self._redraw_graphs_now()
             return
@@ -6754,6 +6782,10 @@ class GeoCanvasEditor(tk.Tk):
             else:
                 new_depth.append(f"{(d + delta):.2f}")
         t.depth = new_depth
+        try:
+            self._set_start_depth_for_test(t, float(new0))
+        except Exception:
+            pass
 
         try:
             self._sync_layers_to_test_depth_range(int(ti), depth_shift=float(delta))
