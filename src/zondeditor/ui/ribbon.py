@@ -118,20 +118,18 @@ class RibbonView(ttk.Frame):
         common = ttk.LabelFrame(tab, text="Общие параметры прибора и зонда", padding=4)
         common.pack(side="top", fill="x")
 
-        common_right = ttk.Frame(common)
-        common_right.pack(side="right", anchor="e")
+        common_left = ttk.Frame(common)
+        common_left.pack(side="left", anchor="w", padx=(8, 0))
 
-        col_buttons = ttk.Frame(common_right)
-        col_type = ttk.Frame(common_right)
-        col_loads = ttk.Frame(common_right)
-        col_buttons.grid(row=0, column=0, sticky="nw", padx=(0, 10))
-        col_type.grid(row=0, column=1, sticky="nw", padx=(0, 10))
-        col_loads.grid(row=0, column=2, sticky="nw")
+        col_left = ttk.Frame(common_left)
+        col_right = ttk.Frame(common_left)
+        col_left.grid(row=0, column=0, sticky="nw", padx=(0, 16))
+        col_right.grid(row=0, column=1, sticky="nw")
 
         self._common_param_entries: dict[str, ttk.Entry] = {}
 
-        btn = ttk.Button(col_buttons, text="Параметры СЗ", command=self.commands.get("geo_params"), style="RibbonCompact.TButton", width=14)
-        btn.pack(anchor="w")
+        btn = ttk.Button(col_left, text="Параметры СЗ", command=self.commands.get("geo_params"), style="RibbonCompact.TButton", width=14)
+        btn.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
         ToolTip(btn, "Открыть параметры зондирований")
         self._buttons["geo_params"] = btn
 
@@ -143,13 +141,13 @@ class RibbonView(ttk.Frame):
             ent.bind("<Return>", lambda _e: self._emit_common_params())
             self._common_param_entries[key] = ent
 
-        add_field(col_type, 0, "Тип контроллера", self.controller_type_var, "controller_type", width=12)
-        add_field(col_type, 1, "Тип зонда", self.probe_type_var, "probe_type", width=12)
-        add_field(col_type, 2, "Шкала прибора", self.controller_scale_div_var, "controller_scale_div", width=4)
-        add_field(col_loads, 0, "Максимальная нагрузка на конус, кН", self.cone_kn_var, "cone_kn", width=4)
-        add_field(col_loads, 1, "Максимальная нагрузка на муфту трения, кН", self.sleeve_kn_var, "sleeve_kn", width=4)
-        add_field(col_loads, 2, "Площадь конуса, см²", self.cone_area_cm2_var, "cone_area_cm2", width=4)
-        add_field(col_loads, 3, "Площадь муфты, см²", self.sleeve_area_cm2_var, "sleeve_area_cm2", width=4)
+        add_field(col_left, 1, "Тип контроллера", self.controller_type_var, "controller_type", width=12)
+        add_field(col_left, 2, "Тип зонда", self.probe_type_var, "probe_type", width=12)
+        add_field(col_left, 3, "Шкала прибора", self.controller_scale_div_var, "controller_scale_div", width=4)
+        add_field(col_right, 0, "Максимальная нагрузка на конус, кН", self.cone_kn_var, "cone_kn", width=4)
+        add_field(col_right, 1, "Максимальная нагрузка на муфту трения, кН", self.sleeve_kn_var, "sleeve_kn", width=4)
+        add_field(col_right, 2, "Площадь конуса, см²", self.cone_area_cm2_var, "cone_area_cm2", width=4)
+        add_field(col_right, 3, "Площадь муфты, см²", self.sleeve_area_cm2_var, "sleeve_area_cm2", width=4)
 
     def _collect_common_params(self) -> dict[str, str]:
         return {
