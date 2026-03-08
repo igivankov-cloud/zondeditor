@@ -4878,14 +4878,7 @@ class GeoCanvasEditor(tk.Tk):
         if anchor_bbox is not None:
             try:
                 bx0, by0, _bx1, _by1 = anchor_bbox
-                rx, gy0 = _canvas_to_root(float(bx0), float(by0))
-                first_ti = None
-                try:
-                    first_ti = int((self.display_cols or [None])[0])
-                except Exception:
-                    first_ti = None
-                if first_ti is not None and int(ti) == int(first_ti):
-                    gx0 = int(rx)
+                _rx, gy0 = _canvas_to_root(float(bx0), float(by0))
             except Exception:
                 gy0 = int(event.y_root)
 
