@@ -1,4 +1,4 @@
-﻿# src/zondeditor/ui/editor.py
+# src/zondeditor/ui/editor.py
 # Auto-generated from tools/_ui_extract/GeoCanvasEditor.py (Step19)
 from __future__ import annotations
 
