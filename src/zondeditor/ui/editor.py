@@ -1339,7 +1339,7 @@ class GeoCanvasEditor(tk.Tk):
         make_btn(btns, "🛠", "Корректировка", self.fix_by_algorithm, ).grid(row=0, column=1, padx=4)
         make_btn(btns, "10→5", "Конвертировать шаг 10 см → 5 см", self.convert_10_to_5, w=5).grid(row=0, column=2, padx=4)  
         
-        make_btn(btns, "⚙", "Параметры зондирований (GEO)", self.open_sounding_params_dialog, w=3).grid(row=0, column=3, padx=4)
+        make_btn(btns, "⚙", "Параметры зондирований", self.open_geo_params_dialog, w=3).grid(row=0, column=3, padx=4)
         self._show_graphs_var = tk.BooleanVar(master=self, value=bool(getattr(self, "show_graphs", False)))
         graphs_chk = ttk.Checkbutton(btns, text="Графики", variable=self._show_graphs_var, command=self._toggle_show_graphs_from_ui)
         graphs_chk.grid(row=0, column=4, padx=6)
@@ -1410,7 +1410,8 @@ class GeoCanvasEditor(tk.Tk):
                 "export_archive": self.export_bundle,
                 "export_dxf": self.export_dxf,
                 "export_cpt_protocol": self.export_cpt_protocol,
-                "geo_params": self.open_sounding_params_dialog,
+                "geo_params": self.open_geo_params_dialog,
+                "common_params_changed": self._on_common_params_changed,
                 "fix_algo": self.fix_by_algorithm,
                 "reduce_step": self.convert_10_to_5,
                 "toggle_graphs": self._toggle_show_graphs,
@@ -1430,6 +1431,7 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view = RibbonView(self, commands=commands, icon_font=_pick_icon_font(11))
             self.ribbon_view.pack(side="top", fill="x", before=ribbon)
             self.ribbon_view.set_object_name(self.object_name)
+            self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
             self.ribbon_view.set_show_graphs(bool(getattr(self, "show_graphs", False)))
             self.ribbon_view.set_show_geology_column(bool(getattr(self, "show_geology_column", True)))
             self.ribbon_view.set_compact_1m(bool(getattr(self, "compact_1m", False)))
@@ -1917,6 +1919,38 @@ class GeoCanvasEditor(tk.Tk):
             pass
         self.wait_window(dlg)
 
+    def _current_common_params(self) -> dict[str, str]:
+        return {
+            "controller_type": (self.controller_type_var.get().strip() if hasattr(self, "controller_type_var") else ""),
+            "controller_scale_div": (self.scale_var.get().strip() if hasattr(self, "scale_var") else "250"),
+            "probe_type": (self.probe_type_var.get().strip() if hasattr(self, "probe_type_var") else ""),
+            "cone_kn": (self.fcone_var.get().strip() if hasattr(self, "fcone_var") else "30"),
+            "sleeve_kn": (self.fsleeve_var.get().strip() if hasattr(self, "fsleeve_var") else "10"),
+            "cone_area_cm2": (self.acon_var.get().strip() if hasattr(self, "acon_var") else "10"),
+            "sleeve_area_cm2": (self.asl_var.get().strip() if hasattr(self, "asl_var") else "350"),
+        }
+
+    def _on_common_params_changed(self, params: dict[str, str] | None = None):
+        p = dict(params or {})
+        if hasattr(self, "controller_type_var") and "controller_type" in p:
+            self.controller_type_var.set(str(p.get("controller_type", "") or ""))
+        if hasattr(self, "probe_type_var") and "probe_type" in p:
+            self.probe_type_var.set(str(p.get("probe_type", "") or ""))
+        if "controller_scale_div" in p and str(getattr(self, "geo_kind", "K2") or "K2").upper() != "K4":
+            self.scale_var.set(str(p.get("controller_scale_div", "") or self.scale_var.get()))
+        if "cone_kn" in p:
+            self.fcone_var.set(str(p.get("cone_kn", "") or self.fcone_var.get()))
+        if "sleeve_kn" in p:
+            self.fsleeve_var.set(str(p.get("sleeve_kn", "") or self.fsleeve_var.get()))
+        if "cone_area_cm2" in p:
+            self.acon_var.set(str(p.get("cone_area_cm2", "") or self.acon_var.get()))
+        if "sleeve_area_cm2" in p:
+            self.asl_var.set(str(p.get("sleeve_area_cm2", "") or self.asl_var.get()))
+        try:
+            self.schedule_graph_redraw()
+        except Exception:
+            pass
+
     def open_geo_params_dialog(self):
         """Открыть окно параметров GEO для текущего файла."""
         if not getattr(self, "tests", None):
@@ -2243,7 +2277,7 @@ class GeoCanvasEditor(tk.Tk):
         - клик по неактивной ячейке снимает 'Применить ко всем' и активирует все поля
         """
         dlg = tk.Toplevel(self)
-        dlg.title("Параметры GEO")
+        dlg.title("Параметры зондирований")
         dlg.transient(self)
         dlg.grab_set()
         dlg.resizable(False, False)
@@ -2859,6 +2893,8 @@ class GeoCanvasEditor(tk.Tk):
                 _tests2, meta_rows, self.geo_kind = parse_geo_bytes(data)
                 try:
                     self._apply_sounding_params(self._extract_sounding_params_from_geo_bytes(data, self.geo_kind))
+                    if getattr(self, "ribbon_view", None):
+                        self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(self.geo_kind))
                 except Exception:
                     pass
                 # store template blocks (do not depend on current edited/deleted tests)
@@ -8329,6 +8365,7 @@ class GeoCanvasEditor(tk.Tk):
         self._dirty = False
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)
+            self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
         self.status.config(text=self._project_open_diagnostics(status_info))
         self._update_window_title()
 

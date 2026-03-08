@@ -13,6 +13,13 @@ class RibbonView(ttk.Frame):
         self.commands = commands
         self.icon_font = icon_font
         self.object_name_var = tk.StringVar(value="")
+        self.controller_type_var = tk.StringVar(value="")
+        self.controller_scale_div_var = tk.StringVar(value="250")
+        self.probe_type_var = tk.StringVar(value="")
+        self.cone_kn_var = tk.StringVar(value="30")
+        self.sleeve_kn_var = tk.StringVar(value="10")
+        self.cone_area_cm2_var = tk.StringVar(value="10")
+        self.sleeve_area_cm2_var = tk.StringVar(value="350")
         self.show_graphs_var = tk.BooleanVar(value=False)
         self.show_geology_var = tk.BooleanVar(value=True)
         self.compact_1m_var = tk.BooleanVar(value=False)
@@ -107,7 +114,47 @@ class RibbonView(ttk.Frame):
     def _build_params_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Параметры")
-        self._add_btn(tab, "geo_params", f"{ICON_SETTINGS} Параметры зондирований (GEO)", "Открыть параметры GEO")
+        self._add_btn(tab, "geo_params", f"{ICON_SETTINGS} Параметры зондирований", "Открыть параметры зондирований")
+
+        common = ttk.LabelFrame(tab, text="Общие параметры прибора и зонда", padding=6)
+        common.pack(side="top", fill="x", pady=(6, 0))
+
+        fields = [
+            ("Тип контроллера", self.controller_type_var, "controller_type", 0, 0),
+            ("Шкала прибора", self.controller_scale_div_var, "controller_scale_div", 1, 0),
+            ("Тип зонда", self.probe_type_var, "probe_type", 2, 0),
+            ("Максимальная нагрузка на конус, кН", self.cone_kn_var, "cone_kn", 0, 2),
+            ("Максимальная нагрузка на муфту трения, кН", self.sleeve_kn_var, "sleeve_kn", 1, 2),
+            ("Площадь конуса, см²", self.cone_area_cm2_var, "cone_area_cm2", 2, 2),
+            ("Площадь муфты, см²", self.sleeve_area_cm2_var, "sleeve_area_cm2", 3, 2),
+        ]
+        self._common_param_entries: dict[str, ttk.Entry] = {}
+        for lbl, var, key, row, col in fields:
+            ttk.Label(common, text=lbl).grid(row=row, column=col, sticky="w", padx=(0, 6), pady=2)
+            ent = ttk.Entry(common, textvariable=var, width=20)
+            ent.grid(row=row, column=col + 1, sticky="ew", padx=(0, 10), pady=2)
+            ent.bind("<FocusOut>", lambda _e: self._emit_common_params())
+            ent.bind("<Return>", lambda _e: self._emit_common_params())
+            self._common_param_entries[key] = ent
+
+        common.columnconfigure(1, weight=1)
+        common.columnconfigure(3, weight=1)
+
+    def _collect_common_params(self) -> dict[str, str]:
+        return {
+            "controller_type": str(self.controller_type_var.get() or "").strip(),
+            "controller_scale_div": str(self.controller_scale_div_var.get() or "").strip(),
+            "probe_type": str(self.probe_type_var.get() or "").strip(),
+            "cone_kn": str(self.cone_kn_var.get() or "").strip(),
+            "sleeve_kn": str(self.sleeve_kn_var.get() or "").strip(),
+            "cone_area_cm2": str(self.cone_area_cm2_var.get() or "").strip(),
+            "sleeve_area_cm2": str(self.sleeve_area_cm2_var.get() or "").strip(),
+        }
+
+    def _emit_common_params(self):
+        cb = self.commands.get("common_params_changed")
+        if callable(cb):
+            cb(self._collect_common_params())
 
     def _build_view_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
@@ -216,6 +263,22 @@ class RibbonView(ttk.Frame):
 
     def set_object_name(self, value: str):
         self.object_name_var.set(value or "")
+
+    def set_common_params(self, params: dict[str, str] | None, *, geo_kind: str = "K2"):
+        p = dict(params or {})
+        self.controller_type_var.set(str(p.get("controller_type", "") or ""))
+        self.controller_scale_div_var.set(str(p.get("controller_scale_div", "") or ""))
+        self.probe_type_var.set(str(p.get("probe_type", "") or ""))
+        self.cone_kn_var.set(str(p.get("cone_kn", "") or ""))
+        self.sleeve_kn_var.set(str(p.get("sleeve_kn", "") or ""))
+        self.cone_area_cm2_var.set(str(p.get("cone_area_cm2", "") or ""))
+        self.sleeve_area_cm2_var.set(str(p.get("sleeve_area_cm2", "") or ""))
+        ent = getattr(self, "_common_param_entries", {}).get("controller_scale_div")
+        if ent is not None:
+            try:
+                ent.configure(state=("disabled" if str(geo_kind or "K2").upper() == "K4" else "normal"))
+            except Exception:
+                pass
 
     def set_enabled(self, key: str, enabled: bool, reason: str = ""):
         btn = self._buttons.get(key)
