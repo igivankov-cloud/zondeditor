@@ -14,7 +14,9 @@ class RibbonView(ttk.Frame):
         self.icon_font = icon_font
         self.object_name_var = tk.StringVar(value="")
         self.show_graphs_var = tk.BooleanVar(value=False)
+        self.show_geology_var = tk.BooleanVar(value=True)
         self.compact_1m_var = tk.BooleanVar(value=False)
+        self.display_sort_var = tk.StringVar(value="date")
         self.layers_edit_var = tk.BooleanVar(value=False)
         self.layer_soil_var = tk.StringVar(value="")
         self.layer_mode_var = tk.StringVar(value="")
@@ -39,6 +41,7 @@ class RibbonView(ttk.Frame):
 
         self._build_file_tab()
         self._build_params_tab()
+        self._build_view_tab()
         self._build_layers_tab()
         self._build_processing_tab()
 
@@ -105,14 +108,58 @@ class RibbonView(ttk.Frame):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Параметры")
         self._add_btn(tab, "geo_params", f"{ICON_SETTINGS} Параметры зондирований (GEO)", "Открыть параметры GEO")
-        graphs_chk = ttk.Checkbutton(tab, text="Графики", variable=self.show_graphs_var,
-                                     command=lambda: self.commands.get("toggle_graphs", lambda *_: None)(bool(self.show_graphs_var.get())))
-        graphs_chk.pack(side="top", anchor="w", pady=(4, 0))
-        ToolTip(graphs_chk, "Показывать графики")
-        compact_chk = ttk.Checkbutton(tab, text="Свернуть 1 м", variable=self.compact_1m_var,
-                                      command=lambda: self.commands.get("toggle_compact_1m", lambda *_: None)(bool(self.compact_1m_var.get())))
+
+    def _build_view_tab(self):
+        tab = ttk.Frame(self.tabs, padding=4)
+        self.tabs.add(tab, text="Вид")
+
+        compact_chk = ttk.Checkbutton(
+            tab,
+            text="Развернуть / Свернуть",
+            variable=self.compact_1m_var,
+            command=lambda: self.commands.get("toggle_compact_1m", lambda *_: None)(bool(self.compact_1m_var.get())),
+        )
         compact_chk.pack(side="top", anchor="w", pady=(2, 0))
-        ToolTip(compact_chk, "Свернуть таблицу/графики по 1-метровым интервалам")
+        ToolTip(compact_chk, "Использует текущую логику сворачивания/разворачивания вида по 1-метровым интервалам")
+
+        graphs_chk = ttk.Checkbutton(
+            tab,
+            text="График зондирования",
+            variable=self.show_graphs_var,
+            command=lambda: self.commands.get("toggle_graphs", lambda *_: None)(bool(self.show_graphs_var.get())),
+        )
+        graphs_chk.pack(side="top", anchor="w", pady=(2, 0))
+        ToolTip(graphs_chk, "Показывать графическую часть зондирования")
+
+        geology_chk = ttk.Checkbutton(
+            tab,
+            text="Геологическая колонка",
+            variable=self.show_geology_var,
+            command=lambda: self.commands.get("toggle_geology_column", lambda *_: None)(bool(self.show_geology_var.get())),
+        )
+        geology_chk.pack(side="top", anchor="w", pady=(2, 0))
+        ToolTip(geology_chk, "Показывать/скрывать геологическую колонку")
+
+        sort_frame = ttk.LabelFrame(tab, text="Сортировка отображения", padding=4)
+        sort_frame.pack(side="top", fill="x", pady=(6, 0))
+        sort_date = ttk.Radiobutton(
+            sort_frame,
+            text="Отсортировать по дате",
+            value="date",
+            variable=self.display_sort_var,
+            command=lambda: self.commands.get("set_display_sort_mode", lambda *_: None)(str(self.display_sort_var.get())),
+        )
+        sort_date.pack(side="top", anchor="w")
+        sort_tid = ttk.Radiobutton(
+            sort_frame,
+            text="Отсортировать по номеру опыта",
+            value="tid",
+            variable=self.display_sort_var,
+            command=lambda: self.commands.get("set_display_sort_mode", lambda *_: None)(str(self.display_sort_var.get())),
+        )
+        sort_tid.pack(side="top", anchor="w", pady=(2, 0))
+        ToolTip(sort_date, "Стандартный режим: хронологический порядок")
+        ToolTip(sort_tid, "Альтернативный режим: по номеру опыта")
 
     def _build_layers_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
@@ -183,6 +230,12 @@ class RibbonView(ttk.Frame):
 
     def set_compact_1m(self, value: bool):
         self.compact_1m_var.set(bool(value))
+
+    def set_show_geology_column(self, value: bool):
+        self.show_geology_var.set(bool(value))
+
+    def set_display_sort_mode(self, value: str):
+        self.display_sort_var.set("tid" if str(value or "").lower() == "tid" else "date")
 
     def set_layer_edit_mode(self, value: bool):
         self.layers_edit_var.set(bool(value))
