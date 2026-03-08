@@ -5797,14 +5797,12 @@ class GeoCanvasEditor(tk.Tk):
 
 
                 if is_meter_row:
-                    depth_fill = ("#f3f6fb" if meter_has_data else GUI_DEPTH_BG)
+                    depth_fill = "#f3f6fb" if meter_has_data else GUI_DEPTH_BG
                 elif has_row and int(data_i) == 0:
-                    depth_fill = "white"   # editable cell (только абсолютная первая data-row)
+                    depth_fill = "white"   # only absolute first data-row
                 else:
-                    depth_fill = (GUI_DEPTH_BG if has_row else "white")
+                    depth_fill = GUI_DEPTH_BG
 
-                if not depth_txt and not is_meter_row:
-                    depth_fill = "white"
                 if fl.invalid and has_row:
                     depth_fill = GUI_RED
 
