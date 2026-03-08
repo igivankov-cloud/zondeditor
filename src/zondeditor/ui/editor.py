@@ -1,4 +1,4 @@
-# src/zondeditor/ui/editor.py
+﻿# src/zondeditor/ui/editor.py
 # Auto-generated from tools/_ui_extract/GeoCanvasEditor.py (Step19)
 from __future__ import annotations
 
@@ -2655,7 +2655,7 @@ class GeoCanvasEditor(tk.Tk):
 
             # индивидуальные h0 — обновляем из текущей модели, не затирая чужие значения дефолтами
             prev_depth0 = dict(getattr(self, "depth0_by_tid", {}) or {})
-            new_depth0 = dict(prev_depth0)
+            new_depth0 = {}
             for (t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, *_rest) in row_vars:
                 dv = _parse_depth_str(h0_var.get())
                 if dv is None:
@@ -9284,3 +9284,4 @@ if __name__ == "__main__":
         raise SystemExit(0)
 
     GeoCanvasEditor().mainloop()
+
