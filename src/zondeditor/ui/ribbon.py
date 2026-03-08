@@ -3,7 +3,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
-from src.zondeditor.ui.consts import ICON_EXPORT, ICON_IMPORT, ICON_REDO, ICON_SAVE, ICON_SETTINGS, ICON_UNDO
+from src.zondeditor.ui.consts import ICON_EXPORT, ICON_IMPORT, ICON_REDO, ICON_SAVE, ICON_UNDO
 from src.zondeditor.ui.widgets import ToolTip
 
 
@@ -114,31 +114,46 @@ class RibbonView(ttk.Frame):
     def _build_params_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Параметры")
-        self._add_btn(tab, "geo_params", f"{ICON_SETTINGS} Параметры зондирований", "Открыть параметры зондирований")
 
-        common = ttk.LabelFrame(tab, text="Общие параметры прибора и зонда", padding=6)
-        common.pack(side="top", fill="x", pady=(6, 0))
+        top = ttk.Frame(tab)
+        top.pack(side="top", fill="x")
+        btn = ttk.Button(top, text="Параметры СЗ", command=self.commands.get("geo_params"), style="RibbonCompact.TButton", width=16)
+        btn.pack(side="left")
+        ToolTip(btn, "Открыть параметры зондирований")
+        self._buttons["geo_params"] = btn
 
-        fields = [
-            ("Тип контроллера", self.controller_type_var, "controller_type", 0, 0),
-            ("Шкала прибора", self.controller_scale_div_var, "controller_scale_div", 1, 0),
-            ("Тип зонда", self.probe_type_var, "probe_type", 2, 0),
-            ("Максимальная нагрузка на конус, кН", self.cone_kn_var, "cone_kn", 0, 2),
-            ("Максимальная нагрузка на муфту трения, кН", self.sleeve_kn_var, "sleeve_kn", 1, 2),
-            ("Площадь конуса, см²", self.cone_area_cm2_var, "cone_area_cm2", 2, 2),
-            ("Площадь муфты, см²", self.sleeve_area_cm2_var, "sleeve_area_cm2", 3, 2),
-        ]
+        common = ttk.LabelFrame(tab, text="Общие параметры прибора и зонда", padding=4)
+        common.pack(side="top", fill="x", pady=(4, 0))
+
+        c1 = ttk.Frame(common)
+        c2 = ttk.Frame(common)
+        c3 = ttk.Frame(common)
+        c4 = ttk.Frame(common)
+        c1.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        c2.grid(row=0, column=1, sticky="nsew", padx=(0, 8))
+        c3.grid(row=0, column=2, sticky="nsew", padx=(0, 8))
+        c4.grid(row=0, column=3, sticky="nsew")
+        for col in range(4):
+            common.columnconfigure(col, weight=1)
+
         self._common_param_entries: dict[str, ttk.Entry] = {}
-        for lbl, var, key, row, col in fields:
-            ttk.Label(common, text=lbl).grid(row=row, column=col, sticky="w", padx=(0, 6), pady=2)
-            ent = ttk.Entry(common, textvariable=var, width=20)
-            ent.grid(row=row, column=col + 1, sticky="ew", padx=(0, 10), pady=2)
+
+        def add_field(parent, row: int, label: str, var: tk.StringVar, key: str, width: int = 14):
+            ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 4), pady=1)
+            ent = ttk.Entry(parent, textvariable=var, width=width)
+            ent.grid(row=row, column=1, sticky="ew", pady=1)
             ent.bind("<FocusOut>", lambda _e: self._emit_common_params())
             ent.bind("<Return>", lambda _e: self._emit_common_params())
+            parent.columnconfigure(1, weight=1)
             self._common_param_entries[key] = ent
 
-        common.columnconfigure(1, weight=1)
-        common.columnconfigure(3, weight=1)
+        add_field(c1, 0, "Тип контроллера", self.controller_type_var, "controller_type")
+        add_field(c1, 1, "Тип зонда", self.probe_type_var, "probe_type")
+        add_field(c2, 0, "Шкала прибора", self.controller_scale_div_var, "controller_scale_div", width=10)
+        add_field(c3, 0, "Макс. нагрузка на конус, кН", self.cone_kn_var, "cone_kn", width=10)
+        add_field(c3, 1, "Макс. нагрузка на муфту трения, кН", self.sleeve_kn_var, "sleeve_kn", width=10)
+        add_field(c4, 0, "Площадь конуса, см²", self.cone_area_cm2_var, "cone_area_cm2", width=10)
+        add_field(c4, 1, "Площадь муфты, см²", self.sleeve_area_cm2_var, "sleeve_area_cm2", width=10)
 
     def _collect_common_params(self) -> dict[str, str]:
         return {
