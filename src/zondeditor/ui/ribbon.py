@@ -118,15 +118,15 @@ class RibbonView(ttk.Frame):
         common = ttk.LabelFrame(tab, text="Общие параметры прибора и зонда", padding=4)
         common.pack(side="top", fill="x")
 
-        col_buttons = ttk.Frame(common)
-        col_type = ttk.Frame(common)
-        col_loads = ttk.Frame(common)
+        common_right = ttk.Frame(common)
+        common_right.pack(side="right", anchor="e")
+
+        col_buttons = ttk.Frame(common_right)
+        col_type = ttk.Frame(common_right)
+        col_loads = ttk.Frame(common_right)
         col_buttons.grid(row=0, column=0, sticky="nw", padx=(0, 10))
-        col_type.grid(row=0, column=1, sticky="nsew", padx=(0, 10))
-        col_loads.grid(row=0, column=2, sticky="nsew")
-        common.columnconfigure(0, weight=0)
-        common.columnconfigure(1, weight=1)
-        common.columnconfigure(2, weight=1)
+        col_type.grid(row=0, column=1, sticky="nw", padx=(0, 10))
+        col_loads.grid(row=0, column=2, sticky="nw")
 
         self._common_param_entries: dict[str, ttk.Entry] = {}
 

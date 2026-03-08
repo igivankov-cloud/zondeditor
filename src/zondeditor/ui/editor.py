@@ -170,6 +170,7 @@ class GeoCanvasEditor(tk.Tk):
         # Для GEO: индивидуальная начальная глубина по каждому опыту (tid -> h0)
         # Если не задано — используется self.depth_start.
         self.depth0_by_tid = {}
+        self.step_by_tid = {}  # tid -> step_m (float), задел под индивидуальный шаг
         self.gwl_by_tid = {}  # tid -> {"enabled": bool, "value": float|None}
 
         self.undo_stack: list[dict] = []
@@ -526,6 +527,7 @@ class GeoCanvasEditor(tk.Tk):
             "flags": flags_snap,
             "step_m": float(getattr(self, "step_m", 0.05) or 0.05),
             "depth0_by_tid": dict(getattr(self, "depth0_by_tid", {}) or {}),
+            "step_by_tid": dict(getattr(self, "step_by_tid", {}) or {}),
             "gwl_by_tid": copy.deepcopy(dict(getattr(self, "gwl_by_tid", {}) or {})),
             "compact_1m": bool(getattr(self, "compact_1m", False)),
             "show_geology_column": bool(getattr(self, "show_geology_column", True)),
@@ -552,6 +554,10 @@ class GeoCanvasEditor(tk.Tk):
             self.depth0_by_tid = dict((snap.get("depth0_by_tid") or {}))
         except Exception:
             self.depth0_by_tid = {}
+        try:
+            self.step_by_tid = dict((snap.get("step_by_tid") or {}))
+        except Exception:
+            self.step_by_tid = {}
         try:
             self.gwl_by_tid = copy.deepcopy(dict((snap.get("gwl_by_tid") or {})) or {})
         except Exception:
@@ -1756,6 +1762,36 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
 
+    def _current_step_for_test(self, t) -> float:
+        """Текущий шаг опыта из модели (задел под индивидуальный шаг)."""
+        tid = int(getattr(t, "tid", 0) or 0)
+        try:
+            if getattr(self, "step_by_tid", None) and tid in self.step_by_tid:
+                return float(self.step_by_tid[tid])
+        except Exception:
+            pass
+        try:
+            if getattr(t, "depth", None) and len(t.depth) >= 2:
+                d0 = _parse_depth_float(t.depth[0])
+                d1 = _parse_depth_float(t.depth[1])
+                if d0 is not None and d1 is not None:
+                    dv = float(d1 - d0)
+                    if dv > 0:
+                        return dv
+        except Exception:
+            pass
+        return float(getattr(self, "step_m", 0.1) or 0.1)
+
+    def _set_step_for_test(self, t, step_m: float):
+        """Обновляет шаг опыта в модели (tid -> step_m)."""
+        tid = int(getattr(t, "tid", 0) or 0)
+        try:
+            step_f = float(step_m)
+            if step_f > 0:
+                self.step_by_tid[int(tid)] = step_f
+        except Exception:
+            pass
+
     def _parse_probe_type_values(self, probe_type: str) -> dict[str, str]:
         """Parse probe type like A3/50/20/10/350 [№115]."""
         s = str(probe_type or "").strip()
@@ -2385,10 +2421,11 @@ class GeoCanvasEditor(tk.Tk):
 
         ttk.Label(table, text="Опыт", font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w", padx=(0, 10))
         ttk.Label(table, text="Нач. глубина, м", font=("Segoe UI", 9, "bold")).grid(row=0, column=1, sticky="w")
-        ttk.Label(table, text="Дата/время", font=("Segoe UI", 9, "bold")).grid(row=0, column=2, sticky="w", padx=(12, 0))
-        ttk.Label(table, text="УГВ", font=("Segoe UI", 9, "bold")).grid(row=0, column=3, sticky="w", padx=(12, 0))
+        ttk.Label(table, text="Шаг, см", font=("Segoe UI", 9, "bold")).grid(row=0, column=2, sticky="w", padx=(12, 0))
+        ttk.Label(table, text="Дата/время", font=("Segoe UI", 9, "bold")).grid(row=0, column=3, sticky="w", padx=(12, 0))
+        ttk.Label(table, text="УГВ", font=("Segoe UI", 9, "bold")).grid(row=0, column=4, sticky="w", padx=(12, 0))
 
-        row_vars = []   # (t, tid, h0_var, ent, dt_var, dt_lbl, gwl_on_var, gwl_var, gwl_ent)
+        row_vars = []   # (t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, gwl_on_var, gwl_var, gwl_ent)
 
         def _parse_depth_str(s: str):
             try:
@@ -2446,12 +2483,20 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
 
+            step_row_m = float(self._current_step_for_test(t))
+            step_row_cm = int(round(step_row_m * 100.0))
+            if step_row_cm <= 0:
+                step_row_cm = 10
+            step_var_row = tk.StringVar(master=self, value=str(step_row_cm))
+            step_ent = ttk.Entry(table, textvariable=step_var_row, width=4)
+            step_ent.grid(row=i, column=2, sticky="w", padx=(12, 0), pady=2)
+
             # дата/время (парсим из файла)
             dt0 = _norm_dt(getattr(t, "dt", None))
             dt_var = tk.StringVar(master=self, value=_fmt_dt(dt0))
 
             dt_lbl = ttk.Label(table, textvariable=dt_var, foreground="#666666", cursor="hand2")
-            dt_lbl.grid(row=i, column=2, sticky="w", padx=(12, 0), pady=2)
+            dt_lbl.grid(row=i, column=3, sticky="w", padx=(12, 0), pady=2)
 
             gwl_state = dict((getattr(self, "gwl_by_tid", {}) or {}).get(int(tid), {}) or {})
             gwl_enabled = bool(gwl_state.get("enabled", False))
@@ -2459,7 +2504,7 @@ class GeoCanvasEditor(tk.Tk):
             gwl_on_var = tk.BooleanVar(master=self, value=gwl_enabled)
             gwl_var = tk.StringVar(master=self, value=("" if gwl_val in (None, "") else f"{float(gwl_val):g}"))
             gwl_box = ttk.Frame(table)
-            gwl_box.grid(row=i, column=3, sticky="w", padx=(12, 0), pady=2)
+            gwl_box.grid(row=i, column=4, sticky="w", padx=(12, 0), pady=2)
             gwl_chk = ttk.Checkbutton(gwl_box, variable=gwl_on_var)
             gwl_chk.pack(side="left", padx=(0, 4))
             gwl_ent = ttk.Entry(gwl_box, textvariable=gwl_var, width=6)
@@ -2473,10 +2518,10 @@ class GeoCanvasEditor(tk.Tk):
             gwl_chk.configure(command=_sync_gwl_state)
             _sync_gwl_state()
 
-            row_vars.append((t, tid, h0_var, ent, dt_var, dt_lbl, gwl_on_var, gwl_var, gwl_ent))
+            row_vars.append((t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, gwl_on_var, gwl_var, gwl_ent))
 
         def _open_dt_calendar(row_tuple):
-            t, tid, h0_var, ent, dt_var, dt_lbl, *_rest = row_tuple
+            t, tid, h0_var, ent, _step_var_row, _step_ent, dt_var, dt_lbl, *_rest = row_tuple
             # подсветка строки на время редактирования
             old = dt_var.get()
             dt_var.set(f"[{old}]")
@@ -2505,7 +2550,7 @@ class GeoCanvasEditor(tk.Tk):
 
         # клик по дате открывает календарь
         for row in row_vars:
-            row[-1].bind("<Button-1>", lambda e, r=row: _open_dt_calendar(r))
+            row[7].bind("<Button-1>", lambda e, r=row: _open_dt_calendar(r))
         recompute_busy = False
         def _recompute_apply_state():
             nonlocal recompute_busy
@@ -2520,7 +2565,7 @@ class GeoCanvasEditor(tk.Tk):
                 if (not apply_all_var.get()):
                     try:
                         vals = []
-                        for (_t, tid, h0_var, _ent, _dt_var, _dt_lbl, *_rest) in row_vars:
+                        for (_t, tid, h0_var, _ent, _step_var_row, _step_ent, _dt_var, _dt_lbl, *_rest) in row_vars:
                             dv = _parse_depth_str(h0_var.get())
                             if dv is None:
                                 try:
@@ -2546,15 +2591,15 @@ class GeoCanvasEditor(tk.Tk):
                 if apply_all_var.get():
                     # Массовое применение — только если явно введено валидное общее значение.
                     if cd is not None:
-                        for (_t, _tid, h0_var, _ent, _dt_var, _dt_lbl, *_rest) in row_vars:
+                        for (_t, _tid, h0_var, _ent, _step_var_row, _step_ent, _dt_var, _dt_lbl, *_rest) in row_vars:
                             h0_var.set(f"{cd:g}")
-                    for (_t, _tid, _h0_var, ent, _dt_var, _dt_lbl, *_rest) in row_vars:
+                    for (_t, _tid, _h0_var, ent, _step_var_row, _step_ent, _dt_var, _dt_lbl, *_rest) in row_vars:
                         try:
                             ent.config(state="disabled")
                         except Exception:
                             pass
                 else:
-                    for (_t, _tid, _h0_var, ent, _dt_var, _dt_lbl, *_rest) in row_vars:
+                    for (_t, _tid, _h0_var, ent, _step_var_row, _step_ent, _dt_var, _dt_lbl, *_rest) in row_vars:
                         try:
                             ent.config(state="normal")
                         except Exception:
@@ -2596,7 +2641,7 @@ class GeoCanvasEditor(tk.Tk):
                 _recompute_apply_state()
             h0_var.trace_add("write", _on_row_change)
 
-        for (t, tid, h0_var, ent, dt_var, dt_lbl, *_rest) in row_vars:
+        for (t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, *_rest) in row_vars:
             _make_row_trace(h0_var)
 
         # клик по неактивной ячейке: активировать все и снять галочку
@@ -2611,7 +2656,7 @@ class GeoCanvasEditor(tk.Tk):
                 return "break"
             return None
 
-        for (t, tid, h0_var, ent, dt_var, dt_lbl, *_rest) in row_vars:
+        for (t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, *_rest) in row_vars:
             ent.bind("<Button-1>", lambda e, ee=ent: _on_entry_click(e, ee), add="+")
             ent.bind("<FocusIn>", lambda e, ee=ent: ee.selection_range(0, "end"), add="+")
         # (кнопки календаря убраны: редактирование по клику на дате)
@@ -2629,7 +2674,7 @@ class GeoCanvasEditor(tk.Tk):
                 pass
             return "break"
 
-        for idx, (t, tid, h0_var, ent, dt_var, dt_lbl, *_rest) in enumerate(row_vars):
+        for idx, (t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, *_rest) in enumerate(row_vars):
             ent.bind("<Return>", lambda e, k=idx: _focus_next(k))
 
         # применить начальные состояния
@@ -2687,7 +2732,7 @@ class GeoCanvasEditor(tk.Tk):
             # индивидуальные h0 — обновляем из текущей модели, не затирая чужие значения дефолтами
             prev_depth0 = dict(getattr(self, "depth0_by_tid", {}) or {})
             new_depth0 = dict(prev_depth0)
-            for (t, tid, h0_var, ent, dt_var, dt_lbl, *_rest) in row_vars:
+            for (t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, *_rest) in row_vars:
                 if apply_all_var.get():
                     # Явное массовое применение: всем назначаем только общее значение.
                     dv = cd
@@ -2705,6 +2750,29 @@ class GeoCanvasEditor(tk.Tk):
                 new_depth0[int(tid)] = float(dv)
             self.depth0_by_tid = new_depth0
 
+            # индивидуальный шаг по опытам (см -> м), задел под разный шаг
+            try:
+                new_step_by_tid = dict(getattr(self, "step_by_tid", {}) or {})
+                for (t, tid, _h0_var, _ent, step_var_row, _step_ent, _dt_var, _dt_lbl, *_rest) in row_vars:
+                    raw_step = str(step_var_row.get() or "").strip().replace(",", ".")
+                    if raw_step == "":
+                        step_m_row = float(getattr(self, "step_m", 0.1) or 0.1)
+                    else:
+                        try:
+                            step_cm_row = float(raw_step)
+                        except Exception:
+                            msg_var.set(f"СЗ-{tid}: шаг должен быть числом (см).")
+                            return
+                        if step_cm_row <= 0:
+                            msg_var.set(f"СЗ-{tid}: шаг должен быть больше 0.")
+                            return
+                        step_m_row = float(step_cm_row) / 100.0
+                    new_step_by_tid[int(tid)] = float(step_m_row)
+                    self._set_step_for_test(t, step_m_row)
+                self.step_by_tid = new_step_by_tid
+            except Exception:
+                pass
+
             # если глубины разные (apply_all=False) — depth_start берём как минимум из строк
             try:
                 if (not apply_all_var.get()) and self.depth0_by_tid:
@@ -2717,10 +2785,11 @@ class GeoCanvasEditor(tk.Tk):
             # обновить построение глубин здесь же (без перезагрузки)
             try:
                 step = float(self.step_m or 0.10)
-                for (t, tid, h0_var, ent, dt_var, dt_lbl, *_rest) in row_vars:
+                for (t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, *_rest) in row_vars:
                     d0 = float(self.depth0_by_tid.get(int(tid), float(self.depth_start or 0.0)))
+                    step_t = float((getattr(self, "step_by_tid", {}) or {}).get(int(tid), step))
                     if getattr(t, "qc", None) is not None:
-                        t.depth = [f"{(d0 + i * step):g}" for i in range(len(t.qc))]
+                        t.depth = [f"{(d0 + i * step_t):g}" for i in range(len(t.qc))]
                     try:
                         for _ti, _tt in enumerate(self.tests):
                             if int(getattr(_tt, "tid", 0) or 0) == int(tid):
@@ -2745,7 +2814,7 @@ class GeoCanvasEditor(tk.Tk):
             # УГВ по опытам (задел для будущего отображения в колонках/ползунке)
             try:
                 new_gwl = dict(getattr(self, "gwl_by_tid", {}) or {})
-                for (_t, tid, _h0_var, _ent, _dt_var, _dt_lbl, gwl_on_var, gwl_var, _gwl_ent) in row_vars:
+                for (_t, tid, _h0_var, _ent, _step_var_row, _step_ent, _dt_var, _dt_lbl, gwl_on_var, gwl_var, _gwl_ent) in row_vars:
                     enabled = bool(gwl_on_var.get())
                     raw = str(gwl_var.get() or "").strip().replace(",", ".")
                     gval = None
@@ -8502,6 +8571,8 @@ class GeoCanvasEditor(tk.Tk):
         self.depth_start = 0.0
         self.step_m = step_m
         self.depth0_by_tid = {1: 0.0}
+        self.step_by_tid = {1: float(step_m)}
+        self.gwl_by_tid = {}
 
         dt_now = _dt.datetime.now().replace(microsecond=0)
         dt_text = dt_now.strftime("%Y-%m-%d %H:%M:%S")
