@@ -205,7 +205,9 @@ class GeoCanvasEditor(tk.Tk):
         self.pad_x = 8
         self.pad_y = 8
         self.show_graphs = False
+        self.show_geology_column = True
         self.compact_1m = False
+        self.display_sort_mode = "date"
         self.expanded_meters: set[int] = set()
         self._graph_redraw_after_id = None
         self._rebuild_redraw_after_id = None
@@ -524,6 +526,8 @@ class GeoCanvasEditor(tk.Tk):
             "step_m": float(getattr(self, "step_m", 0.05) or 0.05),
             "depth0_by_tid": dict(getattr(self, "depth0_by_tid", {}) or {}),
             "compact_1m": bool(getattr(self, "compact_1m", False)),
+            "show_geology_column": bool(getattr(self, "show_geology_column", True)),
+            "display_sort_mode": str(getattr(self, "display_sort_mode", "date") or "date"),
             "expanded_meters": sorted(int(x) for x in (getattr(self, "expanded_meters", set()) or set())),
             "layer_edit_mode": bool(getattr(self, "layer_edit_mode", False)),
             "project_ops": copy.deepcopy(list(getattr(self, "project_ops", []) or [])),
@@ -551,6 +555,16 @@ class GeoCanvasEditor(tk.Tk):
             self.compact_1m = bool(snap.get("compact_1m", getattr(self, "compact_1m", False)))
         except Exception:
             self.compact_1m = bool(getattr(self, "compact_1m", False))
+        try:
+            self.show_geology_column = bool(snap.get("show_geology_column", getattr(self, "show_geology_column", True)))
+        except Exception:
+            self.show_geology_column = bool(getattr(self, "show_geology_column", True))
+        try:
+            self.display_sort_mode = str(snap.get("display_sort_mode", getattr(self, "display_sort_mode", "date")) or "date").lower()
+        except Exception:
+            self.display_sort_mode = "date"
+        if self.display_sort_mode not in ("date", "tid"):
+            self.display_sort_mode = "date"
         self.row_h = int(self.row_h_compact_1m if self.compact_1m else self.row_h_default)
         try:
             self.expanded_meters = set(int(x) for x in (snap.get("expanded_meters") or []))
@@ -565,6 +579,8 @@ class GeoCanvasEditor(tk.Tk):
         try:
             if getattr(self, "ribbon_view", None):
                 self.ribbon_view.set_compact_1m(bool(self.compact_1m))
+                self.ribbon_view.set_show_geology_column(bool(self.show_geology_column))
+                self.ribbon_view.set_display_sort_mode(str(self.display_sort_mode))
                 self.ribbon_view.set_layer_edit_mode(True)
         except Exception:
             pass
@@ -766,6 +782,32 @@ class GeoCanvasEditor(tk.Tk):
 
     def _toggle_show_graphs_from_ui(self):
         self._toggle_show_graphs(bool(getattr(self, "_show_graphs_var", None).get() if getattr(self, "_show_graphs_var", None) is not None else False))
+
+    def _toggle_show_geology_column(self, value: bool | None = None):
+        if value is None:
+            value = bool(getattr(self, "show_geology_column", True))
+        self.show_geology_column = bool(value)
+        try:
+            if getattr(self, "ribbon_view", None):
+                self.ribbon_view.set_show_geology_column(self.show_geology_column)
+        except Exception:
+            pass
+        self._redraw()
+        self.schedule_graph_redraw()
+
+    def _set_display_sort_mode(self, mode: str | None):
+        mode_norm = str(mode or "date").strip().lower()
+        mode_norm = "tid" if mode_norm == "tid" else "date"
+        if str(getattr(self, "display_sort_mode", "date")) == mode_norm:
+            return
+        self.display_sort_mode = mode_norm
+        try:
+            if getattr(self, "ribbon_view", None):
+                self.ribbon_view.set_display_sort_mode(self.display_sort_mode)
+        except Exception:
+            pass
+        self._redraw()
+        self.schedule_graph_redraw()
 
     def _schedule_rebuild_redraw(self):
         prev = getattr(self, "_rebuild_redraw_after_id", None)
@@ -1369,7 +1411,9 @@ class GeoCanvasEditor(tk.Tk):
                 "fix_algo": self.fix_by_algorithm,
                 "reduce_step": self.convert_10_to_5,
                 "toggle_graphs": self._toggle_show_graphs,
+                "toggle_geology_column": self._toggle_show_geology_column,
                 "toggle_compact_1m": self._toggle_compact_1m,
+                "set_display_sort_mode": self._set_display_sort_mode,
                 "toggle_layer_edit": self._toggle_layer_edit_mode,
                 "edit_ige": self._edit_ige_from_ribbon,
                 "select_ige": self._select_ige_for_ribbon,
@@ -1384,7 +1428,9 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view.pack(side="top", fill="x", before=ribbon)
             self.ribbon_view.set_object_name(self.object_name)
             self.ribbon_view.set_show_graphs(bool(getattr(self, "show_graphs", False)))
+            self.ribbon_view.set_show_geology_column(bool(getattr(self, "show_geology_column", True)))
             self.ribbon_view.set_compact_1m(bool(getattr(self, "compact_1m", False)))
+            self.ribbon_view.set_display_sort_mode(str(getattr(self, "display_sort_mode", "date")))
             self.ribbon_view.set_layer_edit_mode(True)
             ribbon.pack_forget()
         # ========= Main canvas (fixed header) =========
@@ -3647,15 +3693,8 @@ class GeoCanvasEditor(tk.Tk):
 
         self._sync_header_body_after_scroll()
 
-    def _refresh_display_order(self):
-        """Order tests for rendering.
-
-        Rule: always show tests left-to-right by **time** (chronological).
-        GeoExplorer files may contain tests recorded/added out of numeric order.
-
-        Fallback: if dt is missing/unparseable, push such tests to the end,
-        keeping a stable tie-break by test id and original index.
-        """
+    def _sorted_display_indices(self) -> list[int]:
+        """Return display indices for tests using current sort mode."""
 
         def _tid_key(tid):
             try:
@@ -3663,13 +3702,22 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 return 10**9
 
+        mode = str(getattr(self, "display_sort_mode", "date") or "date").lower()
+
+        if mode == "tid":
+            return sorted(range(len(self.tests)), key=lambda i: (_tid_key(getattr(self.tests[i], "tid", "")), i))
+
         def _key(i: int):
             t = self.tests[i]
             dt = _try_parse_dt(getattr(t, "dt", "") or "")
             dt_key = dt if dt is not None else _dt.datetime.max
             return (dt_key, _tid_key(getattr(t, "tid", "")), i)
 
-        self.display_cols = sorted(range(len(self.tests)), key=_key)
+        return sorted(range(len(self.tests)), key=_key)
+
+    def _refresh_display_order(self):
+        self.display_cols = self._sorted_display_indices()
+
 
     def schedule_graph_redraw(self):
         prev = getattr(self, "_graph_redraw_after_id", None)
@@ -4322,7 +4370,9 @@ class GeoCanvasEditor(tk.Tk):
             tag_axes = ("graph_axes", f"graph_axes_{ti}")
             tag_overlay = ("layers_overlay", f"layers_overlay_{ti}")
             self.canvas.create_rectangle(x0, y0, x1, y1, fill="#fbfdff", outline=GUI_GRID, tags=tag_axes)
-            labels = self._draw_layers_overlay_for_test(ti, plot_rect, self._depth_to_canvas_y, tag_overlay) or []
+            labels = []
+            if bool(getattr(self, "show_geology_column", True)):
+                labels = self._draw_layers_overlay_for_test(ti, plot_rect, self._depth_to_canvas_y, tag_overlay) or []
             if not y_points:
                 self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
                 self._draw_groundwater_line_for_test(ti, plot_rect)
