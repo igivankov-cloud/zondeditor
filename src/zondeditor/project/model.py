@@ -19,6 +19,13 @@ class ProjectSettings:
     fsleeve: str = "10"
     acon: str = "10"
     asleeve: str = "350"
+    controller_type: str = ""
+    controller_scale_div: str = "250"
+    probe_type: str = ""
+    cone_kn: str = "30"
+    sleeve_kn: str = "10"
+    cone_area_cm2: str = "10"
+    sleeve_area_cm2: str = "350"
     step_m: float = 0.1
     k2k4_mode: str = ""
     extras: dict[str, Any] = field(default_factory=dict)

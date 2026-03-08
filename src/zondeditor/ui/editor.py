@@ -1339,7 +1339,7 @@ class GeoCanvasEditor(tk.Tk):
         make_btn(btns, "🛠", "Корректировка", self.fix_by_algorithm, ).grid(row=0, column=1, padx=4)
         make_btn(btns, "10→5", "Конвертировать шаг 10 см → 5 см", self.convert_10_to_5, w=5).grid(row=0, column=2, padx=4)  
         
-        make_btn(btns, "⚙", "Параметры зондирований (GEO)", self.open_geo_params_dialog, w=3).grid(row=0, column=3, padx=4)
+        make_btn(btns, "⚙", "Параметры зондирований (GEO)", self.open_sounding_params_dialog, w=3).grid(row=0, column=3, padx=4)
         self._show_graphs_var = tk.BooleanVar(master=self, value=bool(getattr(self, "show_graphs", False)))
         graphs_chk = ttk.Checkbutton(btns, text="Графики", variable=self._show_graphs_var, command=self._toggle_show_graphs_from_ui)
         graphs_chk.grid(row=0, column=4, padx=6)
@@ -1362,6 +1362,8 @@ class GeoCanvasEditor(tk.Tk):
         self.fsleeve_var = tk.StringVar(master=self, value="10")
         self.acon_var = tk.StringVar(master=self, value="10")
         self.asl_var = tk.StringVar(master=self, value="350")
+        self.controller_type_var = tk.StringVar(master=self, value="")
+        self.probe_type_var = tk.StringVar(master=self, value="")
 
         def p_row(r, c, label, var, tip):
             ttk.Label(params, text=label).grid(row=r, column=c, sticky="w", padx=(8, 4), pady=2)
@@ -1408,7 +1410,7 @@ class GeoCanvasEditor(tk.Tk):
                 "export_archive": self.export_bundle,
                 "export_dxf": self.export_dxf,
                 "export_cpt_protocol": self.export_cpt_protocol,
-                "geo_params": self.open_geo_params_dialog,
+                "geo_params": self.open_sounding_params_dialog,
                 "fix_algo": self.fix_by_algorithm,
                 "reduce_step": self.convert_10_to_5,
                 "toggle_graphs": self._toggle_show_graphs,
@@ -1745,6 +1747,175 @@ class GeoCanvasEditor(tk.Tk):
             self.depth0_by_tid[int(tid)] = float(depth0)
         except Exception:
             pass
+
+    def _parse_probe_type_values(self, probe_type: str) -> dict[str, str]:
+        """Parse probe type like A3/50/20/10/350 [№115]."""
+        s = str(probe_type or "").strip()
+        m = re.search(r"([A-Za-zА-Яа-я]\d+)\s*/\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)", s)
+        if not m:
+            return {}
+        return {
+            "probe_type": f"{m.group(1)}/{m.group(2)}/{m.group(3)}/{m.group(4)}/{m.group(5)}",
+            "cone_kn": m.group(2),
+            "sleeve_kn": m.group(3),
+            "cone_area_cm2": m.group(4),
+            "sleeve_area_cm2": m.group(5),
+        }
+
+    def _extract_sounding_params_from_geo_bytes(self, data: bytes, geo_kind: str) -> dict[str, str]:
+        params = {
+            "controller_type": "ТЕСТ-К4" if str(geo_kind).upper() == "K4" else "ТЕСТ-К2",
+            "controller_scale_div": (self.scale_var.get().strip() if hasattr(self, "scale_var") else "250") or "250",
+            "probe_type": (self.probe_type_var.get().strip() if hasattr(self, "probe_type_var") else "") or "",
+            "cone_kn": (self.fcone_var.get().strip() if hasattr(self, "fcone_var") else "30") or "30",
+            "sleeve_kn": (self.fsleeve_var.get().strip() if hasattr(self, "fsleeve_var") else "10") or "10",
+            "cone_area_cm2": (self.acon_var.get().strip() if hasattr(self, "acon_var") else "10") or "10",
+            "sleeve_area_cm2": (self.asl_var.get().strip() if hasattr(self, "asl_var") else "350") or "350",
+        }
+        if str(geo_kind).upper() == "K4":
+            params["controller_type"] = "ТЕСТ-К4М" if (bytes([0xCA,0x34,0xCC]) in data or b"K4M" in data.upper()) else "ТЕСТ-К4"
+            # try textual probe type payload
+            probe_txt = ""
+            for enc in ("cp1251", "cp866", "latin1"):
+                try:
+                    txt = data.decode(enc, errors="ignore")
+                except Exception:
+                    continue
+                mm = re.search(r"[A-Za-zА-Яа-я]\d+\s*/\s*\d+\s*/\s*\d+\s*/\s*\d+\s*/\s*\d+(?:\s*\[[^\]]+\])?", txt)
+                if mm:
+                    probe_txt = mm.group(0).strip()
+                    break
+            if probe_txt:
+                params["probe_type"] = probe_txt
+                params.update(self._parse_probe_type_values(probe_txt))
+            else:
+                # fallback from first K4 block header bytes (empirical)
+                try:
+                    starts = __import__("src.zondeditor.io.k4_reader", fromlist=["_k4_find_starts"])._k4_find_starts(data)
+                    if starts:
+                        p = int(starts[0])
+                        cone = int(data[p + 15])
+                        sleeve = int(data[p + 16])
+                        cone_area = int(data[p + 18])
+                        sleeve_area = int(data[p + 19]) + (int(data[p + 20]) << 8)
+                        if 1 <= cone <= 500:
+                            params["cone_kn"] = str(cone)
+                        if 1 <= sleeve <= 500:
+                            params["sleeve_kn"] = str(sleeve)
+                        if 1 <= cone_area <= 200:
+                            params["cone_area_cm2"] = str(cone_area)
+                        if 1 <= sleeve_area <= 5000:
+                            params["sleeve_area_cm2"] = str(sleeve_area)
+                        if not params.get("probe_type"):
+                            params["probe_type"] = f"A3/{params['cone_kn']}/{params['sleeve_kn']}/{params['cone_area_cm2']}/{params['sleeve_area_cm2']}"
+                except Exception:
+                    pass
+        return params
+
+    def _apply_sounding_params(self, params: dict[str, str] | None):
+        p = dict(params or {})
+        ct = str(p.get("controller_type", "") or "")
+        sc = str(p.get("controller_scale_div", "") or "")
+        pr = str(p.get("probe_type", "") or "")
+        ckn = str(p.get("cone_kn", "") or "")
+        skn = str(p.get("sleeve_kn", "") or "")
+        ca = str(p.get("cone_area_cm2", "") or "")
+        sa = str(p.get("sleeve_area_cm2", "") or "")
+        if hasattr(self, "controller_type_var") and ct:
+            self.controller_type_var.set(ct)
+        if hasattr(self, "probe_type_var") and pr:
+            self.probe_type_var.set(pr)
+        if sc and hasattr(self, "scale_var"):
+            self.scale_var.set(sc)
+        if ckn and hasattr(self, "fcone_var"):
+            self.fcone_var.set(ckn)
+        if skn and hasattr(self, "fsleeve_var"):
+            self.fsleeve_var.set(skn)
+        if ca and hasattr(self, "acon_var"):
+            self.acon_var.set(ca)
+        if sa and hasattr(self, "asl_var"):
+            self.asl_var.set(sa)
+
+    def open_sounding_params_dialog(self):
+        """Минимальные параметры зондирования: контроллер/зонд/нагрузки/площади."""
+        dlg = tk.Toplevel(self)
+        dlg.title("Параметры зондирований")
+        dlg.transient(self)
+        dlg.grab_set()
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill="both", expand=True)
+
+        vars_map = {
+            "controller_type": tk.StringVar(master=self, value=(self.controller_type_var.get().strip() if hasattr(self, "controller_type_var") else "")),
+            "controller_scale_div": tk.StringVar(master=self, value=(self.scale_var.get().strip() if hasattr(self, "scale_var") else "250")),
+            "probe_type": tk.StringVar(master=self, value=(self.probe_type_var.get().strip() if hasattr(self, "probe_type_var") else "")),
+            "cone_kn": tk.StringVar(master=self, value=(self.fcone_var.get().strip() if hasattr(self, "fcone_var") else "30")),
+            "sleeve_kn": tk.StringVar(master=self, value=(self.fsleeve_var.get().strip() if hasattr(self, "fsleeve_var") else "10")),
+            "cone_area_cm2": tk.StringVar(master=self, value=(self.acon_var.get().strip() if hasattr(self, "acon_var") else "10")),
+            "sleeve_area_cm2": tk.StringVar(master=self, value=(self.asl_var.get().strip() if hasattr(self, "asl_var") else "350")),
+        }
+        labels = [
+            ("Тип контроллера", "controller_type"),
+            ("Шкала прибора", "controller_scale_div"),
+            ("Тип зонда", "probe_type"),
+            ("КН лоб", "cone_kn"),
+            ("КН бок", "sleeve_kn"),
+            ("Площадь конуса, см²", "cone_area_cm2"),
+            ("Площадь муфты, см²", "sleeve_area_cm2"),
+        ]
+        entries = {}
+        for i, (lbl, key) in enumerate(labels):
+            ttk.Label(frm, text=lbl).grid(row=i, column=0, sticky="w", padx=(0, 8), pady=2)
+            e = ttk.Entry(frm, textvariable=vars_map[key], width=28)
+            e.grid(row=i, column=1, sticky="ew", pady=2)
+            entries[key] = e
+        frm.columnconfigure(1, weight=1)
+
+        if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4":
+            try:
+                entries["controller_scale_div"].configure(state="disabled")
+            except Exception:
+                pass
+
+        def _on_probe_change(*_):
+            parsed = self._parse_probe_type_values(vars_map["probe_type"].get())
+            if not parsed:
+                return
+            vars_map["cone_kn"].set(parsed["cone_kn"])
+            vars_map["sleeve_kn"].set(parsed["sleeve_kn"])
+            vars_map["cone_area_cm2"].set(parsed["cone_area_cm2"])
+            vars_map["sleeve_area_cm2"].set(parsed["sleeve_area_cm2"])
+
+        vars_map["probe_type"].trace_add("write", _on_probe_change)
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=len(labels), column=0, columnspan=2, sticky="e", pady=(10, 0))
+
+        def on_ok():
+            self.controller_type_var.set(vars_map["controller_type"].get().strip())
+            self.probe_type_var.set(vars_map["probe_type"].get().strip())
+            if str(getattr(self, "geo_kind", "K2") or "K2").upper() != "K4":
+                self.scale_var.set(vars_map["controller_scale_div"].get().strip() or self.scale_var.get())
+            self.fcone_var.set(vars_map["cone_kn"].get().strip() or self.fcone_var.get())
+            self.fsleeve_var.set(vars_map["sleeve_kn"].get().strip() or self.fsleeve_var.get())
+            self.acon_var.set(vars_map["cone_area_cm2"].get().strip() or self.acon_var.get())
+            self.asl_var.set(vars_map["sleeve_area_cm2"].get().strip() or self.asl_var.get())
+            try:
+                self._redraw()
+                self.schedule_graph_redraw()
+            except Exception:
+                pass
+            dlg.destroy()
+
+        ttk.Button(btns, text="Отмена", command=dlg.destroy).pack(side="right")
+        ttk.Button(btns, text="OK", command=on_ok).pack(side="right", padx=(0, 8))
+        try:
+            dlg.bind("<Escape>", lambda _e: dlg.destroy())
+            dlg.bind("<Return>", lambda _e: on_ok())
+            self._center_child(dlg)
+        except Exception:
+            pass
+        self.wait_window(dlg)
 
     def open_geo_params_dialog(self):
         """Открыть окно параметров GEO для текущего файла."""
@@ -2686,6 +2857,10 @@ class GeoCanvasEditor(tk.Tk):
                     block=getattr(s, "block", None),
                 ) for s in series_list]
                 _tests2, meta_rows, self.geo_kind = parse_geo_bytes(data)
+                try:
+                    self._apply_sounding_params(self._extract_sounding_params_from_geo_bytes(data, self.geo_kind))
+                except Exception:
+                    pass
                 # store template blocks (do not depend on current edited/deleted tests)
                 self._geo_template_blocks_info = [t.block for t in tests_list if getattr(t, 'block', None)]
                 self._geo_template_blocks_info_full = list(self._geo_template_blocks_info)
@@ -7868,13 +8043,26 @@ class GeoCanvasEditor(tk.Tk):
 
     def _project_settings_from_ui(self) -> ProjectSettings:
         extras = {"cpt_calc_settings": dict(getattr(self, "cpt_calc_settings", {}) or {})}
+        scale_val = (self.scale_var.get().strip() if hasattr(self, "scale_var") else "250") or "250"
+        fcone_val = (self.fcone_var.get().strip() if hasattr(self, "fcone_var") else "30") or "30"
+        fsleeve_val = (self.fsleeve_var.get().strip() if hasattr(self, "fsleeve_var") else "10") or "10"
+        acon_val = (self.acon_var.get().strip() if hasattr(self, "acon_var") else "10") or "10"
+        asleeve_val = (self.asl_var.get().strip() if hasattr(self, "asl_var") else "350") or "350"
         return ProjectSettings(
-            scale=(self.scale_var.get().strip() if hasattr(self, "scale_var") else "250") or "250",
-            fcone=(self.fcone_var.get().strip() if hasattr(self, "fcone_var") else "30") or "30",
-            fsleeve=(self.fsleeve_var.get().strip() if hasattr(self, "fsleeve_var") else "10") or "10",
-            acon=(self.acon_var.get().strip() if hasattr(self, "acon_var") else "10") or "10",
-            asleeve=(self.asl_var.get().strip() if hasattr(self, "asl_var") else "350") or "350",
+            scale=scale_val,
+            fcone=fcone_val,
+            fsleeve=fsleeve_val,
+            acon=acon_val,
+            asleeve=asleeve_val,
+            controller_type=(self.controller_type_var.get().strip() if hasattr(self, "controller_type_var") else ""),
+            controller_scale_div=scale_val,
+            probe_type=(self.probe_type_var.get().strip() if hasattr(self, "probe_type_var") else ""),
+            cone_kn=fcone_val,
+            sleeve_kn=fsleeve_val,
+            cone_area_cm2=acon_val,
+            sleeve_area_cm2=asleeve_val,
             step_m=float(getattr(self, "step_m", 0.1) or 0.1),
+            k2k4_mode=str(getattr(self, "k2k4_mode", "") or ""),
             extras=extras,
         )
 
@@ -8120,6 +8308,23 @@ class GeoCanvasEditor(tk.Tk):
             self.fsleeve_var.set(project.settings.fsleeve)
             self.acon_var.set(project.settings.acon)
             self.asl_var.set(project.settings.asleeve)
+        if hasattr(self, "controller_type_var"):
+            self.controller_type_var.set(str(getattr(project.settings, "controller_type", "") or ""))
+        if hasattr(self, "probe_type_var"):
+            self.probe_type_var.set(str(getattr(project.settings, "probe_type", "") or ""))
+        try:
+            if str(getattr(project.settings, "controller_scale_div", "") or "").strip() and hasattr(self, "scale_var"):
+                self.scale_var.set(str(project.settings.controller_scale_div))
+            if str(getattr(project.settings, "cone_kn", "") or "").strip() and hasattr(self, "fcone_var"):
+                self.fcone_var.set(str(project.settings.cone_kn))
+            if str(getattr(project.settings, "sleeve_kn", "") or "").strip() and hasattr(self, "fsleeve_var"):
+                self.fsleeve_var.set(str(project.settings.sleeve_kn))
+            if str(getattr(project.settings, "cone_area_cm2", "") or "").strip() and hasattr(self, "acon_var"):
+                self.acon_var.set(str(project.settings.cone_area_cm2))
+            if str(getattr(project.settings, "sleeve_area_cm2", "") or "").strip() and hasattr(self, "asl_var"):
+                self.asl_var.set(str(project.settings.sleeve_area_cm2))
+        except Exception:
+            pass
         self.cpt_calc_settings = dict((project.settings.extras or {}).get("cpt_calc_settings") or self.cpt_calc_settings or {"method": METHOD_SP446, "alluvial_sands": True, "groundwater_level": None})
         self._dirty = False
         if getattr(self, "ribbon_view", None):
