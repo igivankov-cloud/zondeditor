@@ -1798,7 +1798,7 @@ class GeoCanvasEditor(tk.Tk):
         g = str(geo_kind or getattr(self, "geo_kind", "K2") or "K2").upper()
         if g == "K4":
             return {
-                "controller_type": "ТЕСТ-К4",
+                "controller_type": "ТЕСТ-К4М",
                 "controller_scale_div": "1000",
                 "probe_type": "",
                 "cone_kn": "50",
@@ -1807,7 +1807,7 @@ class GeoCanvasEditor(tk.Tk):
                 "sleeve_area_cm2": "350",
             }
         return {
-            "controller_type": "ТЕСТ-К2",
+            "controller_type": "ТЕСТ-К2М",
             "controller_scale_div": "250",
             "probe_type": "",
             "cone_kn": "30",
@@ -1859,7 +1859,7 @@ class GeoCanvasEditor(tk.Tk):
     def _extract_sounding_params_from_geo_bytes(self, data: bytes, geo_kind: str) -> dict[str, str]:
         params = self._default_common_params(geo_kind)
         if str(geo_kind).upper() == "K4":
-            params["controller_type"] = "ТЕСТ-К4М" if (bytes([0xCA,0x34,0xCC]) in data or b"K4M" in data.upper()) else "ТЕСТ-К4"
+            params["controller_type"] = "ТЕСТ-К4М"
             probe_candidates: list[dict[str, str]] = []
             parsed_scale = ""
             for enc in ("cp1251", "cp866", "latin1"):
@@ -1877,7 +1877,7 @@ class GeoCanvasEditor(tk.Tk):
                         probe_candidates.append(parsed)
             if parsed_scale:
                 params["controller_scale_div"] = parsed_scale
-            elif params["controller_type"] == "ТЕСТ-К4М":
+            else:
                 params["controller_scale_div"] = "1000"
             if probe_candidates:
                 def _score(c: dict[str, str]) -> tuple[int, int]:
@@ -1902,7 +1902,7 @@ class GeoCanvasEditor(tk.Tk):
                             params["sleeve_kn"] = str(sleeve)
                         if 1 <= cone_area <= 200:
                             params["cone_area_cm2"] = str(cone_area)
-                        if 100 <= sleeve_area <= 5000:
+                        if 100 <= sleeve_area <= 500:
                             params["sleeve_area_cm2"] = str(sleeve_area)
                         params["probe_type"] = f"A3/{params['cone_kn']}/{params['sleeve_kn']}/{params['cone_area_cm2']}/{params['sleeve_area_cm2']}"
                 except Exception:
@@ -4068,7 +4068,8 @@ class GeoCanvasEditor(tk.Tk):
         # ---- qc max (MPa): use existing calibration source first, then kind fallback ----
         qc_max = None
         try:
-            fcone = float((self.fcone_var.get() if getattr(self, "fcone_var", None) else "").strip().replace(",", "."))
+            cp = self._current_common_params()
+            fcone = float(str(cp.get("cone_kn", "")).strip().replace(",", "."))
             if abs(fcone - 30.0) < 1e-6:
                 qc_max = 30.0
             elif abs(fcone - 50.0) < 1e-6:
@@ -8145,11 +8146,12 @@ class GeoCanvasEditor(tk.Tk):
 
     def _project_settings_from_ui(self) -> ProjectSettings:
         extras = {"cpt_calc_settings": dict(getattr(self, "cpt_calc_settings", {}) or {})}
-        scale_val = (self.scale_var.get().strip() if hasattr(self, "scale_var") else "250") or "250"
-        fcone_val = (self.fcone_var.get().strip() if hasattr(self, "fcone_var") else "30") or "30"
-        fsleeve_val = (self.fsleeve_var.get().strip() if hasattr(self, "fsleeve_var") else "10") or "10"
-        acon_val = (self.acon_var.get().strip() if hasattr(self, "acon_var") else "10") or "10"
-        asleeve_val = (self.asl_var.get().strip() if hasattr(self, "asl_var") else "350") or "350"
+        cp = self._current_common_params()
+        scale_val = str(cp.get("controller_scale_div", "250") or "250")
+        fcone_val = str(cp.get("cone_kn", "30") or "30")
+        fsleeve_val = str(cp.get("sleeve_kn", "10") or "10")
+        acon_val = str(cp.get("cone_area_cm2", "10") or "10")
+        asleeve_val = str(cp.get("sleeve_area_cm2", "350") or "350")
         return ProjectSettings(
             scale=scale_val,
             fcone=fcone_val,
@@ -8642,11 +8644,11 @@ class GeoCanvasEditor(tk.Tk):
                     "geoKind": getattr(self, "geo_kind", ""),
                     "step": getattr(self, "step_m", None),
                     "recalc": {
-                        "scale": self.scale_var.get() if hasattr(self, "scale_var") else "",
-                        "fcone": self.fcone_var.get() if hasattr(self, "fcone_var") else "",
-                        "fsleeve": self.fsleeve_var.get() if hasattr(self, "fsleeve_var") else "",
-                        "acon": self.acon_var.get() if hasattr(self, "acon_var") else "",
-                        "asleeve": self.asl_var.get() if hasattr(self, "asl_var") else "",
+                        "scale": str(self._current_common_params().get("controller_scale_div", "") or ""),
+                        "fcone": str(self._current_common_params().get("cone_kn", "") or ""),
+                        "fsleeve": str(self._current_common_params().get("sleeve_kn", "") or ""),
+                        "acon": str(self._current_common_params().get("cone_area_cm2", "") or ""),
+                        "asleeve": str(self._current_common_params().get("sleeve_area_cm2", "") or ""),
                     },
                     "tests": [
                         {"tid": int(getattr(t, "tid", 0) or 0), "locked": bool(getattr(t, "locked", False))}
@@ -8792,9 +8794,10 @@ class GeoCanvasEditor(tk.Tk):
             return False
 
     def _write_meta_txt(self, path: Path):
-        scale = self.scale_var.get().strip() if hasattr(self, "scale_var") else ""
-        fcone = self.fcone_var.get().strip() if hasattr(self, "fcone_var") else ""
-        fsleeve = self.fsleeve_var.get().strip() if hasattr(self, "fsleeve_var") else ""
+        cp = self._current_common_params()
+        scale = str(cp.get("controller_scale_div", "") or "").strip()
+        fcone = str(cp.get("cone_kn", "") or "").strip()
+        fsleeve = str(cp.get("sleeve_kn", "") or "").strip()
         step = getattr(self, "step_m", None)
         depth0 = getattr(self, "depth_start", None)
         src = getattr(self, "loaded_path", "")
@@ -9046,9 +9049,10 @@ def export_gxl_generated(self, out_file: str):
             return p
 
         # Параметры из UI (если есть)
-        scale = (self.scale_var.get().strip() if getattr(self, 'scale_var', None) else '') or '250'
-        fcone = (self.fcone_var.get().strip() if getattr(self, 'fcone_var', None) else '') or '30'
-        fsleeve = (self.fsleeve_var.get().strip() if getattr(self, 'fsleeve_var', None) else '') or '10'
+        cp = self._current_common_params()
+        scale = str(cp.get('controller_scale_div', '250') or '250')
+        fcone = str(cp.get('cone_kn', '30') or '30')
+        fsleeve = str(cp.get('sleeve_kn', '10') or '10')
 
         # Числовая шкала для отсечения значений (GeoExplorer часто не принимает значения выше шкалы)
         try:
