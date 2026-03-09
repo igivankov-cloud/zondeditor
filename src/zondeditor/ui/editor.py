@@ -1376,6 +1376,8 @@ class GeoCanvasEditor(tk.Tk):
         self.asl_var = tk.StringVar(master=self, value="350")
         self.controller_type_var = tk.StringVar(master=self, value="")
         self.probe_type_var = tk.StringVar(master=self, value="")
+        self._common_params = self._default_common_params("K2")
+        self._apply_common_params_to_ui(self._common_params)
 
         def p_row(r, c, label, var, tip):
             ttk.Label(params, text=label).grid(row=r, column=c, sticky="w", padx=(8, 4), pady=2)
@@ -1792,11 +1794,31 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
 
+    def _default_common_params(self, geo_kind: str | None = None) -> dict[str, str]:
+        g = str(geo_kind or getattr(self, "geo_kind", "K2") or "K2").upper()
+        if g == "K4":
+            return {
+                "controller_type": "ТЕСТ-К4",
+                "controller_scale_div": "1000",
+                "probe_type": "",
+                "cone_kn": "50",
+                "sleeve_kn": "10",
+                "cone_area_cm2": "10",
+                "sleeve_area_cm2": "350",
+            }
+        return {
+            "controller_type": "ТЕСТ-К2",
+            "controller_scale_div": "250",
+            "probe_type": "",
+            "cone_kn": "30",
+            "sleeve_kn": "10",
+            "cone_area_cm2": "10",
+            "sleeve_area_cm2": "350",
+        }
+
     def _parse_probe_type_values(self, probe_type: str) -> dict[str, str]:
         """Parse probe type like A3/50/20/10/350 [№115]."""
         s = str(probe_type or "").strip()
-        # Хвост вида "[№115]" — это номер прибора/зонда, он не должен попадать
-        # в числовые поля тарировки.
         s = re.sub(r"\s*\[[^\]]*\]\s*$", "", s)
         m = re.search(r"([A-Za-zА-Яа-я]\d+)\s*/\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)\b", s)
         if not m:
@@ -1809,21 +1831,36 @@ class GeoCanvasEditor(tk.Tk):
             "sleeve_area_cm2": m.group(5),
         }
 
+    def _apply_common_params_to_ui(self, params: dict[str, str] | None):
+        p = dict(params or {})
+        if hasattr(self, "controller_type_var"):
+            self.controller_type_var.set(str(p.get("controller_type", "") or ""))
+        if hasattr(self, "probe_type_var"):
+            self.probe_type_var.set(str(p.get("probe_type", "") or ""))
+        if hasattr(self, "scale_var"):
+            self.scale_var.set(str(p.get("controller_scale_div", "") or ""))
+        if hasattr(self, "fcone_var"):
+            self.fcone_var.set(str(p.get("cone_kn", "") or ""))
+        if hasattr(self, "fsleeve_var"):
+            self.fsleeve_var.set(str(p.get("sleeve_kn", "") or ""))
+        if hasattr(self, "acon_var"):
+            self.acon_var.set(str(p.get("cone_area_cm2", "") or ""))
+        if hasattr(self, "asl_var"):
+            self.asl_var.set(str(p.get("sleeve_area_cm2", "") or ""))
+
+    def _set_common_params(self, params: dict[str, str] | None, geo_kind: str | None = None):
+        merged = self._default_common_params(geo_kind)
+        for k, v in dict(params or {}).items():
+            if k in merged and str(v or "").strip() != "":
+                merged[k] = str(v).strip()
+        self._common_params = merged
+        self._apply_common_params_to_ui(merged)
+
     def _extract_sounding_params_from_geo_bytes(self, data: bytes, geo_kind: str) -> dict[str, str]:
-        default_scale = "1000" if str(geo_kind).upper() == "K4" else "250"
-        params = {
-            "controller_type": "ТЕСТ-К4" if str(geo_kind).upper() == "K4" else "ТЕСТ-К2",
-            "controller_scale_div": (self.scale_var.get().strip() if hasattr(self, "scale_var") else default_scale) or default_scale,
-            "probe_type": (self.probe_type_var.get().strip() if hasattr(self, "probe_type_var") else "") or "",
-            "cone_kn": (self.fcone_var.get().strip() if hasattr(self, "fcone_var") else "30") or "30",
-            "sleeve_kn": (self.fsleeve_var.get().strip() if hasattr(self, "fsleeve_var") else "10") or "10",
-            "cone_area_cm2": (self.acon_var.get().strip() if hasattr(self, "acon_var") else "10") or "10",
-            "sleeve_area_cm2": (self.asl_var.get().strip() if hasattr(self, "asl_var") else "350") or "350",
-        }
+        params = self._default_common_params(geo_kind)
         if str(geo_kind).upper() == "K4":
             params["controller_type"] = "ТЕСТ-К4М" if (bytes([0xCA,0x34,0xCC]) in data or b"K4M" in data.upper()) else "ТЕСТ-К4"
-            # try textual probe type payload
-            probe_txt = ""
+            probe_candidates: list[dict[str, str]] = []
             parsed_scale = ""
             for enc in ("cp1251", "cp866", "latin1"):
                 try:
@@ -1834,20 +1871,23 @@ class GeoCanvasEditor(tk.Tk):
                     sm = re.search(r"(?:шкала|scale)\D{0,8}(\d{2,5})", txt, flags=re.IGNORECASE)
                     if sm:
                         parsed_scale = sm.group(1)
-                mm = re.search(r"[A-Za-zА-Яа-я]\d+\s*/\s*\d+\s*/\s*\d+\s*/\s*\d+\s*/\s*\d+(?:\s*\[[^\]]+\])?", txt)
-                if mm:
-                    probe_txt = mm.group(0).strip()
-                    break
+                for mm in re.finditer(r"[A-Za-zА-Яа-я]\d+\s*/\s*\d+\s*/\s*\d+\s*/\s*\d+\s*/\s*\d+(?:\s*\[[^\]]+\])?", txt):
+                    parsed = self._parse_probe_type_values(mm.group(0).strip())
+                    if parsed:
+                        probe_candidates.append(parsed)
             if parsed_scale:
                 params["controller_scale_div"] = parsed_scale
             elif params["controller_type"] == "ТЕСТ-К4М":
-                # Для K4M не тянем старую шкалу K2=250.
                 params["controller_scale_div"] = "1000"
-            if probe_txt:
-                params["probe_type"] = probe_txt
-                params.update(self._parse_probe_type_values(probe_txt))
+            if probe_candidates:
+                def _score(c: dict[str, str]) -> tuple[int, int]:
+                    try:
+                        sa = int(float(str(c.get("sleeve_area_cm2", "0")).replace(",", ".")))
+                    except Exception:
+                        sa = 0
+                    return (1 if 100 <= sa <= 5000 else 0, sa)
+                params.update(max(probe_candidates, key=_score))
             else:
-                # fallback from first K4 block header bytes (empirical)
                 try:
                     starts = __import__("src.zondeditor.io.k4_reader", fromlist=["_k4_find_starts"])._k4_find_starts(data)
                     if starts:
@@ -1862,37 +1902,15 @@ class GeoCanvasEditor(tk.Tk):
                             params["sleeve_kn"] = str(sleeve)
                         if 1 <= cone_area <= 200:
                             params["cone_area_cm2"] = str(cone_area)
-                        if 1 <= sleeve_area <= 5000:
+                        if 100 <= sleeve_area <= 5000:
                             params["sleeve_area_cm2"] = str(sleeve_area)
-                        if not params.get("probe_type"):
-                            params["probe_type"] = f"A3/{params['cone_kn']}/{params['sleeve_kn']}/{params['cone_area_cm2']}/{params['sleeve_area_cm2']}"
+                        params["probe_type"] = f"A3/{params['cone_kn']}/{params['sleeve_kn']}/{params['cone_area_cm2']}/{params['sleeve_area_cm2']}"
                 except Exception:
                     pass
         return params
 
     def _apply_sounding_params(self, params: dict[str, str] | None):
-        p = dict(params or {})
-        ct = str(p.get("controller_type", "") or "")
-        sc = str(p.get("controller_scale_div", "") or "")
-        pr = str(p.get("probe_type", "") or "")
-        ckn = str(p.get("cone_kn", "") or "")
-        skn = str(p.get("sleeve_kn", "") or "")
-        ca = str(p.get("cone_area_cm2", "") or "")
-        sa = str(p.get("sleeve_area_cm2", "") or "")
-        if hasattr(self, "controller_type_var") and ct:
-            self.controller_type_var.set(ct)
-        if hasattr(self, "probe_type_var") and pr:
-            self.probe_type_var.set(pr)
-        if sc and hasattr(self, "scale_var"):
-            self.scale_var.set(sc)
-        if ckn and hasattr(self, "fcone_var"):
-            self.fcone_var.set(ckn)
-        if skn and hasattr(self, "fsleeve_var"):
-            self.fsleeve_var.set(skn)
-        if ca and hasattr(self, "acon_var"):
-            self.acon_var.set(ca)
-        if sa and hasattr(self, "asl_var"):
-            self.asl_var.set(sa)
+        self._set_common_params(params, getattr(self, "geo_kind", "K2"))
 
     def open_sounding_params_dialog(self):
         """Минимальные параметры зондирования: контроллер/зонд/нагрузки/площади."""
@@ -1950,15 +1968,19 @@ class GeoCanvasEditor(tk.Tk):
         btns.grid(row=len(labels), column=0, columnspan=2, sticky="e", pady=(10, 0))
 
         def on_ok():
-            self.controller_type_var.set(vars_map["controller_type"].get().strip())
-            self.probe_type_var.set(vars_map["probe_type"].get().strip())
-            if str(getattr(self, "geo_kind", "K2") or "K2").upper() != "K4":
-                self.scale_var.set(vars_map["controller_scale_div"].get().strip() or self.scale_var.get())
-            self.fcone_var.set(vars_map["cone_kn"].get().strip() or self.fcone_var.get())
-            self.fsleeve_var.set(vars_map["sleeve_kn"].get().strip() or self.fsleeve_var.get())
-            self.acon_var.set(vars_map["cone_area_cm2"].get().strip() or self.acon_var.get())
-            self.asl_var.set(vars_map["sleeve_area_cm2"].get().strip() or self.asl_var.get())
+            p = {
+                "controller_type": vars_map["controller_type"].get().strip(),
+                "controller_scale_div": vars_map["controller_scale_div"].get().strip(),
+                "probe_type": vars_map["probe_type"].get().strip(),
+                "cone_kn": vars_map["cone_kn"].get().strip(),
+                "sleeve_kn": vars_map["sleeve_kn"].get().strip(),
+                "cone_area_cm2": vars_map["cone_area_cm2"].get().strip(),
+                "sleeve_area_cm2": vars_map["sleeve_area_cm2"].get().strip(),
+            }
+            self._set_common_params(p, getattr(self, "geo_kind", "K2"))
             try:
+                if getattr(self, "ribbon_view", None):
+                    self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
                 self._redraw()
                 self.schedule_graph_redraw()
             except Exception:
@@ -1976,32 +1998,13 @@ class GeoCanvasEditor(tk.Tk):
         self.wait_window(dlg)
 
     def _current_common_params(self) -> dict[str, str]:
-        return {
-            "controller_type": (self.controller_type_var.get().strip() if hasattr(self, "controller_type_var") else ""),
-            "controller_scale_div": (self.scale_var.get().strip() if hasattr(self, "scale_var") else "250"),
-            "probe_type": (self.probe_type_var.get().strip() if hasattr(self, "probe_type_var") else ""),
-            "cone_kn": (self.fcone_var.get().strip() if hasattr(self, "fcone_var") else "30"),
-            "sleeve_kn": (self.fsleeve_var.get().strip() if hasattr(self, "fsleeve_var") else "10"),
-            "cone_area_cm2": (self.acon_var.get().strip() if hasattr(self, "acon_var") else "10"),
-            "sleeve_area_cm2": (self.asl_var.get().strip() if hasattr(self, "asl_var") else "350"),
-        }
+        return dict(getattr(self, "_common_params", self._default_common_params(getattr(self, "geo_kind", "K2"))))
 
     def _on_common_params_changed(self, params: dict[str, str] | None = None):
         p = dict(params or {})
-        if hasattr(self, "controller_type_var") and "controller_type" in p:
-            self.controller_type_var.set(str(p.get("controller_type", "") or ""))
-        if hasattr(self, "probe_type_var") and "probe_type" in p:
-            self.probe_type_var.set(str(p.get("probe_type", "") or ""))
-        if "controller_scale_div" in p and str(getattr(self, "geo_kind", "K2") or "K2").upper() != "K4":
-            self.scale_var.set(str(p.get("controller_scale_div", "") or self.scale_var.get()))
-        if "cone_kn" in p:
-            self.fcone_var.set(str(p.get("cone_kn", "") or self.fcone_var.get()))
-        if "sleeve_kn" in p:
-            self.fsleeve_var.set(str(p.get("sleeve_kn", "") or self.fsleeve_var.get()))
-        if "cone_area_cm2" in p:
-            self.acon_var.set(str(p.get("cone_area_cm2", "") or self.acon_var.get()))
-        if "sleeve_area_cm2" in p:
-            self.asl_var.set(str(p.get("sleeve_area_cm2", "") or self.asl_var.get()))
+        if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and "controller_scale_div" in p and str(p.get("controller_scale_div", "")).strip() == "":
+            p.pop("controller_scale_div", None)
+        self._set_common_params(p, getattr(self, "geo_kind", "K2"))
         try:
             self.schedule_graph_redraw()
         except Exception:
@@ -2096,9 +2099,10 @@ class GeoCanvasEditor(tk.Tk):
         Формат: 'Загружено опытов N шт. параметры: шкала делений 250, Fкон 30кН, Fмуф 10кН, шаг 10см'
         """
         try:
-            scale = self.scale_var.get().strip() if hasattr(self, "scale_var") else ""
-            fcone = self.fcone_var.get().strip() if hasattr(self, "fcone_var") else ""
-            fsleeve = self.fsleeve_var.get().strip() if hasattr(self, "fsleeve_var") else ""
+            cp = self._current_common_params()
+            scale = str(cp.get("controller_scale_div", "") or "").strip()
+            fcone = str(cp.get("cone_kn", "") or "").strip()
+            fsleeve = str(cp.get("sleeve_kn", "") or "").strip()
             step = self.step_cm_var.get().strip() if hasattr(self, "step_cm_var") else ""
 
             parts = []
@@ -2179,12 +2183,15 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
 
+        upd = {}
         if kv.get("scale"):
-            self.scale_var.set(kv["scale"])
+            upd["controller_scale_div"] = kv["scale"]
         if kv.get("scaleostria"):
-            self.fcone_var.set(kv["scaleostria"])
+            upd["cone_kn"] = kv["scaleostria"]
         if kv.get("scalemufta"):
-            self.fsleeve_var.set(kv["scalemufta"])
+            upd["sleeve_kn"] = kv["scalemufta"]
+        if upd:
+            self._set_common_params(upd, getattr(self, "geo_kind", "K2"))
 
     def _calc_qc_fs_from_del(self, qc_del: int, fs_del: int) -> tuple[float, float]:
         """Пересчёт делений в qc (МПа) и fs (кПа) как в GeoExplorer.
@@ -2198,14 +2205,19 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 return default
 
-        scale_div = int(round(_f(self.scale_var.get() if getattr(self, 'scale_var', None) else '250', 250.0)))
+        cp = self._current_common_params()
+        scale_div = int(round(_f(str(cp.get('controller_scale_div', '250')), 250.0)))
         if scale_div <= 0:
             scale_div = 250
-        fcone_kn = _f(self.fcone_var.get() if getattr(self, 'fcone_var', None) else '30', 30.0)
-        fsleeve_kn = _f(self.fsleeve_var.get() if getattr(self, 'fsleeve_var', None) else '10', 10.0)
+        fcone_kn = _f(str(cp.get('cone_kn', '30')), 30.0)
+        fsleeve_kn = _f(str(cp.get('sleeve_kn', '10')), 10.0)
 
-        CONE_AREA_CM2 = 10.0
-        SLEEVE_AREA_CM2 = 350.0
+        CONE_AREA_CM2 = _f(str(cp.get('cone_area_cm2', '10')), 10.0)
+        if CONE_AREA_CM2 <= 0:
+            CONE_AREA_CM2 = 10.0
+        SLEEVE_AREA_CM2 = _f(str(cp.get('sleeve_area_cm2', '350')), 350.0)
+        if SLEEVE_AREA_CM2 <= 0:
+            SLEEVE_AREA_CM2 = 350.0
 
         # qc: (del/scale)*F(kN) / A(cm2) * 10 -> MPa  (1 kN/cm2 = 10 MPa)
         qc_mpa = (qc_del / scale_div) * fcone_kn * (10.0 / CONE_AREA_CM2)
@@ -2848,6 +2860,8 @@ class GeoCanvasEditor(tk.Tk):
                     meta_rows = []
                     self.loaded_path = str(self.geo_path)
                     self.is_gxl = True
+                    self.geo_kind = "K4" if any(getattr(t, "incl", None) for t in tests_list) else "K2"
+                    self._set_common_params({}, self.geo_kind)
                     self._geo_template_blocks_info = []
                     self._geo_template_blocks_info_full = []
                     self.original_bytes = None
@@ -2914,6 +2928,9 @@ class GeoCanvasEditor(tk.Tk):
                 self.redo_stack.clear()
 
                 self._apply_gxl_calibration_from_meta(meta_rows)
+                self._set_common_params(self._current_common_params(), self.geo_kind)
+                if getattr(self, "ribbon_view", None):
+                    self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(self.geo_kind))
                 self._update_status_loaded(prefix=f"GXL: загружено опытов {len(self.tests)}")
 
                 self._auto_scan_after_load()
@@ -2938,6 +2955,7 @@ class GeoCanvasEditor(tk.Tk):
                     block=getattr(s, "block", None),
                 ) for s in series_list]
                 _tests2, meta_rows, self.geo_kind = parse_geo_bytes(data)
+                self._set_common_params({}, self.geo_kind)
                 try:
                     self._apply_sounding_params(self._extract_sounding_params_from_geo_bytes(data, self.geo_kind))
                     if getattr(self, "ribbon_view", None):
@@ -7614,11 +7632,12 @@ class GeoCanvasEditor(tk.Tk):
 
     def _read_calc_params(self):
         try:
-            scale_div = int(float(self.scale_var.get().replace(",", ".")))
-            fmax_cone_kn = float(self.fcone_var.get().replace(",", "."))
-            fmax_sleeve_kn = float(self.fsleeve_var.get().replace(",", "."))
-            area_cone_cm2 = float(self.acon_var.get().replace(",", "."))
-            area_sleeve_cm2 = float(self.asl_var.get().replace(",", "."))
+            cp = self._current_common_params()
+            scale_div = int(float(str(cp.get("controller_scale_div", "250")).replace(",", ".")))
+            fmax_cone_kn = float(str(cp.get("cone_kn", "30")).replace(",", "."))
+            fmax_sleeve_kn = float(str(cp.get("sleeve_kn", "10")).replace(",", "."))
+            area_cone_cm2 = float(str(cp.get("cone_area_cm2", "10")).replace(",", "."))
+            area_sleeve_cm2 = float(str(cp.get("sleeve_area_cm2", "350")).replace(",", "."))
             if scale_div <= 0:
                 raise ValueError("Шкала делений должна быть > 0")
             if fmax_cone_kn <= 0 or fmax_sleeve_kn <= 0:
