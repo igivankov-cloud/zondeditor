@@ -1499,30 +1499,23 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
 
-            # Синхронизируем X для canvas (тело) и hcanvas (шапка) без дрожания/уезда.
-            # xscrollcommand вызывается и для canvas, и для hcanvas — используем lock.
+            # Источник истины для X — body canvas. Шапку только догоняем до фактического xview body.
             if getattr(self, "_xsync_lock", False):
                 return
             self._xsync_lock = True
             try:
-                f = float(first)
                 try:
                     c0 = float(self.canvas.xview()[0])
                 except Exception:
-                    c0 = f
+                    c0 = float(first)
                 try:
                     h0 = float(self.hcanvas.xview()[0])
                 except Exception:
-                    h0 = f
+                    h0 = c0
 
-                if abs(c0 - f) > 1e-4:
+                if abs(h0 - c0) > 1e-4:
                     try:
-                        self.canvas.xview_moveto(f)
-                    except Exception:
-                        pass
-                if abs(h0 - f) > 1e-4:
-                    try:
-                        self.hcanvas.xview_moveto(f)
+                        self.hcanvas.xview_moveto(c0)
                     except Exception:
                         pass
             finally:
