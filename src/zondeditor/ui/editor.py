@@ -7588,6 +7588,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.tests,
                 geo_kind=getattr(self, "geo_kind", "K2"),
                 out_path=Path(out),
+                cal=self._current_calibration(),
                 include_only_export_on=True,
             )
             messagebox.showinfo("Готово", f"Excel сохранён:\n{out}")
@@ -8691,7 +8692,7 @@ class GeoCanvasEditor(tk.Tk):
             f"fsleeve_kN={fsleeve}",
             f"depth_start_m={depth0 if depth0 is not None else ''}",
             f"step_m={step if step is not None else ''}",
-            f"tests={len([t for t in self.tests if bool(getattr(t, 'export_on', True))])}",
+            f"tests={len(self._collect_export_tests().tests)}",
         ]
         path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -8703,6 +8704,7 @@ class GeoCanvasEditor(tk.Tk):
             self.tests,
             geo_kind=getattr(self, "geo_kind", "K2"),
             out_path=out_path,
+            cal=self._current_calibration(),
             include_only_export_on=True,
         )
 
@@ -8916,14 +8918,18 @@ def export_gxl_generated(self, out_file: str):
         obj_name = 'name'
         privazka = 'По плану...'
 
-        # шаг
-        step_cm = getattr(self, 'step_cm', None)
-        step_m_default = 0.10 if step_cm == 10 else (0.05 if step_cm == 5 else 0.10)
-
-        # Сортировка опытов по времени (как в UI)
-        tests = list(self.tests)
+        # шаг из модельного состояния
         try:
-            tests = sorted(tests, key=lambda t: (t.dt or ''))
+            step_m_default = float(getattr(self, 'step_m', 0.10) or 0.10)
+            if step_m_default <= 0:
+                step_m_default = 0.10
+        except Exception:
+            step_m_default = 0.10
+
+        # Экспортируем только тесты из единого контура selection
+        tests = list(self._collect_export_tests().tests)
+        try:
+            tests = sorted(tests, key=lambda t: (getattr(t, 'dt', '') or ''))
         except Exception:
             pass
 
