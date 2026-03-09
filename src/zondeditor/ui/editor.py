@@ -4070,68 +4070,22 @@ class GeoCanvasEditor(tk.Tk):
 
     def _recompute_graph_scales(self):
         """Compute shared (file-level) X scales for graph columns."""
-
-        # ---- qc max (MPa): use existing calibration source first, then kind fallback ----
         qc_max = None
+        fs_max = None
         try:
             cp = self._current_common_params()
-            fcone = float(str(cp.get("cone_kn", "")).strip().replace(",", "."))
-            if abs(fcone - 30.0) < 1e-6:
-                qc_max = 30.0
-            elif abs(fcone - 50.0) < 1e-6:
-                qc_max = 50.0
+            scale_div = int(float(str(cp.get("controller_scale_div", "250") or "250").replace(",", ".")))
+            if scale_div > 0:
+                qc_full, fs_full = self._calc_qc_fs_from_del(scale_div, scale_div)
+                qc_max = float(qc_full) if float(qc_full) > 0 else None
+                fs_max = float(fs_full) if float(fs_full) > 0 else None
         except Exception:
             pass
-
-        if qc_max is None:
-            # data hint: if any qc exceeds 30 MPa, choose 50
-            try:
-                seen_above_30 = False
-                for t in (getattr(self, "tests", None) or []):
-                    qarr = getattr(t, "qc", []) or []
-                    farr = getattr(t, "fs", []) or []
-                    for i in range(max(len(qarr), len(farr))):
-                        q_raw = _parse_cell_int(qarr[i]) if i < len(qarr) else None
-                        f_raw = _parse_cell_int(farr[i]) if i < len(farr) else None
-                        if q_raw is None and f_raw is None:
-                            continue
-                        q_mpa, _ = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
-                        if float(q_mpa) > 30.0:
-                            seen_above_30 = True
-                            break
-                    if seen_above_30:
-                        break
-                if seen_above_30:
-                    qc_max = 50.0
-            except Exception:
-                pass
 
         if qc_max is None:
             qc_max = 50.0 if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" else 30.0
-
-        # ---- fs max (kPa): global max rounded to a fixed pretty scale ----
-        fs_max_global = 0.0
-        try:
-            for t in (getattr(self, "tests", None) or []):
-                farr = getattr(t, "fs", []) or []
-                for i in range(len(farr)):
-                    f_raw = _parse_cell_int(farr[i])
-                    if f_raw is None:
-                        continue
-                    _, fs_kpa = self._calc_qc_fs_from_del(0, int(f_raw or 0))
-                    fs_max_global = max(fs_max_global, float(fs_kpa))
-        except Exception:
-            pass
-
-        pretty = [50, 100, 200, 300, 500, 800, 1000, 1500, 2000, 3000, 5000]
-        if fs_max_global <= 0:
+        if fs_max is None:
             fs_max = 500.0
-        else:
-            fs_max = float(pretty[-1])
-            for v in pretty:
-                if fs_max_global <= float(v):
-                    fs_max = float(v)
-                    break
 
         self.graph_qc_max_mpa = float(qc_max)
         self.graph_fs_max_kpa = float(fs_max)
@@ -4164,9 +4118,10 @@ class GeoCanvasEditor(tk.Tk):
             self.hcanvas.create_line(xx, fs_axis_y - 3, xx, fs_axis_y + 3, fill=GRAPH_FS_BLUE, width=1, tags=tag)
         self.hcanvas.create_text(xa0, qc_axis_y - 10, anchor="w", text="qc, МПа", fill=GRAPH_QC_GREEN, font=("Segoe UI", 8), tags=tag)
         self.hcanvas.create_text(xa0, fs_axis_y - 10, anchor="w", text="fs, кПа", fill=GRAPH_FS_BLUE, font=("Segoe UI", 8), tags=tag)
-        q_txt = f"0..{int(round(qmax))}" if abs(qmax - round(qmax)) < 1e-6 else f"0..{qmax:.1f}"
+        q_txt = f"0–{int(round(qmax))}" if abs(qmax - round(qmax)) < 1e-6 else f"0–{qmax:.2f}"
         self.hcanvas.create_text(xa1, qc_axis_y - 10, anchor="e", text=q_txt, fill=GRAPH_QC_GREEN, font=("Segoe UI", 7), tags=tag)
-        self.hcanvas.create_text(xa1, fs_axis_y - 10, anchor="e", text=f"0..{int(round(fmax))}", fill=GRAPH_FS_BLUE, font=("Segoe UI", 7), tags=tag)
+        f_txt = f"0–{int(round(fmax))}" if abs(fmax - round(fmax)) < 1e-6 else f"0–{fmax:.2f}"
+        self.hcanvas.create_text(xa1, fs_axis_y - 10, anchor="e", text=f_txt, fill=GRAPH_FS_BLUE, font=("Segoe UI", 7), tags=tag)
 
     def _test_last_data_index(self, t) -> int | None:
         qarr = getattr(t, "qc", []) or []
