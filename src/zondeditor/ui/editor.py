@@ -28,7 +28,10 @@ from pathlib import Path
 
 # project modules already extracted:
 from src.zondeditor.processing.fixes import fix_tests_by_algorithm
-from src.zondeditor.processing.calibration import calc_qc_fs, calc_qc_fs_from_del
+from src.zondeditor.processing.calibration import (
+    calc_qc_fs_from_del,
+    calibration_from_common_params,
+)
 try:
     from src.zondeditor.export.excel_export import export_excel as export_excel_file
 except Exception:
@@ -2166,37 +2169,24 @@ class GeoCanvasEditor(tk.Tk):
         if upd:
             self._set_common_params(upd, getattr(self, "geo_kind", "K2"))
 
+    def _current_calibration(self):
+        return calibration_from_common_params(
+            self._current_common_params(),
+            geo_kind=str(getattr(self, "geo_kind", "K2") or "K2"),
+        )
+
     def _calc_qc_fs_from_del(self, qc_del: int, fs_del: int) -> tuple[float, float]:
-        """Пересчёт делений в qc (МПа) и fs (кПа) как в GeoExplorer.
-        Использует: шкала (дел.), Fконуса (кН), Fмуфты (кН).
-        Приняты площади: конус 10 см², муфта 350 см² (типовая для GeoExplorer).
-        """
-        def _f(x: str, default: float) -> float:
-            try:
-                s = (x or '').strip().replace(',', '.')
-                return float(s) if s else default
-            except Exception:
-                return default
-
-        cp = self._current_common_params()
-        scale_div = int(round(_f(str(cp.get('controller_scale_div', '250')), 250.0)))
-        if scale_div <= 0:
-            scale_div = 250
-        fcone_kn = _f(str(cp.get('cone_kn', '30')), 30.0)
-        fsleeve_kn = _f(str(cp.get('sleeve_kn', '10')), 10.0)
-
-        CONE_AREA_CM2 = _f(str(cp.get('cone_area_cm2', '10')), 10.0)
-        if CONE_AREA_CM2 <= 0:
-            CONE_AREA_CM2 = 10.0
-        SLEEVE_AREA_CM2 = _f(str(cp.get('sleeve_area_cm2', '350')), 350.0)
-        if SLEEVE_AREA_CM2 <= 0:
-            SLEEVE_AREA_CM2 = 350.0
-
-        # qc: (del/scale)*F(kN) / A(cm2) * 10 -> MPa  (1 kN/cm2 = 10 MPa)
-        qc_mpa = (qc_del / scale_div) * fcone_kn * (10.0 / CONE_AREA_CM2)
-        # fs: (del/scale)*F(kN) / A(cm2) * 10000 -> kPa (1 kN/cm2 = 10000 kPa)
-        fs_kpa = (fs_del / scale_div) * fsleeve_kn * (10000.0 / SLEEVE_AREA_CM2)
-        return qc_mpa, fs_kpa
+        """Пересчёт делений в qc/fs через единый контур processing.calibration."""
+        cal = self._current_calibration()
+        return calc_qc_fs_from_del(
+            qc_del,
+            fs_del,
+            scale_div=cal.scale_div,
+            fcone_kn=cal.fcone_kn,
+            fsleeve_kn=cal.fsleeve_kn,
+            cone_area_cm2=cal.cone_area_cm2,
+            sleeve_area_cm2=cal.sleeve_area_cm2,
+        )
 
     def _prompt_missing_geo_params(self, *, need_depth: bool, need_step: bool) -> bool:
         """Спросить у пользователя недостающие параметры для GEO: h0 (0..4 м) и/или шаг (5/10 см)."""
@@ -4114,12 +4104,18 @@ class GeoCanvasEditor(tk.Tk):
         qc_max = None
         fs_max = None
         try:
-            cp = self._current_common_params()
-            scale_div = int(float(str(cp.get("controller_scale_div", "250") or "250").replace(",", ".")))
-            if scale_div > 0:
-                qc_full, fs_full = self._calc_qc_fs_from_del(scale_div, scale_div)
-                qc_max = float(qc_full) if float(qc_full) > 0 else None
-                fs_max = float(fs_full) if float(fs_full) > 0 else None
+            cal = self._current_calibration()
+            qc_full, fs_full = calc_qc_fs_from_del(
+                cal.scale_div,
+                cal.scale_div,
+                scale_div=cal.scale_div,
+                fcone_kn=cal.fcone_kn,
+                fsleeve_kn=cal.fsleeve_kn,
+                cone_area_cm2=cal.cone_area_cm2,
+                sleeve_area_cm2=cal.sleeve_area_cm2,
+            )
+            qc_max = float(qc_full) if float(qc_full) > 0 else None
+            fs_max = float(fs_full) if float(fs_full) > 0 else None
         except Exception:
             pass
 
@@ -7572,19 +7568,8 @@ class GeoCanvasEditor(tk.Tk):
 
     def _read_calc_params(self):
         try:
-            cp = self._current_common_params()
-            scale_div = int(float(str(cp.get("controller_scale_div", "250")).replace(",", ".")))
-            fmax_cone_kn = float(str(cp.get("cone_kn", "30")).replace(",", "."))
-            fmax_sleeve_kn = float(str(cp.get("sleeve_kn", "10")).replace(",", "."))
-            area_cone_cm2 = float(str(cp.get("cone_area_cm2", "10")).replace(",", "."))
-            area_sleeve_cm2 = float(str(cp.get("sleeve_area_cm2", "350")).replace(",", "."))
-            if scale_div <= 0:
-                raise ValueError("Шкала делений должна быть > 0")
-            if fmax_cone_kn <= 0 or fmax_sleeve_kn <= 0:
-                raise ValueError("Диапазоны калибровки должны быть > 0")
-            if area_cone_cm2 <= 0 or area_sleeve_cm2 <= 0:
-                raise ValueError("Площади должны быть > 0")
-            return scale_div, fmax_cone_kn, fmax_sleeve_kn, area_cone_cm2, area_sleeve_cm2
+            cal = self._current_calibration()
+            return cal.scale_div, cal.fcone_kn, cal.fsleeve_kn, cal.cone_area_cm2, cal.sleeve_area_cm2
         except Exception as e:
             messagebox.showerror("Ошибка", f"Некорректные параметры пересчёта: {e}")
             return None
@@ -7880,8 +7865,6 @@ class GeoCanvasEditor(tk.Tk):
         if not params:
             return
         scale_div, fmax_cone_kn, fmax_sleeve_kn, area_cone_cm2, area_sleeve_cm2 = params
-        A_cone = _cm2_to_m2(area_cone_cm2)
-        A_sleeve = _cm2_to_m2(area_sleeve_cm2)
 
         out_zip = filedialog.asksaveasfilename(
             title="Куда сохранить ZIP для CREDO",
@@ -7933,12 +7916,26 @@ class GeoCanvasEditor(tk.Tk):
 
                     qc_MPa = None
                     fs_kPa = None
-                    if qc_del is not None and A_cone:
-                        F_cone_N = (qc_del / scale_div) * (fmax_cone_kn * 1000.0)
-                        qc_MPa = (F_cone_N / A_cone) / 1e6
-                    if fs_del is not None and A_sleeve:
-                        F_sleeve_N = (fs_del / scale_div) * (fmax_sleeve_kn * 1000.0)
-                        fs_kPa = (F_sleeve_N / A_sleeve) / 1e3
+                    if qc_del is not None:
+                        qc_MPa, _ = calc_qc_fs_from_del(
+                            int(qc_del),
+                            0,
+                            scale_div=scale_div,
+                            fcone_kn=fmax_cone_kn,
+                            fsleeve_kn=fmax_sleeve_kn,
+                            cone_area_cm2=area_cone_cm2,
+                            sleeve_area_cm2=area_sleeve_cm2,
+                        )
+                    if fs_del is not None:
+                        _, fs_kPa = calc_qc_fs_from_del(
+                            0,
+                            int(fs_del),
+                            scale_div=scale_div,
+                            fcone_kn=fmax_cone_kn,
+                            fsleeve_kn=fmax_sleeve_kn,
+                            cone_area_cm2=area_cone_cm2,
+                            sleeve_area_cm2=area_sleeve_cm2,
+                        )
 
                     d_str = fmt_depth(depth_val)
                     qc_str = "" if qc_MPa is None else fmt_float_comma(round(qc_MPa, 2), nd=2)
@@ -8748,6 +8745,7 @@ class GeoCanvasEditor(tk.Tk):
             f"tests={len([t for t in self.tests if bool(getattr(t, 'export_on', True))])}",
         ]
         path.write_text("\n".join(lines), encoding="utf-8")
+
     def _export_excel_silent(self, out_path: Path):
         """Тихий экспорт в Excel без диалогов (для экспорта-архива)."""
         if export_excel_file is None:
@@ -8761,48 +8759,14 @@ class GeoCanvasEditor(tk.Tk):
 
     def _export_credo_silent(self, out_zip_path: Path):
         """Тихий экспорт ZIP для CREDO (две CSV на опыт) без диалогов (для экспорта-архива)."""
-        import zipfile
+        export_credo_zip(
+            self.tests,
+            out_zip_path=out_zip_path,
+            geo_kind=str(getattr(self, "geo_kind", "K2") or "K2"),
+            cal=self._current_calibration(),
+            include_only_export_on=True,
+        )
 
-        selection = self._collect_export_tests()
-        tests_exp = list(selection.tests)
-        if not tests_exp:
-            # нечего экспортировать
-            with zipfile.ZipFile(out_zip_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
-                pass
-            return
-
-        def fmt_comma(x, nd=2):
-            s = f"{x:.{nd}f}"
-            return s.replace(".", ",")
-
-        def fmt_depth(x):
-            # GeoExplorer/CREDO ожидает глубину с 2 знаками после запятой
-            return f"{x:.2f}".replace(".", ",")
-
-        with zipfile.ZipFile(str(out_zip_path), "w", compression=zipfile.ZIP_DEFLATED) as z:
-            for t in tests_exp:
-                tid = str(getattr(t, "tid", ""))
-                qc_lines = []
-                fs_lines = []
-                depth_arr = getattr(t, "depth", []) or []
-                qc_arr = getattr(t, "qc", []) or []
-                fs_arr = getattr(t, "fs", []) or []
-                n = max(len(depth_arr), len(qc_arr), len(fs_arr))
-                for i in range(n):
-                    d = _parse_depth_float(depth_arr[i]) if i < len(depth_arr) else None
-                    qv = _parse_cell_int(qc_arr[i]) if i < len(qc_arr) else None
-                    fv = _parse_cell_int(fs_arr[i]) if i < len(fs_arr) else None
-                    if d is None and qv is None and fv is None:
-                        continue
-                    if d is None:
-                        continue
-                    if qv is None: qv = 0
-                    if fv is None: fv = 0
-                    qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(qv), int(fv))
-                    qc_lines.append(f"{fmt_depth(d)};{fmt_comma(qc_mpa, 2)}")
-                    fs_lines.append(f"{fmt_depth(d)};{int(round(fs_kpa))}")
-                z.writestr(f"СЗ-{tid} лоб.csv", "\n".join(qc_lines))
-                z.writestr(f"СЗ-{tid} бок.csv", "\n".join(fs_lines))
     def save_file(self):
         """Сохранение через диалог "Сохранить как..." без silent overwrite."""
         try:
