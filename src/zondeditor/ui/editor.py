@@ -1481,14 +1481,27 @@ class GeoCanvasEditor(tk.Tk):
                 self.canvas.xview(*args)
             except Exception:
                 return
+
+            def _sync_header_from_body():
+                try:
+                    self.hcanvas.configure(width=self.canvas.winfo_width())
+                except Exception:
+                    pass
+                try:
+                    frac = float(self.canvas.xview()[0])
+                except Exception:
+                    frac = 0.0
+                try:
+                    self.hcanvas.xview_moveto(frac)
+                except Exception:
+                    pass
+
+            # Важно: на крайнем правом положении Tk иногда стабилизирует xview только к idle.
+            # Поэтому делаем дотягивание шапки после применения скролла в body.
             try:
-                frac = float(self.canvas.xview()[0])
+                self.after_idle(_sync_header_from_body)
             except Exception:
-                frac = 0.0
-            try:
-                self.hcanvas.xview_moveto(frac)
-            except Exception:
-                pass
+                _sync_header_from_body()
 
         def _on_xscroll_command(first, last):
             # first/last: доли [0..1] видимой области
