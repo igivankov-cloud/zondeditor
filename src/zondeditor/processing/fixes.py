@@ -46,20 +46,11 @@ def _interp_with_noise(a: int, b: int, t: float) -> int:
     v = int(round(v))
     return _noise_around(v)
 
-def _choose_tail_k(last_val: int) -> int:
-    d = abs(250 - int(last_val))
-    if d <= 10:
-        return 1
-    if d <= 35:
-        return 2
-    return 3
-
 def fix_tests_by_algorithm(
     tests: Iterable[Any],
     flags_out: Optional[Any] = None,
     prev_flags_by_tid: Optional[Mapping[int, Any]] = None,
     *args,
-    choose_tail_k: Optional[int] = None,
     step_m: Optional[float] = None,
     depth_start: Optional[float] = None,
     seed: int = 42,
@@ -73,7 +64,6 @@ def fix_tests_by_algorithm(
     - invalid if >5 zeros in a row in qc or fs (test is left unchanged)
     - interpolate short zero runs (<=5) with noise
     - fill remaining zeros
-    - if no refusal (max(qc,fs)<250): append 1-3 rows trending to 250
     - build interp_cells, force_cells, algo_cells; preserve user_cells from previous flags
 
     Compatibility: accepts extra args/kwargs; can fill flags_out list-like object.
@@ -87,7 +77,6 @@ def fix_tests_by_algorithm(
             force_cells: set
             user_cells: set
             algo_cells: set
-            force_tail_rows: set
         TestFlagsCls = _TF
 
     random.seed(seed)
@@ -104,12 +93,12 @@ def fix_tests_by_algorithm(
         algo_cells: set[tuple[int, str]] = set()
 
         if not hasattr(t, "qc") or not hasattr(t, "fs"):
-            out.append(TestFlagsCls(False, set(), set(), _prev_user_cells, algo_cells, set()))
+            out.append(TestFlagsCls(False, set(), set(), _prev_user_cells, algo_cells))
             continue
 
         n = len(t.qc)
         if n == 0:
-            out.append(TestFlagsCls(False, set(), set(), _prev_user_cells, algo_cells, set()))
+            out.append(TestFlagsCls(False, set(), set(), _prev_user_cells, algo_cells))
             continue
 
         qc = [(_parse_cell_int(v) or 0) for v in t.qc]
@@ -121,7 +110,7 @@ def fix_tests_by_algorithm(
         force_cells: set[tuple[int, str]] = set(getattr(prev_flags, "force_cells", set()) or set())
 
         if invalid:
-            out.append(TestFlagsCls(True, interp_cells, force_cells, _prev_user_cells, algo_cells, set()))
+            out.append(TestFlagsCls(True, interp_cells, force_cells, _prev_user_cells, algo_cells))
             continue
 
         def interp_in_place(arr: list[int], kind: str) -> None:
@@ -183,78 +172,6 @@ def fix_tests_by_algorithm(
                     arr[i] = 1
                 interp_cells.add((i, kind))
 
-        refusal = False
-        try:
-            mx = max((qc + fs) or [0])
-            refusal = (mx >= 250)
-        except Exception:
-            refusal = False
-
-        _step = float(step_m) if step_m is not None else 0.05
-        _depth0 = float(depth_start) if depth_start is not None else 0.0
-
-        if not refusal:
-            last_filled = -1
-            for rr in range(n - 1, -1, -1):
-                if qc[rr] != 0 or fs[rr] != 0:
-                    last_filled = rr
-                    break
-            if last_filled < 0:
-                last_filled = n - 1
-
-            target_kind = "qc" if abs(250 - qc[last_filled]) <= abs(250 - fs[last_filled]) else "fs"
-            main_arr = qc if target_kind == "qc" else fs
-            other_arr = fs if target_kind == "qc" else qc
-
-            last_main = max(1, main_arr[last_filled])
-            last_other = max(1, other_arr[last_filled])
-
-            add_cnt = int(choose_tail_k) if choose_tail_k is not None else _choose_tail_k(last_main)
-            add_cnt = max(1, min(3, add_cnt))
-
-            last_depth = None
-            if getattr(t, "depth", None) and last_filled < len(t.depth):
-                last_depth = _parse_depth_float(t.depth[last_filled])
-            if last_depth is None:
-                last_depth = _depth0 + _step * last_filled
-
-            if not hasattr(t, "depth") or t.depth is None:
-                t.depth = ["" for _ in range(n)]
-            while len(t.depth) < n:
-                t.depth.append("")
-
-            for k_i in range(1, add_cnt + 1):
-                tt = k_i / add_cnt
-                new_main = _interp_with_noise(last_main, 250, tt)
-                new_main = max(last_main, min(250, new_main))
-                if k_i == add_cnt:
-                    new_main = 250
-
-                inc_main = max(0, new_main - last_main)
-                inc_other = max(1, int(round(inc_main * 0.22))) if inc_main > 0 else 1
-                new_other = min(250, max(last_other, _noise_around(last_other + inc_other)))
-
-                t.qc.append("")
-                t.fs.append("")
-                t.depth.append("")
-                qc.append(0)
-                fs.append(0)
-                n += 1
-
-                if target_kind == "qc":
-                    qc[-1] = int(new_main)
-                    fs[-1] = int(new_other)
-                    force_cells.add((n - 1, "qc"))
-                    force_cells.add((n - 1, "fs"))
-                else:
-                    fs[-1] = int(new_main)
-                    qc[-1] = int(new_other)
-                    force_cells.add((n - 1, "fs"))
-                    force_cells.add((n - 1, "qc"))
-
-                dd = last_depth + _step * k_i
-                t.depth[-1] = f"{dd:.2f}"
-
         for i in range(n):
             qv = max(1, int(qc[i]))
             fv = max(1, int(fs[i]))
@@ -284,7 +201,7 @@ def fix_tests_by_algorithm(
         except Exception:
             pass
 
-        out.append(TestFlagsCls(False, interp_cells, force_cells, _prev_user_cells, algo_cells, set()))
+        out.append(TestFlagsCls(False, interp_cells, force_cells, _prev_user_cells, algo_cells))
 
     if flags_out is not None:
         try:
