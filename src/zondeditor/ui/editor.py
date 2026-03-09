@@ -212,6 +212,8 @@ class GeoCanvasEditor(tk.Tk):
         self.display_sort_mode = "date"
         self.expanded_meters: set[int] = set()
         self._graph_redraw_after_id = None
+        self._header_offset_px = 0.0
+        self._xsync_after_id = None
         self._rebuild_redraw_after_id = None
         self._active_test_idx: int | None = None
         self.graph_qc_max_mpa: float = 30.0
@@ -1473,105 +1475,72 @@ class GeoCanvasEditor(tk.Tk):
         )
         self.canvas.pack(side="left", fill="both", expand=True)
 
+        def _apply_header_offset_from_body():
+            try:
+                target = float(self.canvas.canvasx(0))
+            except Exception:
+                target = 0.0
+            prev = float(getattr(self, "_header_offset_px", 0.0) or 0.0)
+            dx = target - prev
+            if abs(dx) > 1e-6:
+                try:
+                    self.hcanvas.move("all", -dx, 0)
+                except Exception:
+                    pass
+            self._header_offset_px = target
+
+        self._apply_header_offset_from_body = _apply_header_offset_from_body
+
+        def _sync_header_x_from_body(*, defer: bool = False):
+            def _run_sync():
+                self._xsync_after_id = None
+                if getattr(self, "_xsync_lock", False):
+                    return
+                self._xsync_lock = True
+                try:
+                    try:
+                        self.hcanvas.configure(width=self.canvas.winfo_width())
+                    except Exception:
+                        pass
+                    self._apply_header_offset_from_body()
+                finally:
+                    self._xsync_lock = False
+
+            if defer:
+                prev = getattr(self, "_xsync_after_id", None)
+                if prev is not None:
+                    try:
+                        self.after_cancel(prev)
+                    except Exception:
+                        pass
+                try:
+                    self._xsync_after_id = self.after_idle(_run_sync)
+                except Exception:
+                    _run_sync()
+            else:
+                _run_sync()
+
+        self._sync_header_x_from_body = _sync_header_x_from_body
+
         def _xview_proxy(*args):
             # ЕДИНЫЙ ИСТОЧНИК X — только body canvas.
-            # Шапку синхронизируем ПОСЛЕ того как Tk применит прокрутку (after_idle),
-            # иначе на правом краю из-за округлений бывает дрейф.
             self._end_edit(commit=True)
             try:
                 self.canvas.xview(*args)
             except Exception:
                 return
-            # sync header (и зажим правого края при перетаскивании ползунка/скролле):
-            # как только последняя колонка ВИДНА ПОЛНОСТЬЮ — вправо больше не двигаем.
-            def _sync():
-                try:
-                    w = float(getattr(self, "_scroll_w", 0) or 0)
-                except Exception:
-                    w = 0.0
-                if w <= 1:
-                    try:
-                        w = float(self._content_size()[0])
-                        self._scroll_w = w
-                    except Exception:
-                        w = 1.0
-                try:
-                    view_w = float(self.canvas.winfo_width())
-                except Exception:
-                    view_w = 0.0
-
-                try:
-                    frac = float(self.canvas.xview()[0])
-                except Exception:
-                    frac = 0.0
-
-                # вычислим максимально допустимую позицию X, при которой последняя колонка видна полностью
-                try:
-                    last_right_px = float(self._last_column_right_px())
-                except Exception:
-                    last_right_px = 0.0
-                max_px = max(0.0, w - max(1.0, view_w))
-                allow_px = min(max_px, max(0.0, last_right_px - max(1.0, view_w)))
-
-                cur_px = frac * w
-                if cur_px > (allow_px + 0.5):
-                    # «зажать» вправо
-                    frac2 = 0.0 if w <= 1 else (allow_px / w)
-                    try:
-                        self.canvas.xview_moveto(frac2)
-                    except Exception:
-                        pass
-                    try:
-                        frac = float(self.canvas.xview()[0])
-                    except Exception:
-                        frac = frac2
-
-                try:
-                    self.hcanvas.xview_moveto(frac)
-                except Exception:
-                    pass
-            try:
-                self.after_idle(_sync)
-            except Exception:
-                _sync()
+            self._sync_header_x_from_body(defer=False)
+            self._sync_header_x_from_body(defer=True)
 
         def _on_xscroll_command(first, last):
             # first/last: доли [0..1] видимой области
-            # Обновляем сам горизонтальный скролл (если уже создан)
             try:
                 if hasattr(self, "hscroll"):
                     self.hscroll.set(first, last)
             except Exception:
                 pass
-
-            # Синхронизируем X для canvas (тело) и hcanvas (шапка) без дрожания/уезда.
-            # xscrollcommand вызывается и для canvas, и для hcanvas — используем lock.
-            if getattr(self, "_xsync_lock", False):
-                return
-            self._xsync_lock = True
-            try:
-                f = float(first)
-                try:
-                    c0 = float(self.canvas.xview()[0])
-                except Exception:
-                    c0 = f
-                try:
-                    h0 = float(self.hcanvas.xview()[0])
-                except Exception:
-                    h0 = f
-
-                if abs(c0 - f) > 1e-4:
-                    try:
-                        self.canvas.xview_moveto(f)
-                    except Exception:
-                        pass
-                if abs(h0 - f) > 1e-4:
-                    try:
-                        self.hcanvas.xview_moveto(f)
-                    except Exception:
-                        pass
-            finally:
-                self._xsync_lock = False
+            self._sync_header_x_from_body(defer=False)
+            self._sync_header_x_from_body(defer=True)
 
         # назначаем xscrollcommand сразу, а сам hscroll свяжем позже, когда создадим в footer
         self.canvas.configure(xscrollcommand=_on_xscroll_command)
@@ -3976,9 +3945,14 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             max_rows = max((len(t.qc) for t in self.tests), default=0)
 
+        try:
+            n_cols = len(getattr(self, "display_cols", []) or [])
+        except Exception:
+            n_cols = len(getattr(self, "tests", []) or [])
+        n_cols = max(0, int(n_cols))
         block_w = self._column_block_width()
         self._last_col_w = block_w
-        total_w = self.pad_x * 2 + (block_w * len(self.tests)) + (self.col_gap * max(0, len(self.tests) - 1))
+        total_w = self.pad_x * 2 + (block_w * n_cols) + (self.col_gap * max(0, n_cols - 1))
         body_h = self._total_body_height() if max_rows > 0 else 0
         header_h = int(self.pad_y + self.hdr_h)  # фиксированная область
         return total_w, body_h, header_h
@@ -3999,28 +3973,13 @@ class GeoCanvasEditor(tk.Tk):
         old_px = old_frac * old_w
 
         w, body_h, header_h = self._content_size()
-        w_content = w
+        w_total = max(1, int(w))
 
-        # вычисляем "правый зазор" (даёт свободное место справа, чтобы последняя шапка не прилипала к краю)
         try:
             vw = int(self.canvas.winfo_width() or 1)
         except Exception:
             vw = 1
-        gap = int(getattr(self, "_last_col_w", 0) or 0)
-        if gap < 24:
-            gap = 24
-
-        need_h = (w_content > max(vw, 1))
-        if not need_h:
-            gap = 0
-
-        w_total = w_content + gap
-        # SAFETY: небольшой запас по ширине, чтобы горизонтальный скролл доходил до конца
-        try:
-            if getattr(self, "geo_kind", "K2") == "K4":
-                w_total += int(self.w_val)  # +1 колонка запаса
-        except Exception:
-            pass
+        need_h = (w_total > max(vw, 1))
 
         # scroll по Y только для таблицы
         self.canvas.configure(scrollregion=(0, 0, w_total, body_h))
@@ -4043,29 +4002,30 @@ class GeoCanvasEditor(tk.Tk):
                 self.vbar.state(["!disabled"])
             except Exception:
                 pass
-        # шапка: только X-сдвиг, Y фиксирован
+        # шапка: viewport фиксированный, контент двигаем вручную через _apply_header_offset_from_body
         try:
-            self.hcanvas.configure(scrollregion=(0, 0, w_total, header_h))
+            self.hcanvas.configure(scrollregion=(0, 0, max(1, vw), header_h))
             self.hcanvas.configure(height=header_h)
+            self.hcanvas.configure(width=self.canvas.winfo_width())
         except Exception:
             pass
 
 
         # восстановить X-сдвиг в пикселях
         try:
-            self._scroll_w = float(w_total or 1)
+            self._scroll_w = float(w_total)
         except Exception:
-            self._scroll_w = float(w_total or 1)
+            self._scroll_w = float(w_total)
         try:
             new_frac = 0.0 if (w_total <= 1) else (old_px / float(w_total))
             if new_frac < 0.0:
                 new_frac = 0.0
             if new_frac > 1.0:
                 new_frac = 1.0
-            # двигаем через moveto, чтобы шапка и тело совпали и на правом краю
+            # двигаем body, затем позицию шапки обновляем пиксельно из body
             self.canvas.xview_moveto(new_frac)
             try:
-                self.hcanvas.xview_moveto(new_frac)
+                self._sync_header_x_from_body(defer=False)
             except Exception:
                 pass
         except Exception:
@@ -4075,7 +4035,7 @@ class GeoCanvasEditor(tk.Tk):
         if not need_h:
             try:
                 self.canvas.xview_moveto(0)
-                self.hcanvas.xview_moveto(0)
+                self._sync_header_x_from_body(defer=False)
             except Exception:
                 pass
             # скрыть скроллбар
@@ -6010,7 +5970,9 @@ class GeoCanvasEditor(tk.Tk):
 
     def _header_bbox(self, col: int):
         col_w = self._table_col_width()
-        x0 = self._column_x0(col)
+        x0_world = self._column_x0(col)
+        x_off = float(getattr(self, "_header_offset_px", 0.0) or 0.0)
+        x0 = x0_world - x_off
         y0 = self.pad_y
         x1 = x0 + col_w
         y1 = y0 + self.hdr_h
@@ -6326,8 +6288,7 @@ class GeoCanvasEditor(tk.Tk):
 
             self._refresh_display_order()
             for col, ti in enumerate(self.display_cols):
-                x0 = self._column_x0(col)
-                x1 = x0 + col_w
+                x0, _hy0, x1, _hy1 = self._header_bbox(col)
                 if x0 <= cx <= x1 and (y0 <= cy <= y0 + self.hdr_h):
                     # export checkbox (left)
                     if (x0 + 6) <= cx <= (x0 + 20) and (y0 + 8) <= cy <= (y0 + 22):
@@ -8025,11 +7986,8 @@ class GeoCanvasEditor(tk.Tk):
         try:
             dlg.update_idletasks()
             x0, y0, x1, y1 = self._header_bbox(max(0, int(ti)))
-            # учесть прокрутку canvas (canvas coords -> screen coords)
-            vx = self.canvas.canvasx(0)
-            vy = self.canvas.canvasy(0)
-            sx = self.canvas.winfo_rootx() + int(x0 - vx) + 10
-            sy = self.canvas.winfo_rooty() + int(y0 - vy) + 10
+            sx = self.hcanvas.winfo_rootx() + int(x0) + 10
+            sy = self.hcanvas.winfo_rooty() + int(y0) + 10
             dlg.geometry(f"+{sx}+{sy}")
         except Exception:
             # fallback: центрируем по основному окну
