@@ -1660,8 +1660,10 @@ class GeoCanvasEditor(tk.Tk):
             self.footer,
             text="",
             foreground="#666666",
+            cursor="arrow",
         )
         self.footer_cmd.pack(side="left")
+        self.footer_cmd.bind("<Button-1>", self._on_footer_click)
 
         leg = ttk.Frame(self.footer)
         leg.pack(side="right")
@@ -3191,12 +3193,15 @@ class GeoCanvasEditor(tk.Tk):
             if miss:
                 parts.append(f"отсутствуют значения {miss}")
             msg = ", ".join(parts)
-            # Сначала цвет, потом текст — так надёжнее для ttk
             try:
                 self.footer_cmd.config(foreground=("#8B0000" if msg else "#666666"))
             except Exception:
                 pass
             self.footer_cmd.config(text=msg)
+            try:
+                self.footer_cmd.config(cursor=("hand2" if msg else "arrow"))
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -3215,14 +3220,11 @@ class GeoCanvasEditor(tk.Tk):
             miss = 0
             for t in tests:
                 tid = getattr(t, "tid", None)
-                # Если опыт отключён галочкой (не экспортировать) — исключаем его из пересчёта.
                 if not bool(getattr(t, "export_on", True)):
                     continue
                 qc = [(_parse_cell_int(v) or 0) for v in (getattr(t, "qc", []) or [])]
                 fs = [(_parse_cell_int(v) or 0) for v in (getattr(t, "fs", []) or [])]
 
-                # invalid: считаем по критерию ВСЕГДА (и учитываем сохранённый флаг),
-                # иначе добавленные/новые опыты с флагом invalid=False и нулями не попадут в статистику.
                 fl = (getattr(self, "flags", {}) or {}).get(tid)
                 invalid_flag = bool(getattr(fl, "invalid", False)) if fl is not None else False
                 try:
@@ -3231,12 +3233,10 @@ class GeoCanvasEditor(tk.Tk):
                     invalid_calc = False
                 invalid = bool(invalid_flag or invalid_calc)
 
-
                 if invalid:
                     inv += 1
-                    continue  # нули некорректного опыта не считаем в 'отсутствуют значения'
+                    continue
 
-                # missing zeros (only valid tests)
                 user_cells = set(getattr(fl, "user_cells", set()) or set()) if fl is not None else set()
                 n = min(len(qc), len(fs))
                 for i0 in range(n):
@@ -3248,6 +3248,119 @@ class GeoCanvasEditor(tk.Tk):
             return {"inv": inv, "miss": miss}
         except Exception:
             return {"inv": 0, "miss": 0}
+
+    def _test_has_missing_values(self, t: TestData, fl: TestFlags | None = None) -> bool:
+        try:
+            qc = [(_parse_cell_int(v) or 0) for v in (getattr(t, "qc", []) or [])]
+            fs = [(_parse_cell_int(v) or 0) for v in (getattr(t, "fs", []) or [])]
+            user_cells = set(getattr(fl, "user_cells", set()) or set()) if fl is not None else set()
+            for i0 in range(min(len(qc), len(fs))):
+                if qc[i0] == 0 and (i0, "qc") not in user_cells:
+                    return True
+                if fs[i0] == 0 and (i0, "fs") not in user_cells:
+                    return True
+            return False
+        except Exception:
+            return False
+
+    def _collect_error_protocol_items(self) -> list[dict]:
+        items: list[dict] = []
+        tests = list(getattr(self, "tests", []) or [])
+        flags = getattr(self, "flags", {}) or {}
+
+        def _depth_text(t: Any, row: int) -> str:
+            d = self._safe_depth_m(t, row)
+            if d is None:
+                return "-"
+            return f"{float(d):.2f} м"
+
+        def _scan_runs(arr: list[int], *, min_len: int = 6) -> list[tuple[int, int]]:
+            runs: list[tuple[int, int]] = []
+            i = 0
+            n = len(arr)
+            while i < n:
+                if arr[i] != 0:
+                    i += 1
+                    continue
+                j = i
+                while j < n and arr[j] == 0:
+                    j += 1
+                if (j - i) >= min_len:
+                    runs.append((i, j - 1))
+                i = j
+            return runs
+
+        for t in tests:
+            tid = int(getattr(t, "tid", 0) or 0)
+            fl = flags.get(tid)
+            qc = [(_parse_cell_int(v) or 0) for v in (getattr(t, "qc", []) or [])]
+            fs = [(_parse_cell_int(v) or 0) for v in (getattr(t, "fs", []) or [])]
+            user_cells = set(getattr(fl, "user_cells", set()) or set()) if fl is not None else set()
+
+            for i0 in range(min(len(qc), len(fs))):
+                if qc[i0] == 0 and (i0, "qc") not in user_cells:
+                    items.append({
+                        "test_id": tid,
+                        "row": i0,
+                        "type": "missing_qc",
+                        "text": f"Опыт {tid}, глубина {_depth_text(t, i0)} — отсутствует значение qc",
+                    })
+                if fs[i0] == 0 and (i0, "fs") not in user_cells:
+                    items.append({
+                        "test_id": tid,
+                        "row": i0,
+                        "type": "missing_fs",
+                        "text": f"Опыт {tid}, глубина {_depth_text(t, i0)} — отсутствует значение fs",
+                    })
+
+            zero_runs = _scan_runs(qc, min_len=6) + _scan_runs(fs, min_len=6)
+            zero_runs = sorted(set(zero_runs))
+            for r0, r1 in zero_runs:
+                d0 = _depth_text(t, r0)
+                d1 = _depth_text(t, r1)
+                items.append({
+                    "test_id": tid,
+                    "row": r0,
+                    "type": "invalid_zero_run",
+                    "text": f"Опыт {tid}, интервал {d0}–{d1} — более 5 нулей подряд, опыт помечен как некорректный",
+                })
+
+            invalid_flag = bool(getattr(fl, "invalid", False)) if fl is not None else False
+            if invalid_flag and not zero_runs:
+                items.append({
+                    "test_id": tid,
+                    "row": -1,
+                    "type": "invalid_other",
+                    "text": f"Опыт {tid} — опыт помечен как некорректный по дополнительной диагностике",
+                })
+
+        items.sort(key=lambda x: (int(x.get("test_id", 0) or 0), int(x.get("row", 0) or 0), str(x.get("type") or "")))
+        return items
+
+    def _show_error_protocol_dialog(self):
+        items = self._collect_error_protocol_items()
+        if not items:
+            messagebox.showinfo("Протокол ошибок", "Ошибок не найдено.")
+            return
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Протокол ошибок зондирования")
+        dlg.transient(self)
+        dlg.grab_set()
+        frm = ttk.Frame(dlg, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text=f"Найдено записей: {len(items)}", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 8))
+        box = tk.Text(frm, width=110, height=min(24, max(10, len(items) + 2)), wrap="word")
+        box.pack(fill="both", expand=True)
+        box.insert("1.0", "\n".join(f"• {it.get('text','')}" for it in items))
+        box.config(state="disabled")
+        ttk.Button(frm, text="Закрыть", command=dlg.destroy).pack(anchor="e", pady=(8, 0))
+
+    def _on_footer_click(self, _event=None):
+        try:
+            self._show_error_protocol_dialog()
+        except Exception:
+            pass
 
     def _update_footer_realtime(self):
         """Обновить нижнюю строку (красная/серая) по текущему состоянию."""
@@ -3261,27 +3374,32 @@ class GeoCanvasEditor(tk.Tk):
             if miss:
                 parts.append(f"отсутствуют значения {miss}")
             msg = ", ".join(parts)
-            # Если всё ОК (включая учёт отключённых опытов) — показываем синюю надпись
             if not msg:
                 try:
                     self.footer_cmd.config(foreground="#0b5ed7")
                 except Exception:
                     pass
                 self.footer_cmd.config(text="Статическое зондирование откорректировано.")
+                try:
+                    self.footer_cmd.config(cursor="arrow")
+                except Exception:
+                    pass
                 return
             try:
                 self.footer_cmd.config(foreground="#8B0000")
             except Exception:
                 pass
             self.footer_cmd.config(text=msg)
+            try:
+                self.footer_cmd.config(cursor="hand2")
+            except Exception:
+                pass
         except Exception:
             pass
 
     def _footer_live_tick(self):
         """Таймер: держит нижнюю строку актуальной при удалениях/ручных правках."""
         try:
-            # Не перебиваем синее сообщение 'откорректировано' сразу после корректировки:
-            # если пользователь ничего не менял, оно останется до следующего действия.
             if getattr(self, "_footer_force_live", True):
                 self._update_footer_realtime()
         except Exception:
@@ -3290,7 +3408,6 @@ class GeoCanvasEditor(tk.Tk):
             self.after(350, self._footer_live_tick)
         except Exception:
             pass
-
 
     def _auto_scan_after_load(self):
         """Автопроверка при открытии: подсветить (бледно), без изменений, без всплывающих окон.
@@ -3303,13 +3420,15 @@ class GeoCanvasEditor(tk.Tk):
                 self._algo_preview_mode = False
                 self._redraw()
                 self.footer_cmd.config(text="")
+                try:
+                    self.footer_cmd.config(cursor="arrow")
+                except Exception:
+                    pass
                 return
 
-            # оставляем предпросмотр (бледная подсветка)
             self._algo_preview_mode = True
             self._redraw()
 
-            # Сформировать нижнюю строку по заданному формату:
             inv = int(info.get("tests_invalid", 0) or 0)
             miss = int(info.get("cells_missing", 0) or 0)
             parts = []
@@ -3319,6 +3438,10 @@ class GeoCanvasEditor(tk.Tk):
                 parts.append(f"отсутствуют значения {miss}")
             msg = ", ".join(parts)
             self.footer_cmd.config(text=msg)
+            try:
+                self.footer_cmd.config(cursor=("hand2" if msg else "arrow"))
+            except Exception:
+                pass
             try:
                 self.footer_cmd.config(foreground=("#8B0000" if msg else "#666666"))
             except Exception:
@@ -5897,7 +6020,14 @@ class GeoCanvasEditor(tk.Tk):
 
             # checked = will be exported
             ex_on = bool(getattr(t, "export_on", True))
-            hdr_fill = GUI_HDR if ex_on else "#f2f2f2"
+            fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
+            has_missing_values = self._test_has_missing_values(t, fl)
+            if bool(getattr(fl, "invalid", False)):
+                hdr_fill = GUI_RED
+            elif has_missing_values:
+                hdr_fill = GUI_ORANGE
+            else:
+                hdr_fill = GUI_HDR if ex_on else "#f2f2f2"
             hdr_text = "#111" if ex_on else "#8a8a8a"
             hdr_icon = "#444" if ex_on else "#8a8a8a"
 
@@ -5975,7 +6105,6 @@ class GeoCanvasEditor(tk.Tk):
                 self.hcanvas.create_text(x0 + self.w_depth + self.w_val*2 + self.w_val/2, sh_y, text="U", font=("Segoe UI", 9), fill=hdr_text)
 
             # --- ТАБЛИЦА (canvas) ---
-            fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
             mp = self._grid_row_maps.get(ti, {})
             start_r = self._grid_start_rows.get(ti, 0)
             units = getattr(self, "_grid_units", []) or []
@@ -6122,6 +6251,8 @@ class GeoCanvasEditor(tk.Tk):
                         tx, anchor, color = bx1 - 4, "e", "#000"
                         if is_meter_row and field in ("qc", "fs"):
                             color = "#666"
+                    if not ex_on:
+                        color = "#8a8a8a" if field != "depth" else "#9a9a9a"
                     self.canvas.create_text(tx, (by0 + by1) / 2, text=txt, anchor=anchor, fill=color, font=("Segoe UI", 9))
 
             if bool(getattr(t, "locked", False)):
