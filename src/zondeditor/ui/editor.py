@@ -3263,6 +3263,13 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             return False
 
+    def _header_fill_for_test(self, *, invalid: bool, has_missing: bool, export_on: bool) -> str:
+        if invalid:
+            return GUI_RED if export_on else "#f4b6b0"  # muted red
+        if has_missing:
+            return GUI_ORANGE if export_on else "#ffd8aa"  # muted orange
+        return GUI_HDR if export_on else "#f2f2f2"
+
     def _collect_error_protocol_items(self) -> list[dict]:
         items: list[dict] = []
         tests = list(getattr(self, "tests", []) or [])
@@ -3297,6 +3304,20 @@ class GeoCanvasEditor(tk.Tk):
             fs = [(_parse_cell_int(v) or 0) for v in (getattr(t, "fs", []) or [])]
             user_cells = set(getattr(fl, "user_cells", set()) or set()) if fl is not None else set()
 
+            zero_runs = _scan_runs(qc, min_len=6) + _scan_runs(fs, min_len=6)
+            if zero_runs:
+                r0 = min(rr[0] for rr in zero_runs)
+                r1 = max(rr[1] for rr in zero_runs)
+                d0 = _depth_text(t, r0)
+                d1 = _depth_text(t, r1)
+                items.append({
+                    "test_id": tid,
+                    "row": r0,
+                    "type": "invalid_zero_run",
+                    "text": f"Опыт {tid} — некорректный: нули более 5 раз подряд, интервал {d0}–{d1}",
+                })
+                continue
+
             for i0 in range(min(len(qc), len(fs))):
                 if qc[i0] == 0 and (i0, "qc") not in user_cells:
                     items.append({
@@ -3313,20 +3334,8 @@ class GeoCanvasEditor(tk.Tk):
                         "text": f"Опыт {tid}, глубина {_depth_text(t, i0)} — отсутствует значение fs",
                     })
 
-            zero_runs = _scan_runs(qc, min_len=6) + _scan_runs(fs, min_len=6)
-            zero_runs = sorted(set(zero_runs))
-            for r0, r1 in zero_runs:
-                d0 = _depth_text(t, r0)
-                d1 = _depth_text(t, r1)
-                items.append({
-                    "test_id": tid,
-                    "row": r0,
-                    "type": "invalid_zero_run",
-                    "text": f"Опыт {tid}, интервал {d0}–{d1} — более 5 нулей подряд, опыт помечен как некорректный",
-                })
-
             invalid_flag = bool(getattr(fl, "invalid", False)) if fl is not None else False
-            if invalid_flag and not zero_runs:
+            if invalid_flag:
                 items.append({
                     "test_id": tid,
                     "row": -1,
@@ -6022,12 +6031,11 @@ class GeoCanvasEditor(tk.Tk):
             ex_on = bool(getattr(t, "export_on", True))
             fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
             has_missing_values = self._test_has_missing_values(t, fl)
-            if bool(getattr(fl, "invalid", False)):
-                hdr_fill = GUI_RED
-            elif has_missing_values:
-                hdr_fill = GUI_ORANGE
-            else:
-                hdr_fill = GUI_HDR if ex_on else "#f2f2f2"
+            hdr_fill = self._header_fill_for_test(
+                invalid=bool(getattr(fl, "invalid", False)),
+                has_missing=bool(has_missing_values),
+                export_on=bool(ex_on),
+            )
             hdr_text = "#111" if ex_on else "#8a8a8a"
             hdr_icon = "#444" if ex_on else "#8a8a8a"
 
@@ -6193,14 +6201,9 @@ class GeoCanvasEditor(tk.Tk):
 
                 if not depth_txt:
                     depth_fill = "white"
-                if fl.invalid and has_row:
-                    depth_fill = GUI_RED
 
                 def fill_for(kind: str):
-                    # Некорректный опыт перекрывает остальные статусы/marks.
-                    if fl.invalid and has_row:
-                        return GUI_RED
-                    # Далее — обычная логика по существующим/пустым строкам
+                    # Обычная логика по существующим/пустым строкам
                     if is_meter_row:
                         return "#f3f6fb"
                     if not has_row or is_blank_row:
