@@ -212,6 +212,8 @@ class GeoCanvasEditor(tk.Tk):
         self.display_sort_mode = "date"
         self.expanded_meters: set[int] = set()
         self._graph_redraw_after_id = None
+        self._header_offset_px = 0.0
+        self._xsync_after_id = None
         self._rebuild_redraw_after_id = None
         self._active_test_idx: int | None = None
         self.graph_qc_max_mpa: float = 30.0
@@ -1473,6 +1475,22 @@ class GeoCanvasEditor(tk.Tk):
         )
         self.canvas.pack(side="left", fill="both", expand=True)
 
+        def _apply_header_offset_from_body():
+            try:
+                target = float(self.canvas.canvasx(0))
+            except Exception:
+                target = 0.0
+            prev = float(getattr(self, "_header_offset_px", 0.0) or 0.0)
+            dx = target - prev
+            if abs(dx) > 1e-6:
+                try:
+                    self.hcanvas.move("all", -dx, 0)
+                except Exception:
+                    pass
+            self._header_offset_px = target
+
+        self._apply_header_offset_from_body = _apply_header_offset_from_body
+
         def _sync_header_x_from_body(*, defer: bool = False):
             def _run_sync():
                 self._xsync_after_id = None
@@ -1484,19 +1502,7 @@ class GeoCanvasEditor(tk.Tk):
                         self.hcanvas.configure(width=self.canvas.winfo_width())
                     except Exception:
                         pass
-                    try:
-                        c0 = float(self.canvas.xview()[0])
-                    except Exception:
-                        c0 = 0.0
-                    try:
-                        h0 = float(self.hcanvas.xview()[0])
-                    except Exception:
-                        h0 = c0
-                    if abs(h0 - c0) > 1e-6:
-                        try:
-                            self.hcanvas.xview_moveto(c0)
-                        except Exception:
-                            pass
+                    self._apply_header_offset_from_body()
                 finally:
                     self._xsync_lock = False
 
@@ -1523,21 +1529,16 @@ class GeoCanvasEditor(tk.Tk):
                 self.canvas.xview(*args)
             except Exception:
                 return
-            # Сначала синхронизируем сразу, затем ещё раз после idle,
-            # чтобы устранить крайний правый дрейф из-за финального clamp в Tk.
             self._sync_header_x_from_body(defer=False)
             self._sync_header_x_from_body(defer=True)
 
         def _on_xscroll_command(first, last):
             # first/last: доли [0..1] видимой области
-            # Обновляем сам горизонтальный скролл (если уже создан)
             try:
                 if hasattr(self, "hscroll"):
                     self.hscroll.set(first, last)
             except Exception:
                 pass
-
-            # Источник истины для X — body canvas. Шапку догоняем до фактического xview body.
             self._sync_header_x_from_body(defer=False)
             self._sync_header_x_from_body(defer=True)
 
@@ -4001,10 +4002,11 @@ class GeoCanvasEditor(tk.Tk):
                 self.vbar.state(["!disabled"])
             except Exception:
                 pass
-        # шапка: только X-сдвиг, Y фиксирован
+        # шапка: viewport фиксированный, контент двигаем вручную через _apply_header_offset_from_body
         try:
-            self.hcanvas.configure(scrollregion=(0, 0, w_total, header_h))
+            self.hcanvas.configure(scrollregion=(0, 0, max(1, vw), header_h))
             self.hcanvas.configure(height=header_h)
+            self.hcanvas.configure(width=self.canvas.winfo_width())
         except Exception:
             pass
 
@@ -4020,10 +4022,10 @@ class GeoCanvasEditor(tk.Tk):
                 new_frac = 0.0
             if new_frac > 1.0:
                 new_frac = 1.0
-            # двигаем через moveto, чтобы шапка и тело совпали и на правом краю
+            # двигаем body, затем позицию шапки обновляем пиксельно из body
             self.canvas.xview_moveto(new_frac)
             try:
-                self.hcanvas.xview_moveto(new_frac)
+                self._sync_header_x_from_body(defer=False)
             except Exception:
                 pass
         except Exception:
@@ -4033,7 +4035,7 @@ class GeoCanvasEditor(tk.Tk):
         if not need_h:
             try:
                 self.canvas.xview_moveto(0)
-                self.hcanvas.xview_moveto(0)
+                self._sync_header_x_from_body(defer=False)
             except Exception:
                 pass
             # скрыть скроллбар
@@ -5968,7 +5970,9 @@ class GeoCanvasEditor(tk.Tk):
 
     def _header_bbox(self, col: int):
         col_w = self._table_col_width()
-        x0 = self._column_x0(col)
+        x0_world = self._column_x0(col)
+        x_off = float(getattr(self, "_header_offset_px", 0.0) or 0.0)
+        x0 = x0_world - x_off
         y0 = self.pad_y
         x1 = x0 + col_w
         y1 = y0 + self.hdr_h
@@ -6284,8 +6288,7 @@ class GeoCanvasEditor(tk.Tk):
 
             self._refresh_display_order()
             for col, ti in enumerate(self.display_cols):
-                x0 = self._column_x0(col)
-                x1 = x0 + col_w
+                x0, _hy0, x1, _hy1 = self._header_bbox(col)
                 if x0 <= cx <= x1 and (y0 <= cy <= y0 + self.hdr_h):
                     # export checkbox (left)
                     if (x0 + 6) <= cx <= (x0 + 20) and (y0 + 8) <= cy <= (y0 + 22):
@@ -7983,11 +7986,8 @@ class GeoCanvasEditor(tk.Tk):
         try:
             dlg.update_idletasks()
             x0, y0, x1, y1 = self._header_bbox(max(0, int(ti)))
-            # учесть прокрутку canvas (canvas coords -> screen coords)
-            vx = self.canvas.canvasx(0)
-            vy = self.canvas.canvasy(0)
-            sx = self.canvas.winfo_rootx() + int(x0 - vx) + 10
-            sy = self.canvas.winfo_rooty() + int(y0 - vy) + 10
+            sx = self.hcanvas.winfo_rootx() + int(x0) + 10
+            sy = self.hcanvas.winfo_rooty() + int(y0) + 10
             dlg.geometry(f"+{sx}+{sy}")
         except Exception:
             # fallback: центрируем по основному окну
