@@ -1795,7 +1795,10 @@ class GeoCanvasEditor(tk.Tk):
     def _parse_probe_type_values(self, probe_type: str) -> dict[str, str]:
         """Parse probe type like A3/50/20/10/350 [№115]."""
         s = str(probe_type or "").strip()
-        m = re.search(r"([A-Za-zА-Яа-я]\d+)\s*/\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)", s)
+        # Хвост вида "[№115]" — это номер прибора/зонда, он не должен попадать
+        # в числовые поля тарировки.
+        s = re.sub(r"\s*\[[^\]]*\]\s*$", "", s)
+        m = re.search(r"([A-Za-zА-Яа-я]\d+)\s*/\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)\b", s)
         if not m:
             return {}
         return {
@@ -1807,9 +1810,10 @@ class GeoCanvasEditor(tk.Tk):
         }
 
     def _extract_sounding_params_from_geo_bytes(self, data: bytes, geo_kind: str) -> dict[str, str]:
+        default_scale = "1000" if str(geo_kind).upper() == "K4" else "250"
         params = {
             "controller_type": "ТЕСТ-К4" if str(geo_kind).upper() == "K4" else "ТЕСТ-К2",
-            "controller_scale_div": (self.scale_var.get().strip() if hasattr(self, "scale_var") else "250") or "250",
+            "controller_scale_div": (self.scale_var.get().strip() if hasattr(self, "scale_var") else default_scale) or default_scale,
             "probe_type": (self.probe_type_var.get().strip() if hasattr(self, "probe_type_var") else "") or "",
             "cone_kn": (self.fcone_var.get().strip() if hasattr(self, "fcone_var") else "30") or "30",
             "sleeve_kn": (self.fsleeve_var.get().strip() if hasattr(self, "fsleeve_var") else "10") or "10",
@@ -1820,15 +1824,25 @@ class GeoCanvasEditor(tk.Tk):
             params["controller_type"] = "ТЕСТ-К4М" if (bytes([0xCA,0x34,0xCC]) in data or b"K4M" in data.upper()) else "ТЕСТ-К4"
             # try textual probe type payload
             probe_txt = ""
+            parsed_scale = ""
             for enc in ("cp1251", "cp866", "latin1"):
                 try:
                     txt = data.decode(enc, errors="ignore")
                 except Exception:
                     continue
+                if not parsed_scale:
+                    sm = re.search(r"(?:шкала|scale)\D{0,8}(\d{2,5})", txt, flags=re.IGNORECASE)
+                    if sm:
+                        parsed_scale = sm.group(1)
                 mm = re.search(r"[A-Za-zА-Яа-я]\d+\s*/\s*\d+\s*/\s*\d+\s*/\s*\d+\s*/\s*\d+(?:\s*\[[^\]]+\])?", txt)
                 if mm:
                     probe_txt = mm.group(0).strip()
                     break
+            if parsed_scale:
+                params["controller_scale_div"] = parsed_scale
+            elif params["controller_type"] == "ТЕСТ-К4М":
+                # Для K4M не тянем старую шкалу K2=250.
+                params["controller_scale_div"] = "1000"
             if probe_txt:
                 params["probe_type"] = probe_txt
                 params.update(self._parse_probe_type_values(probe_txt))
@@ -9284,4 +9298,3 @@ if __name__ == "__main__":
         raise SystemExit(0)
 
     GeoCanvasEditor().mainloop()
-
