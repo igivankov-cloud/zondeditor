@@ -28,6 +28,7 @@ from pathlib import Path
 
 # project modules already extracted:
 from src.zondeditor.processing.fixes import fix_tests_by_algorithm
+from src.zondeditor.processing.diagnostics import evaluate_diagnostics, ProtocolEntry
 from src.zondeditor.processing.calibration import (
     calc_qc_fs_from_del,
     calibration_from_common_params,
@@ -3155,6 +3156,14 @@ class GeoCanvasEditor(tk.Tk):
             self.flags[tid] = TestFlags(False, interp_cells, force_cells, user_cells, prev_algo_cells)
 
         self._redraw()
+        try:
+            report = self._diagnostics_report()
+            summary["tests_total"] = int(report.tests_total)
+            summary["tests_invalid"] = int(report.tests_invalid)
+            summary["cells_missing"] = int(report.cells_missing)
+            summary["cells_interp"] = int(report.cells_interp)
+        except Exception:
+            pass
         return summary
 
     def _set_footer_from_scan(self):
@@ -3162,85 +3171,39 @@ class GeoCanvasEditor(tk.Tk):
         Важно: всегда перезаписывает цвет (красный/серый), чтобы не оставалось синего после отката.
         """
         try:
-            info = self._scan_by_algorithm()
-        except Exception:
-            info = {}
-        try:
-            inv = int(info.get("tests_invalid", 0) or 0)
-            miss = int(info.get("cells_missing", 0) or 0)
-            parts = []
-            if inv:
-                parts.append(f"Некорректный опыт {inv}")
-            if miss:
-                parts.append(f"отсутствуют значения {miss}")
-            msg = ", ".join(parts)
-            try:
-                self.footer_cmd.config(foreground=("#8B0000" if msg else "#666666"))
-            except Exception:
-                pass
-            self.footer_cmd.config(text=msg)
-            try:
-                self.footer_cmd.config(cursor=("hand2" if msg else "arrow"))
-            except Exception:
-                pass
+            self._scan_by_algorithm()
+            self._update_footer_realtime()
         except Exception:
             pass
 
+    def _diagnostics_report(self):
+        return evaluate_diagnostics(
+            list(getattr(self, "tests", []) or []),
+            getattr(self, "flags", {}) or {},
+        )
+
+    @staticmethod
+    def _footer_text_from_report(report) -> str:
+        parts = []
+        if int(getattr(report, "tests_invalid", 0) or 0):
+            parts.append(f"Некорректный опыт {int(report.tests_invalid)}")
+        if int(getattr(report, "cells_missing", 0) or 0):
+            parts.append(f"отсутствуют значения {int(report.cells_missing)}")
+        return ", ".join(parts)
+
     def _compute_footer_realtime(self):
-        """Пересчитать нижнюю строку (в реальном времени) по ТЕКУЩИМ данным.
-        Правила:
-          - 'Некорректный опыт X' — количество опытов с invalid=True (или по критерию >5 нулей подряд).
-          - 'отсутствуют значения Y' — количество нулевых ячеек qc/fs ТОЛЬКО по корректным опытам.
-        """
+        """Пересчитать нижнюю строку (в реальном времени) из единого диагностического отчёта."""
         try:
-            tests = list(getattr(self, "tests", []) or [])
-            if not tests:
-                return {"inv": 0, "miss": 0}
-
-            inv = 0
-            miss = 0
-            for t in tests:
-                tid = getattr(t, "tid", None)
-                if not bool(getattr(t, "export_on", True)):
-                    continue
-                qc = [(_parse_cell_int(v) or 0) for v in (getattr(t, "qc", []) or [])]
-                fs = [(_parse_cell_int(v) or 0) for v in (getattr(t, "fs", []) or [])]
-
-                fl = (getattr(self, "flags", {}) or {}).get(tid)
-                invalid_flag = bool(getattr(fl, "invalid", False)) if fl is not None else False
-                try:
-                    invalid_calc = (_max_zero_run(qc) > 5) or (_max_zero_run(fs) > 5)
-                except Exception:
-                    invalid_calc = False
-                invalid = bool(invalid_flag or invalid_calc)
-
-                if invalid:
-                    inv += 1
-                    continue
-
-                user_cells = set(getattr(fl, "user_cells", set()) or set()) if fl is not None else set()
-                n = min(len(qc), len(fs))
-                for i0 in range(n):
-                    if qc[i0] == 0 and (i0, "qc") not in user_cells:
-                        miss += 1
-                    if fs[i0] == 0 and (i0, "fs") not in user_cells:
-                        miss += 1
-
-            return {"inv": inv, "miss": miss}
+            report = self._diagnostics_report()
+            return {"inv": int(report.tests_invalid), "miss": int(report.cells_missing)}
         except Exception:
             return {"inv": 0, "miss": 0}
 
     def _test_has_missing_values(self, t: TestData, fl: TestFlags | None = None) -> bool:
         try:
-            qc = [(_parse_cell_int(v) or 0) for v in (getattr(t, "qc", []) or [])]
-            fs = [(_parse_cell_int(v) or 0) for v in (getattr(t, "fs", []) or [])]
-            user_cells = set(getattr(fl, "user_cells", set()) or set()) if fl is not None else set()
-            for i0 in range(min(len(qc), len(fs))):
-                if qc[i0] == 0 and (i0, "qc") not in user_cells:
-                    return True
-                if fs[i0] == 0 and (i0, "fs") not in user_cells:
-                    return True
-            return False
+            report = self._diagnostics_report()
+            td = report.by_test.get(int(getattr(t, "tid", 0) or 0))
+            return bool(td and td.missing_rows)
         except Exception:
             return False
 
@@ -3253,8 +3216,7 @@ class GeoCanvasEditor(tk.Tk):
 
     def _collect_error_protocol_items(self) -> list[dict]:
         items: list[dict] = []
-        tests = list(getattr(self, "tests", []) or [])
-        flags = getattr(self, "flags", {}) or {}
+        tests_by_tid = {int(getattr(t, "tid", 0) or 0): t for t in (getattr(self, "tests", []) or [])}
 
         def _depth_text(t: Any, row: int) -> str:
             d = self._safe_depth_m(t, row)
@@ -3262,67 +3224,29 @@ class GeoCanvasEditor(tk.Tk):
                 return "-"
             return f"{float(d):.2f} м"
 
-        def _scan_runs(arr: list[int], *, min_len: int = 6) -> list[tuple[int, int]]:
-            runs: list[tuple[int, int]] = []
-            i = 0
-            n = len(arr)
-            while i < n:
-                if arr[i] != 0:
-                    i += 1
-                    continue
-                j = i
-                while j < n and arr[j] == 0:
-                    j += 1
-                if (j - i) >= min_len:
-                    runs.append((i, j - 1))
-                i = j
-            return runs
-
-        for t in tests:
-            tid = int(getattr(t, "tid", 0) or 0)
-            fl = flags.get(tid)
-            qc = [(_parse_cell_int(v) or 0) for v in (getattr(t, "qc", []) or [])]
-            fs = [(_parse_cell_int(v) or 0) for v in (getattr(t, "fs", []) or [])]
-            user_cells = set(getattr(fl, "user_cells", set()) or set()) if fl is not None else set()
-
-            zero_runs = _scan_runs(qc, min_len=6) + _scan_runs(fs, min_len=6)
-            if zero_runs:
-                r0 = min(rr[0] for rr in zero_runs)
-                r1 = max(rr[1] for rr in zero_runs)
-                d0 = _depth_text(t, r0)
-                d1 = _depth_text(t, r1)
-                items.append({
-                    "test_id": tid,
-                    "row": r0,
-                    "type": "invalid_zero_run",
-                    "text": f"Опыт {tid} — некорректный: нули более 5 раз подряд, интервал {d0}–{d1}",
-                })
+        report = self._diagnostics_report()
+        for entry in report.protocol_entries:
+            if not isinstance(entry, ProtocolEntry):
                 continue
-
-            for i0 in range(min(len(qc), len(fs))):
-                if qc[i0] == 0 and (i0, "qc") not in user_cells:
-                    items.append({
-                        "test_id": tid,
-                        "row": i0,
-                        "type": "missing_qc",
-                        "text": f"Опыт {tid}, глубина {_depth_text(t, i0)} — отсутствует значение qc",
-                    })
-                if fs[i0] == 0 and (i0, "fs") not in user_cells:
-                    items.append({
-                        "test_id": tid,
-                        "row": i0,
-                        "type": "missing_fs",
-                        "text": f"Опыт {tid}, глубина {_depth_text(t, i0)} — отсутствует значение fs",
-                    })
-
-            invalid_flag = bool(getattr(fl, "invalid", False)) if fl is not None else False
-            if invalid_flag:
-                items.append({
-                    "test_id": tid,
-                    "row": -1,
-                    "type": "invalid_other",
-                    "text": f"Опыт {tid} — опыт помечен как некорректный по дополнительной диагностике",
-                })
+            t = tests_by_tid.get(int(entry.test_id))
+            if t is None:
+                continue
+            if entry.type == "invalid_zero_run":
+                d0 = _depth_text(t, int(entry.row))
+                d1 = _depth_text(t, int(entry.row_end))
+                text = f"Опыт {entry.test_id} — некорректный: нули более 5 раз подряд, интервал {d0}–{d1}"
+            elif entry.type == "missing_qc":
+                text = f"Опыт {entry.test_id}, глубина {_depth_text(t, int(entry.row))} — отсутствует значение qc"
+            elif entry.type == "missing_fs":
+                text = f"Опыт {entry.test_id}, глубина {_depth_text(t, int(entry.row))} — отсутствует значение fs"
+            else:
+                text = f"Опыт {entry.test_id} — опыт помечен как некорректный по дополнительной диагностике"
+            items.append({
+                "test_id": int(entry.test_id),
+                "row": int(entry.row),
+                "type": str(entry.type),
+                "text": text,
+            })
 
         items.sort(key=lambda x: (int(x.get("test_id", 0) or 0), int(x.get("row", 0) or 0), str(x.get("type") or "")))
         return items
@@ -3356,14 +3280,8 @@ class GeoCanvasEditor(tk.Tk):
         """Обновить нижнюю строку (красная/серая) по текущему состоянию."""
         try:
             res = self._compute_footer_realtime()
-            inv = int(res.get("inv", 0) or 0)
-            miss = int(res.get("miss", 0) or 0)
-            parts = []
-            if inv:
-                parts.append(f"Некорректный опыт {inv}")
-            if miss:
-                parts.append(f"отсутствуют значения {miss}")
-            msg = ", ".join(parts)
+            report = self._diagnostics_report()
+            msg = self._footer_text_from_report(report)
             if not msg:
                 try:
                     self.footer_cmd.config(foreground="#0b5ed7")
@@ -3419,14 +3337,8 @@ class GeoCanvasEditor(tk.Tk):
             self._algo_preview_mode = True
             self._redraw()
 
-            inv = int(info.get("tests_invalid", 0) or 0)
-            miss = int(info.get("cells_missing", 0) or 0)
-            parts = []
-            if inv:
-                parts.append(f"Некорректный опыт {inv}")
-            if miss:
-                parts.append(f"отсутствуют значения {miss}")
-            msg = ", ".join(parts)
+            report = self._diagnostics_report()
+            msg = self._footer_text_from_report(report)
             self.footer_cmd.config(text=msg)
             try:
                 self.footer_cmd.config(cursor=("hand2" if msg else "arrow"))
@@ -6003,6 +5915,7 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
 
+        diagnostics = self._diagnostics_report()
         for col, ti in enumerate(self.display_cols):
             t = self.tests[ti]
             x0, y0, x1, y1 = self._header_bbox(col)
@@ -6010,15 +5923,10 @@ class GeoCanvasEditor(tk.Tk):
             # checked = will be exported
             ex_on = bool(getattr(t, "export_on", True))
             fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
-            has_missing_values = self._test_has_missing_values(t, fl)
-            try:
-                qc_hdr = [(_parse_cell_int(v) or 0) for v in (getattr(t, "qc", []) or [])]
-                fs_hdr = [(_parse_cell_int(v) or 0) for v in (getattr(t, "fs", []) or [])]
-                invalid_calc_hdr = (_max_zero_run(qc_hdr) > 5) or (_max_zero_run(fs_hdr) > 5)
-            except Exception:
-                invalid_calc_hdr = False
+            td = diagnostics.by_test.get(int(getattr(t, "tid", 0) or 0))
+            has_missing_values = bool(td and td.missing_rows)
             hdr_fill = self._header_fill_for_test(
-                invalid=bool(getattr(fl, "invalid", False)) or bool(invalid_calc_hdr),
+                invalid=bool(td.invalid) if td is not None else bool(getattr(fl, "invalid", False)),
                 has_missing=bool(has_missing_values),
                 export_on=bool(ex_on),
             )
@@ -8272,11 +8180,11 @@ class GeoCanvasEditor(tk.Tk):
     def _project_open_diagnostics(self, status_info: dict | None = None) -> str:
         status_info = status_info or {}
         try:
-            status_now = self._compute_footer_realtime()
+            report = self._diagnostics_report()
         except Exception:
-            status_now = {}
-        miss = int(status_now.get("miss", 0) or 0)
-        invalid = int(status_now.get("inv", 0) or 0)
+            report = None
+        miss = int(getattr(report, "cells_missing", 0) or 0)
+        invalid = int(getattr(report, "tests_invalid", 0) or 0)
         return (
             f"Проект открыт: ops={self._marks_ops_count}, marks_total={self._marks_built_count}, "
             f"marks_green={self._marks_color_counts.get('green', 0)}, "
