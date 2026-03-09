@@ -2836,6 +2836,26 @@ class GeoCanvasEditor(tk.Tk):
     def _depth_at(self, idx: int) -> float:
         return round(float(self.depth_start) + idx * float(self.step_m), 4)
 
+    def _apply_open_file_view_defaults(self):
+        """Defaults for opened files: expanded view, graphs/geology columns off."""
+        self.show_graphs = False
+        self.show_geology_column = False
+        self.compact_1m = False
+        self.expanded_meters = set()
+        self.row_h = int(self.row_h_default)
+        try:
+            if getattr(self, "_show_graphs_var", None) is not None:
+                self._show_graphs_var.set(False)
+        except Exception:
+            pass
+        try:
+            if getattr(self, "ribbon_view", None):
+                self.ribbon_view.set_show_graphs(False)
+                self.ribbon_view.set_show_geology_column(False)
+                self.ribbon_view.set_compact_1m(False)
+        except Exception:
+            pass
+
     def load_and_render(self):
 
             if not self.geo_path:
@@ -2921,6 +2941,7 @@ class GeoCanvasEditor(tk.Tk):
 
 
                 self._end_edit(commit=False)
+                self._apply_open_file_view_defaults()
 
                 self._ensure_layers_defaults_for_all_tests()
                 self._active_test_idx = 0 if self.tests else None
@@ -3042,6 +3063,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.flags[t.tid] = TestFlags(False, set(), set(), set(), set())
 
             self._end_edit(commit=False)
+            self._apply_open_file_view_defaults()
             self._ensure_layers_defaults_for_all_tests()
             self._active_test_idx = 0 if self.tests else None
             self._sync_layers_panel()
@@ -6031,8 +6053,14 @@ class GeoCanvasEditor(tk.Tk):
             ex_on = bool(getattr(t, "export_on", True))
             fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
             has_missing_values = self._test_has_missing_values(t, fl)
+            try:
+                qc_hdr = [(_parse_cell_int(v) or 0) for v in (getattr(t, "qc", []) or [])]
+                fs_hdr = [(_parse_cell_int(v) or 0) for v in (getattr(t, "fs", []) or [])]
+                invalid_calc_hdr = (_max_zero_run(qc_hdr) > 5) or (_max_zero_run(fs_hdr) > 5)
+            except Exception:
+                invalid_calc_hdr = False
             hdr_fill = self._header_fill_for_test(
-                invalid=bool(getattr(fl, "invalid", False)),
+                invalid=bool(getattr(fl, "invalid", False)) or bool(invalid_calc_hdr),
                 has_missing=bool(has_missing_values),
                 export_on=bool(ex_on),
             )
@@ -6208,6 +6236,15 @@ class GeoCanvasEditor(tk.Tk):
                         return "#f3f6fb"
                     if not has_row or is_blank_row:
                         return "white"
+
+                    # Нули (пропуски) подсвечиваем оранжевым во всех опытах, включая некорректные.
+                    try:
+                        if has_row and kind in ("qc", "fs") and data_i is not None:
+                            raw_val = (t.qc[data_i] if kind == "qc" else t.fs[data_i])
+                            if (_parse_cell_int(raw_val) or 0) == 0 and (data_i, kind) not in getattr(fl, "user_cells", set()):
+                                return (GUI_ORANGE_P if getattr(self, '_algo_preview_mode', False) else GUI_ORANGE)
+                    except Exception:
+                        pass
 
                     mk = (self._marks_index or {}).get(self._mark_key(int(getattr(t, 'tid', 0) or 0), self._safe_depth_m(t, int(data_i)), str(kind))) if data_i is not None else None
                     if isinstance(mk, dict):
@@ -8335,6 +8372,7 @@ class GeoCanvasEditor(tk.Tk):
         self.is_gxl = (src_kind == "GXL")
         src_ext = str((project.source.ext if project.source else "") or "").strip().lower()
         self._restore(project.state or {})
+        self._apply_open_file_view_defaults()
         if src_ext in {"geo", "ge0"}:
             self.geo_kind = "K2"
             if any(getattr(t, "incl", None) not in (None, []) for t in (getattr(self, "tests", []) or [])):
