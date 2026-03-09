@@ -1885,7 +1885,10 @@ class GeoCanvasEditor(tk.Tk):
                         sa = int(float(str(c.get("sleeve_area_cm2", "0")).replace(",", ".")))
                     except Exception:
                         sa = 0
-                    return (1 if 100 <= sa <= 5000 else 0, sa)
+                    is_valid = 1 if 100 <= sa <= 500 else 0
+                    # Для K4/K4M типовая площадь муфты 350 см²: среди валидных
+                    # выбираем ближайшее значение, чтобы не хватать мусорные 80/803.
+                    return (is_valid, -abs(sa - 350))
                 params.update(max(probe_candidates, key=_score))
             else:
                 try:
@@ -1895,16 +1898,19 @@ class GeoCanvasEditor(tk.Tk):
                         cone = int(data[p + 15])
                         sleeve = int(data[p + 16])
                         cone_area = int(data[p + 18])
-                        sleeve_area = int(data[p + 19]) + (int(data[p + 20]) << 8)
+                        device_no = int(data[p + 14])
+                        # В реальных K4 файлах (например ...J1 и ...O1) поле p+19/p+20
+                        # даёт 0x0323=803, но это НЕ площадь муфты. Поэтому в fallback
+                        # берём площадь муфты из K4M-дефолта (350) и не используем 803.
                         if 1 <= cone <= 500:
                             params["cone_kn"] = str(cone)
                         if 1 <= sleeve <= 500:
                             params["sleeve_kn"] = str(sleeve)
                         if 1 <= cone_area <= 200:
                             params["cone_area_cm2"] = str(cone_area)
-                        if 100 <= sleeve_area <= 500:
-                            params["sleeve_area_cm2"] = str(sleeve_area)
-                        params["probe_type"] = f"A3/{params['cone_kn']}/{params['sleeve_kn']}/{params['cone_area_cm2']}/{params['sleeve_area_cm2']}"
+                        params["sleeve_area_cm2"] = str(self._default_common_params("K4").get("sleeve_area_cm2", "350"))
+                        params["probe_type"] = f"A3/{params['cone_kn']}/{params['sleeve_kn']}/{params['cone_area_cm2']}/{params['sleeve_area_cm2']} [№{device_no}]"
+                        params.update(self._parse_probe_type_values(params["probe_type"]))
                 except Exception:
                     pass
         return params
