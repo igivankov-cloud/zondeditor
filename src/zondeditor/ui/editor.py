@@ -4118,9 +4118,9 @@ class GeoCanvasEditor(tk.Tk):
             self.hcanvas.create_line(xx, fs_axis_y - 3, xx, fs_axis_y + 3, fill=GRAPH_FS_BLUE, width=1, tags=tag)
         self.hcanvas.create_text(xa0, qc_axis_y - 10, anchor="w", text="qc, МПа", fill=GRAPH_QC_GREEN, font=("Segoe UI", 8), tags=tag)
         self.hcanvas.create_text(xa0, fs_axis_y - 10, anchor="w", text="fs, кПа", fill=GRAPH_FS_BLUE, font=("Segoe UI", 8), tags=tag)
-        q_txt = f"0–{int(round(qmax))}" if abs(qmax - round(qmax)) < 1e-6 else f"0–{qmax:.2f}"
+        q_txt = f"0–{int(float(qmax))}"
         self.hcanvas.create_text(xa1, qc_axis_y - 10, anchor="e", text=q_txt, fill=GRAPH_QC_GREEN, font=("Segoe UI", 7), tags=tag)
-        f_txt = f"0–{int(round(fmax))}" if abs(fmax - round(fmax)) < 1e-6 else f"0–{fmax:.2f}"
+        f_txt = f"0–{int(float(fmax))}"
         self.hcanvas.create_text(xa1, fs_axis_y - 10, anchor="e", text=f_txt, fill=GRAPH_FS_BLUE, font=("Segoe UI", 7), tags=tag)
 
     def _test_last_data_index(self, t) -> int | None:
