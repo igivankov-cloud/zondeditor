@@ -1473,35 +1473,60 @@ class GeoCanvasEditor(tk.Tk):
         )
         self.canvas.pack(side="left", fill="both", expand=True)
 
+        def _sync_header_x_from_body(*, defer: bool = False):
+            def _run_sync():
+                self._xsync_after_id = None
+                if getattr(self, "_xsync_lock", False):
+                    return
+                self._xsync_lock = True
+                try:
+                    try:
+                        self.hcanvas.configure(width=self.canvas.winfo_width())
+                    except Exception:
+                        pass
+                    try:
+                        c0 = float(self.canvas.xview()[0])
+                    except Exception:
+                        c0 = 0.0
+                    try:
+                        h0 = float(self.hcanvas.xview()[0])
+                    except Exception:
+                        h0 = c0
+                    if abs(h0 - c0) > 1e-6:
+                        try:
+                            self.hcanvas.xview_moveto(c0)
+                        except Exception:
+                            pass
+                finally:
+                    self._xsync_lock = False
+
+            if defer:
+                prev = getattr(self, "_xsync_after_id", None)
+                if prev is not None:
+                    try:
+                        self.after_cancel(prev)
+                    except Exception:
+                        pass
+                try:
+                    self._xsync_after_id = self.after_idle(_run_sync)
+                except Exception:
+                    _run_sync()
+            else:
+                _run_sync()
+
+        self._sync_header_x_from_body = _sync_header_x_from_body
+
         def _xview_proxy(*args):
             # ЕДИНЫЙ ИСТОЧНИК X — только body canvas.
-            # Шапку синхронизируем из фактического xview body без дополнительных clamp/"запасов".
             self._end_edit(commit=True)
             try:
                 self.canvas.xview(*args)
             except Exception:
                 return
-
-            def _sync_header_from_body():
-                try:
-                    self.hcanvas.configure(width=self.canvas.winfo_width())
-                except Exception:
-                    pass
-                try:
-                    frac = float(self.canvas.xview()[0])
-                except Exception:
-                    frac = 0.0
-                try:
-                    self.hcanvas.xview_moveto(frac)
-                except Exception:
-                    pass
-
-            # Важно: на крайнем правом положении Tk иногда стабилизирует xview только к idle.
-            # Поэтому делаем дотягивание шапки после применения скролла в body.
-            try:
-                self.after_idle(_sync_header_from_body)
-            except Exception:
-                _sync_header_from_body()
+            # Сначала синхронизируем сразу, затем ещё раз после idle,
+            # чтобы устранить крайний правый дрейф из-за финального clamp в Tk.
+            self._sync_header_x_from_body(defer=False)
+            self._sync_header_x_from_body(defer=True)
 
         def _on_xscroll_command(first, last):
             # first/last: доли [0..1] видимой области
@@ -1512,27 +1537,9 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
 
-            # Источник истины для X — body canvas. Шапку только догоняем до фактического xview body.
-            if getattr(self, "_xsync_lock", False):
-                return
-            self._xsync_lock = True
-            try:
-                try:
-                    c0 = float(self.canvas.xview()[0])
-                except Exception:
-                    c0 = float(first)
-                try:
-                    h0 = float(self.hcanvas.xview()[0])
-                except Exception:
-                    h0 = c0
-
-                if abs(h0 - c0) > 1e-4:
-                    try:
-                        self.hcanvas.xview_moveto(c0)
-                    except Exception:
-                        pass
-            finally:
-                self._xsync_lock = False
+            # Источник истины для X — body canvas. Шапку догоняем до фактического xview body.
+            self._sync_header_x_from_body(defer=False)
+            self._sync_header_x_from_body(defer=True)
 
         # назначаем xscrollcommand сразу, а сам hscroll свяжем позже, когда создадим в footer
         self.canvas.configure(xscrollcommand=_on_xscroll_command)
