@@ -36,7 +36,6 @@ class TestFlags:
     force_cells: set[tuple[int, str]]   # (row, 'qc'/'fs')
     user_cells: set[tuple[int, str]]    # manual edits (purple)
     algo_cells: set[tuple[int, str]]    # changed by algorithm (green)
-    force_tail_rows: set[int]           # suggested tail rows (blue)
 
 
 @dataclass

@@ -518,7 +518,6 @@ class GeoCanvasEditor(tk.Tk):
                     "force": sorted(list(getattr(fl, "force_cells", set()))),
                     "user": sorted(list(getattr(fl, "user_cells", set()))),
                     "algo": sorted(list(getattr(fl, "algo_cells", set()))),
-                    "tail": sorted(list(getattr(fl, "force_tail_rows", set()))),
                 }
         except Exception:
             flags_snap = {}
@@ -652,7 +651,7 @@ class GeoCanvasEditor(tk.Tk):
                 t.locked = False
             # создать флаги для восстановленного зондирования
             try:
-                self.flags[t.tid] = TestFlags(False, set(), set(), set(), set(), set())
+                self.flags[t.tid] = TestFlags(False, set(), set(), set(), set())
             except Exception:
                 pass
         fsnap = snap.get("flags", {}) or {}
@@ -669,7 +668,6 @@ class GeoCanvasEditor(tk.Tk):
                 fl.force_cells = set(tuple(x) for x in s.get("force", []))
                 fl.user_cells = set(tuple(x) for x in s.get("user", []))
                 fl.algo_cells = set(tuple(x) for x in s.get("algo", []))
-                fl.force_tail_rows = set(int(x) for x in s.get("tail", []))
             except Exception:
                 pass
 
@@ -1676,9 +1674,7 @@ class GeoCanvasEditor(tk.Tk):
         # ЛЕГЕНДА (строго по промту)
         _leg_item(leg, GUI_PURPLE, "исправлено")
         _leg_item(leg, GUI_YELLOW, "отсутствуют значения")
-        _leg_item(leg, GUI_BLUE, "отсутствует отказ")
         _leg_item(leg, GUI_GREEN, "откорректировано")
-        _leg_item(leg, GUI_ORANGE, "исправлено на 0")
         _leg_item(leg, GUI_RED, "некорректный опыт")
 
         self.status = ttk.Label(self, text="Готов.", padding=(12, 6))
@@ -2919,7 +2915,7 @@ class GeoCanvasEditor(tk.Tk):
 
                     self.tests.append(t)
 
-                    self.flags[t.tid] = TestFlags(False, set(), set(), set(), set(), set())
+                    self.flags[t.tid] = TestFlags(False, set(), set(), set(), set())
 
 
                 self._end_edit(commit=False)
@@ -3041,7 +3037,7 @@ class GeoCanvasEditor(tk.Tk):
                 except Exception:
                     pass
                 self.tests.append(t)
-                self.flags[t.tid] = TestFlags(False, set(), set(), set(), set(), set())
+                self.flags[t.tid] = TestFlags(False, set(), set(), set(), set())
 
             self._end_edit(commit=False)
             self._ensure_layers_defaults_for_all_tests()
@@ -3091,7 +3087,7 @@ class GeoCanvasEditor(tk.Tk):
 
                 self.tests.append(t)
 
-                self.flags[t.tid] = TestFlags(False, set(), set(), set(), set(), set())
+                self.flags[t.tid] = TestFlags(False, set(), set(), set(), set())
 
 
             self._end_edit(commit=False)
@@ -3113,7 +3109,6 @@ class GeoCanvasEditor(tk.Tk):
             "tests_total": 0,
             "tests_invalid": 0,
             "cells_interp": 0,
-            "cells_force": 0,
             "cells_missing": 0,
         }
         if not self.tests:
@@ -3124,22 +3119,18 @@ class GeoCanvasEditor(tk.Tk):
 
         for t in self.tests:
             tid = t.tid
-            prev = self.flags.get(tid) or TestFlags(False, set(), set(), set(), set(), set())
+            prev = self.flags.get(tid) or TestFlags(False, set(), set(), set(), set())
             user_cells = set(getattr(prev, "user_cells", set()) or set())
-            # сохраняем ранее подсвеченные (чтобы повторный скан не затирал)
             interp_cells = set(getattr(prev, "interp_cells", set()) or set())
             force_cells = set(getattr(prev, "force_cells", set()) or set())
-            force_tail_rows = set(getattr(prev, "force_tail_rows", set()) or set())
 
             if not bool(getattr(t, "export_on", True)):
-                # Отключённые опыты исключаем из статусов и убираем подсветку некорректности.
-                self.flags[tid] = TestFlags(False, interp_cells, force_cells, user_cells, set(), force_tail_rows)
+                self.flags[tid] = TestFlags(False, interp_cells, force_cells, user_cells, set())
                 continue
 
             qc = [(_parse_cell_int(v) or 0) for v in t.qc]
             fs = [(_parse_cell_int(v) or 0) for v in t.fs]
 
-            # Считаем отсутствующие значения (нули/пусто) для нижней строки, даже если опыт некорректный.
             try:
                 for i0 in range(min(len(qc), len(fs))):
                     if qc[i0] == 0 and (i0, "qc") not in user_cells:
@@ -3150,13 +3141,11 @@ class GeoCanvasEditor(tk.Tk):
                 pass
 
             invalid = (_max_zero_run(qc) > 5) or (_max_zero_run(fs) > 5)
-
             if invalid:
-                self.flags[tid] = TestFlags(True, interp_cells, force_cells, user_cells, set(), set())
+                self.flags[tid] = TestFlags(True, interp_cells, force_cells, user_cells, set())
                 summary["tests_invalid"] += 1
                 continue
 
-            # отметим короткие серии нулей (<=5) как кандидаты на интерполяцию
             def mark_short_zero_runs(arr, kind):
                 n = len(arr)
                 i = 0
@@ -3171,48 +3160,19 @@ class GeoCanvasEditor(tk.Tk):
                     if 1 <= gap <= 5:
                         for k in range(gap):
                             cell = (i + k, kind)
-                            # не перетираем ручные
-                            if cell not in user_cells:
-                                if cell not in interp_cells:
-                                    interp_cells.add(cell)
-                                    summary["cells_interp"] += 1
+                            if cell not in user_cells and cell not in interp_cells:
+                                interp_cells.add(cell)
+                                summary["cells_interp"] += 1
                     i = j
 
             mark_short_zero_runs(qc, "qc")
             mark_short_zero_runs(fs, "fs")
 
-            # кандидаты на "дописать хвост": подсветить СИНЕЙ строкой ниже последней глубины
-            # правило: если ни один столбец (qc и fs) не достиг 250
-            try:
-                qc_max = max(qc) if qc else 0
-                fs_max = max(fs) if fs else 0
-                # Подсветка СИНИМ (без конфликтов со скрытием строк):
-                # если ОБА параметра (qc и fs) не дошли до 250, подсвечиваем ПОСЛЕДНИЕ 2 ЯЧЕЙКИ (qc+fs)
-                # последней существующей строки опыта.
-                if qc and fs and (qc_max < 250 and fs_max < 250):
-                    last_row = max(0, len(t.depth) - 1)
-                    # force_cells подсвечивает конкретные ячейки (row, 'qc'/'fs')
-                    if (last_row, "qc") not in user_cells:
-                        force_cells.add((last_row, "qc"))
-                    if (last_row, "fs") not in user_cells:
-                        force_cells.add((last_row, "fs"))
-                    # cells_force считаем как "опытов без отказа" (1 раз на опыт)
-                    summary["cells_force"] += 1
-                    force_tail_rows = set(getattr(prev, "force_tail_rows", set()) or set())
-                else:
-                    force_tail_rows = set(getattr(prev, "force_tail_rows", set()) or set())
-            except Exception:
-                force_tail_rows = set(getattr(prev, "force_tail_rows", set()) or set())
-
-
-            # сохраняем зелёную подсветку откорректированных ячеек и хвостовые строки (Undo/Redo + скан)
             prev_algo_cells = set(getattr(prev, 'algo_cells', set()) or set())
-            prev_force_tail_rows = set(getattr(prev, 'force_tail_rows', set()) or set())
-            self.flags[tid] = TestFlags(False, interp_cells, force_cells, user_cells, prev_algo_cells, force_tail_rows or prev_force_tail_rows)
+            self.flags[tid] = TestFlags(False, interp_cells, force_cells, user_cells, prev_algo_cells)
 
         self._redraw()
         return summary
-
 
     def _set_footer_from_scan(self):
         """Поставить НИЖНЮЮ строку (footer_cmd) по текущей автопроверке.
@@ -3225,16 +3185,11 @@ class GeoCanvasEditor(tk.Tk):
         try:
             inv = int(info.get("tests_invalid", 0) or 0)
             miss = int(info.get("cells_missing", 0) or 0)
-            no_ref = int(info.get("cells_force", 0) or 0)
-
             parts = []
             if inv:
                 parts.append(f"Некорректный опыт {inv}")
             if miss:
                 parts.append(f"отсутствуют значения {miss}")
-            if no_ref:
-                parts.append(f"отсутствует отказ {no_ref}")
-
             msg = ", ".join(parts)
             # Сначала цвет, потом текст — так надёжнее для ttk
             try:
@@ -3250,17 +3205,14 @@ class GeoCanvasEditor(tk.Tk):
         Правила:
           - 'Некорректный опыт X' — количество опытов с invalid=True (или по критерию >5 нулей подряд).
           - 'отсутствуют значения Y' — количество нулевых ячеек qc/fs ТОЛЬКО по корректным опытам.
-          - 'отсутствует отказ Z' — количество корректных опытов, где qc_max<250 И fs_max<250.
         """
         try:
             tests = list(getattr(self, "tests", []) or [])
             if not tests:
-                return {"inv": 0, "miss": 0, "no_ref": 0}
+                return {"inv": 0, "miss": 0}
 
             inv = 0
             miss = 0
-            no_ref = 0
-
             for t in tests:
                 tid = getattr(t, "tid", None)
                 # Если опыт отключён галочкой (не экспортировать) — исключаем его из пересчёта.
@@ -3282,7 +3234,7 @@ class GeoCanvasEditor(tk.Tk):
 
                 if invalid:
                     inv += 1
-                    continue  # нули некорректного опыта не считаем в 'отсутствуют значения' и 'отсутствует отказ'
+                    continue  # нули некорректного опыта не считаем в 'отсутствуют значения'
 
                 # missing zeros (only valid tests)
                 user_cells = set(getattr(fl, "user_cells", set()) or set()) if fl is not None else set()
@@ -3293,17 +3245,9 @@ class GeoCanvasEditor(tk.Tk):
                     if fs[i0] == 0 and (i0, "fs") not in user_cells:
                         miss += 1
 
-                try:
-                    qc_max = max(qc) if qc else 0
-                    fs_max = max(fs) if fs else 0
-                    if qc and fs and (qc_max < 250 and fs_max < 250):
-                        no_ref += 1
-                except Exception:
-                    pass
-
-            return {"inv": inv, "miss": miss, "no_ref": no_ref}
+            return {"inv": inv, "miss": miss}
         except Exception:
-            return {"inv": 0, "miss": 0, "no_ref": 0}
+            return {"inv": 0, "miss": 0}
 
     def _update_footer_realtime(self):
         """Обновить нижнюю строку (красная/серая) по текущему состоянию."""
@@ -3311,16 +3255,11 @@ class GeoCanvasEditor(tk.Tk):
             res = self._compute_footer_realtime()
             inv = int(res.get("inv", 0) or 0)
             miss = int(res.get("miss", 0) or 0)
-            no_ref = int(res.get("no_ref", 0) or 0)
-
             parts = []
             if inv:
                 parts.append(f"Некорректный опыт {inv}")
             if miss:
                 parts.append(f"отсутствуют значения {miss}")
-            if no_ref:
-                parts.append(f"отсутствует отказ {no_ref}")
-
             msg = ", ".join(parts)
             # Если всё ОК (включая учёт отключённых опытов) — показываем синюю надпись
             if not msg:
@@ -3359,7 +3298,7 @@ class GeoCanvasEditor(tk.Tk):
         """
         try:
             info = self._scan_by_algorithm()
-            bad = (info.get("tests_invalid", 0) + info.get("cells_interp", 0) + info.get("cells_force", 0))
+            bad = (info.get("tests_invalid", 0) + info.get("cells_interp", 0) + info.get("cells_missing", 0))
             if bad <= 0:
                 self._algo_preview_mode = False
                 self._redraw()
@@ -3371,19 +3310,13 @@ class GeoCanvasEditor(tk.Tk):
             self._redraw()
 
             # Сформировать нижнюю строку по заданному формату:
-            # 'Некорректный опыт 1, отсутствуют значения 14, отсутствует отказ 2'
             inv = int(info.get("tests_invalid", 0) or 0)
             miss = int(info.get("cells_missing", 0) or 0)
-            no_ref = int(info.get("cells_force", 0) or 0)
-
             parts = []
             if inv:
                 parts.append(f"Некорректный опыт {inv}")
             if miss:
                 parts.append(f"отсутствуют значения {miss}")
-            if no_ref:
-                parts.append(f"отсутствует отказ {no_ref}")
-
             msg = ", ".join(parts)
             self.footer_cmd.config(text=msg)
             try:
@@ -3673,7 +3606,7 @@ class GeoCanvasEditor(tk.Tk):
                 break
 
         self.tests.insert(insert_at, new_test)
-        self.flags[tid] = TestFlags(False, set(), set(), set(), set(), set())
+        self.flags[tid] = TestFlags(False, set(), set(), set(), set())
 
         self._end_edit(commit=False)
         self._active_test_idx = insert_at
@@ -3719,7 +3652,7 @@ class GeoCanvasEditor(tk.Tk):
         resample_cells: list[dict] = []
 
         for t in self.tests:
-            old_flags = self.flags.get(t.tid) or TestFlags(False, set(), set(), set(), set(), set())
+            old_flags = self.flags.get(t.tid) or TestFlags(False, set(), set(), set(), set())
 
             n = min(len(t.depth), len(t.qc), len(t.fs))
             if n < 2:
@@ -3774,8 +3707,6 @@ class GeoCanvasEditor(tk.Tk):
             new_force: set[tuple[int,str]] = set()
             new_user: set[tuple[int,str]] = set()
             new_algo: set[tuple[int,str]] = set()
-            new_tail: set[int] = set()
-
             for (r, fld) in (old_flags.interp_cells or set()):
                 if r in map_old_to_new:
                     new_interp.add((map_old_to_new[r], fld))
@@ -3788,10 +3719,6 @@ class GeoCanvasEditor(tk.Tk):
             for (r, fld) in (old_flags.algo_cells or set()):
                 if r in map_old_to_new:
                     new_algo.add((map_old_to_new[r], fld))
-            for r in (old_flags.force_tail_rows or set()):
-                if r in map_old_to_new:
-                    new_tail.add(map_old_to_new[r])
-
             # новые созданные строки (вставки при 10→5) помечаем как откорректированные (зелёным)
             for rr in created_rows:
                 new_algo.add((rr, "qc"))
@@ -3809,7 +3736,7 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 invalid_now = bool(old_flags.invalid)
 
-            self.flags[t.tid] = TestFlags(bool(invalid_now), new_interp, new_force, new_user, new_algo, new_tail)
+            self.flags[t.tid] = TestFlags(bool(invalid_now), new_interp, new_force, new_user, new_algo)
 
         # после конвертации считаем шаг 5 см
         try:
@@ -5749,7 +5676,7 @@ class GeoCanvasEditor(tk.Tk):
         #       Шаблон хранится в self._geo_template_blocks_info_full (неизменяемый).
         pass
         # rebuild flags
-        self.flags = {tt.tid: self.flags.get(tt.tid, TestFlags(False, set(), set(), set(), set(), set())) for tt in self.tests}
+        self.flags = {tt.tid: self.flags.get(tt.tid, TestFlags(False, set(), set(), set(), set())) for tt in self.tests}
         if self._active_test_idx is not None and self._active_test_idx >= len(self.tests):
             self._active_test_idx = (len(self.tests) - 1) if self.tests else None
         self._redraw()
@@ -5821,12 +5748,12 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
         # copy flags (deep copy sets) so visual edits/удаления сохраняются в копии
-        fl = self.flags.get(getattr(src, "tid", None), TestFlags(False, set(), set(), set(), set(), set()))
+        fl = self.flags.get(getattr(src, "tid", None), TestFlags(False, set(), set(), set(), set()))
         try:
-            self.flags[new_id] = TestFlags(bool(getattr(fl, 'invalid', False)), set(getattr(fl, 'interp_cells', set()) or set()), set(getattr(fl, 'force_cells', set()) or set()), set(getattr(fl, 'user_cells', set()) or set()), set(getattr(fl, 'algo_cells', set()) or set()), set(getattr(fl, 'force_tail_rows', set()) or set()))
+            self.flags[new_id] = TestFlags(bool(getattr(fl, 'invalid', False)), set(getattr(fl, 'interp_cells', set()) or set()), set(getattr(fl, 'force_cells', set()) or set()), set(getattr(fl, 'user_cells', set()) or set()), set(getattr(fl, 'algo_cells', set()) or set()))
         except Exception:
             try:
-                self.flags[new_id] = TestFlags(False, set(), set(), set(), set(), set())
+                self.flags[new_id] = TestFlags(False, set(), set(), set(), set())
             except Exception:
                 pass
 
@@ -6048,7 +5975,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.hcanvas.create_text(x0 + self.w_depth + self.w_val*2 + self.w_val/2, sh_y, text="U", font=("Segoe UI", 9), fill=hdr_text)
 
             # --- ТАБЛИЦА (canvas) ---
-            fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set(), set()))
+            fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
             mp = self._grid_row_maps.get(ti, {})
             start_r = self._grid_start_rows.get(ti, 0)
             units = getattr(self, "_grid_units", []) or []
@@ -6144,10 +6071,6 @@ class GeoCanvasEditor(tk.Tk):
                     # Некорректный опыт перекрывает остальные статусы/marks.
                     if fl.invalid and has_row:
                         return GUI_RED
-                    # Сначала — специальные подсветки, которые могут относиться к "пустым" строкам (хвост).
-                    if data_i in getattr(fl, 'force_tail_rows', set()) and kind in ('depth','qc','fs','incl'):
-                        return (GUI_BLUE_P if getattr(self, '_algo_preview_mode', False) else GUI_BLUE)
-
                     # Далее — обычная логика по существующим/пустым строкам
                     if is_meter_row:
                         return "#f3f6fb"
@@ -6829,7 +6752,7 @@ class GeoCanvasEditor(tk.Tk):
             if old_tid in self.flags:
                 self.flags[new_tid] = self.flags.pop(old_tid)
             else:
-                self.flags[new_tid] = TestFlags(False, set(), set(), set(), set(), set())
+                self.flags[new_tid] = TestFlags(False, set(), set(), set(), set())
 
             self._redraw()
             win.destroy()
@@ -7088,7 +7011,7 @@ class GeoCanvasEditor(tk.Tk):
             t = self.tests[ti]
             if row < len(t.qc):
                 # keep previous coloring info, but mark this cell as manually edited (purple)
-                fl = self.flags.get(t.tid) or TestFlags(False, set(), set(), set(), set(), set())
+                fl = self.flags.get(t.tid) or TestFlags(False, set(), set(), set(), set())
                 old = t.qc[row] if field == 'qc' else t.fs[row]
                 newv = _sanitize_int_0_300(val)
                 # Undo: фиксируем снимок ДО изменения данных/раскраски
@@ -7107,7 +7030,7 @@ class GeoCanvasEditor(tk.Tk):
                 if newv.strip() == "":
                     if row == 0 or row == last_filled_before:
                         # удалить строку данных и глубину
-                        fl = self.flags.get(t.tid) or TestFlags(False, set(), set(), set(), set(), set())
+                        fl = self.flags.get(t.tid) or TestFlags(False, set(), set(), set(), set())
                         self._delete_data_row_in_test(t, fl, row)
                         self.flags[t.tid] = fl
                         self._redraw()
@@ -7230,7 +7153,7 @@ class GeoCanvasEditor(tk.Tk):
         t.fs.append("")
         # не сбрасываем подсветку при добавлении строки; только гарантируем наличие флагов
         if t.tid not in self.flags:
-            self.flags[t.tid] = TestFlags(False, set(), set(), set(), set(), set())
+            self.flags[t.tid] = TestFlags(False, set(), set(), set(), set())
         self._redraw()
         self.schedule_graph_redraw()
 
@@ -7366,25 +7289,15 @@ class GeoCanvasEditor(tk.Tk):
 
 
     # ---------------- fix algorithm (from v2.3.1) ----------------
-    def _choose_tail_k(self, last_val: int) -> int:
-        d = abs(250 - last_val)
-        if d <= 10:
-            return 1
-        if d <= 35:
-            return 2
-        return 3
-
     def fix_by_algorithm(self):
         if not self.tests:
             return
 
         self._push_undo()
         random.seed(42)
-        tail_fill_cells: list[dict] = []
-
         for t in self.tests:
             tid = t.tid
-            prev_flags = self.flags.get(tid) or TestFlags(False, set(), set(), set(), set(), set())
+            prev_flags = self.flags.get(tid) or TestFlags(False, set(), set(), set(), set())
             _prev_user_cells = set(getattr(prev_flags, 'user_cells', set()) or set())
             # Снимок значений до автокорректировки (для зелёной подсветки)
             _orig_qc = list(getattr(t, 'qc', []) or [])
@@ -7394,7 +7307,7 @@ class GeoCanvasEditor(tk.Tk):
             n = len(t.qc)
             if n == 0:
                 # сохраняем пользовательские правки (на случай пустого зондирования)
-                self.flags[tid] = TestFlags(False, set(), set(), _prev_user_cells, algo_cells, set())
+                self.flags[tid] = TestFlags(False, set(), set(), _prev_user_cells, algo_cells)
                 continue
 
             qc = [(_parse_cell_int(v) or 0) for v in t.qc]
@@ -7405,7 +7318,7 @@ class GeoCanvasEditor(tk.Tk):
             force_cells: set[tuple[int, str]] = set(getattr(prev_flags, 'force_cells', set()) or set())
 
             if invalid:
-                self.flags[tid] = TestFlags(True, interp_cells, force_cells, _prev_user_cells, algo_cells, set())
+                self.flags[tid] = TestFlags(True, interp_cells, force_cells, _prev_user_cells, algo_cells)
                 continue
 
             def interp_in_place(arr: list[int], kind: str):
@@ -7464,71 +7377,6 @@ class GeoCanvasEditor(tk.Tk):
                         arr[i] = 1
                     interp_cells.add((i, kind))
 
-            # --- finish to 250 (choose closer) ---
-            # Важно: если в опыте уже был «отказ» (значения доходили/превышали 250),
-            # НИЧЕГО не дописываем вниз. Исправляем только нули/пробелы.
-            refusal = False
-            try:
-                mx = max((qc + fs) or [0])
-                refusal = (mx >= 250)
-            except Exception:
-                refusal = False
-
-            if not refusal:
-                # добавляем 1–3 строки ниже, не перетирая хвост
-                last_filled = -1
-                for rr in range(n - 1, -1, -1):
-                    if qc[rr] != 0 or fs[rr] != 0:
-                        last_filled = rr
-                        break
-                if last_filled < 0:
-                    last_filled = n - 1
-
-                target_kind = "qc" if abs(250 - qc[last_filled]) <= abs(250 - fs[last_filled]) else "fs"
-                main_arr = qc if target_kind == "qc" else fs
-                other_arr = fs if target_kind == "qc" else qc
-
-                last_main = max(1, main_arr[last_filled])
-                last_other = max(1, other_arr[last_filled])
-
-                add_cnt = max(1, min(3, self._choose_tail_k(last_main)))
-
-                step = self.step_m if self.step_m is not None else 0.05
-                last_depth = None
-                if t.depth and last_filled < len(t.depth):
-                    last_depth = _parse_depth_float(t.depth[last_filled])
-                if last_depth is None:
-                    base = self.depth_start if self.depth_start is not None else 0.0
-                    last_depth = base + step * last_filled
-
-                for k_i in range(1, add_cnt + 1):
-                    tt = k_i / add_cnt
-                    new_main = _interp_with_noise(last_main, 250, tt)
-                    new_main = max(last_main, min(250, new_main))
-                    if k_i == add_cnt:
-                        new_main = 250
-
-                    # второй показатель тоже слегка растёт (примерно 15–25% от прироста main)
-                    inc_main = max(0, new_main - last_main)
-                    inc_other = max(1, int(round(inc_main * 0.22))) if inc_main > 0 else 1
-                    new_other = min(250, max(last_other, _noise_around(last_other + inc_other)))
-
-                    # добавляем строку
-                    qc.append(0); fs.append(0)
-                    t.qc.append(""); t.fs.append(""); t.depth.append("")
-                    n += 1
-
-                    if target_kind == "qc":
-                        qc[-1] = int(new_main); fs[-1] = int(new_other)
-                        force_cells.add((n - 1, "qc")); force_cells.add((n - 1, "fs"))
-                    else:
-                        fs[-1] = int(new_main); qc[-1] = int(new_other)
-                        force_cells.add((n - 1, "fs")); force_cells.add((n - 1, "qc"))
-
-                    dd = last_depth + step * k_i
-                    t.depth[-1] = f"{dd:.2f}"
-                    tail_fill_cells.append({"testId": int(getattr(t, "tid", 0) or 0), "depthM": round(float(dd), 3), "field": "qc", "before": "", "after": str(int(qc[-1]))})
-                    tail_fill_cells.append({"testId": int(getattr(t, "tid", 0) or 0), "depthM": round(float(dd), 3), "field": "fs", "before": "", "after": str(int(fs[-1]))})
 # write back with markers (for user visibility)
             for i in range(n):
                 qv = int(max(1, round(qc[i])))
@@ -7550,7 +7398,7 @@ class GeoCanvasEditor(tk.Tk):
                         algo_cells.add((i2, "qc"))
                     if (i2, "fs") not in _prev_user_cells and new_f != old_f:
                         algo_cells.add((i2, "fs"))
-                # если хвост добавлен — помечаем его целиком (qc/fs)
+                # если алгоритм добавил новые строки — помечаем их целиком (qc/fs)
                 if len(t.qc) > len(_orig_qc):
                     for i2 in range(len(_orig_qc), len(t.qc)):
                         if (i2, "qc") not in _prev_user_cells:
@@ -7560,7 +7408,7 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
 
-            self.flags[tid] = TestFlags(False, interp_cells, force_cells, _prev_user_cells, algo_cells, set())
+            self.flags[tid] = TestFlags(False, interp_cells, force_cells, _prev_user_cells, algo_cells)
 
         try:
             changes = []
@@ -7570,9 +7418,7 @@ class GeoCanvasEditor(tk.Tk):
                     changes.append({"testId": int(getattr(t, "tid", 0) or 0), "row": int(row), "field": fld, "depthM": self._safe_depth_m(t, row), "mark": {"reason": "algo_fix", "color": "green"}})
             if changes:
                 self.project_ops.append(op_algo_fix_applied(changes=changes))
-            if tail_fill_cells:
-                self.project_ops.append(op_cells_marked(reason="tail_fill", color="blue", cells=tail_fill_cells))
-            if changes or tail_fill_cells:
+            if changes:
                 self._rebuild_marks_index()
         except Exception:
             pass
@@ -7644,7 +7490,7 @@ class GeoCanvasEditor(tk.Tk):
         selected_ids = {id(t) for t in selected}
         for t in self.tests:
             tid = t.tid
-            fl = self.flags.get(tid) or TestFlags(False, set(), set(), set(), set(), set())
+            fl = self.flags.get(tid) or TestFlags(False, set(), set(), set(), set())
             if id(t) not in selected_ids:
                 self.flags[tid] = fl
                 continue
@@ -8303,7 +8149,6 @@ class GeoCanvasEditor(tk.Tk):
             status_now = self._compute_footer_realtime()
         except Exception:
             status_now = {}
-        no_ref = int(status_now.get("no_ref", 0) or 0)
         miss = int(status_now.get("miss", 0) or 0)
         invalid = int(status_now.get("inv", 0) or 0)
         return (
@@ -8312,7 +8157,7 @@ class GeoCanvasEditor(tk.Tk):
             f"marks_purple={self._marks_color_counts.get('purple', 0)}, "
             f"marks_blue={self._marks_color_counts.get('blue', 0)}, "
             f"marks_orange={self._marks_color_counts.get('orange', 0)}, "
-            f"подсвечено_marks={self._marks_applied_count}, статус_синий={no_ref}, "
+            f"подсвечено_marks={self._marks_applied_count}, "
             f"статус_жёлтый={miss}, некорректных_опытов={invalid}"
         )
 
@@ -8513,7 +8358,7 @@ class GeoCanvasEditor(tk.Tk):
             incl_data = ["0"] * n
 
         self.tests.append(TestData(tid=1, dt=dt_text, depth=depth_vals, qc=qc, fs=fs, incl=incl_data, orig_id=None, block=None))
-        self.flags[1] = TestFlags(False, set(), set(), set(), set(), set())
+        self.flags[1] = TestFlags(False, set(), set(), set(), set())
 
         try:
             self.file_var.set("(шаблон проекта)")
