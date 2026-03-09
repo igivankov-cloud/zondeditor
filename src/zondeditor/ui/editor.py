@@ -28,7 +28,11 @@ from pathlib import Path
 
 # project modules already extracted:
 from src.zondeditor.processing.fixes import fix_tests_by_algorithm
-from src.zondeditor.processing.calibration import calc_qc_fs, calc_qc_fs_from_del
+from src.zondeditor.processing.diagnostics import evaluate_diagnostics, ProtocolEntry
+from src.zondeditor.processing.calibration import (
+    calc_qc_fs_from_del,
+    calibration_from_common_params,
+)
 try:
     from src.zondeditor.export.excel_export import export_excel as export_excel_file
 except Exception:
@@ -527,10 +531,14 @@ class GeoCanvasEditor(tk.Tk):
             "tests": tests_snap,
             "flags": flags_snap,
             "step_m": float(getattr(self, "step_m", 0.05) or 0.05),
+            "depth_start": float(getattr(self, "depth_start", 0.0) or 0.0),
+            "geo_kind": str(getattr(self, "geo_kind", "K2") or "K2"),
+            "common_params": dict(getattr(self, "_common_params", self._default_common_params(getattr(self, "geo_kind", "K2"))) or {}),
             "depth0_by_tid": dict(getattr(self, "depth0_by_tid", {}) or {}),
             "step_by_tid": dict(getattr(self, "step_by_tid", {}) or {}),
             "gwl_by_tid": copy.deepcopy(dict(getattr(self, "gwl_by_tid", {}) or {})),
             "compact_1m": bool(getattr(self, "compact_1m", False)),
+            "show_graphs": bool(getattr(self, "show_graphs", False)),
             "show_geology_column": bool(getattr(self, "show_geology_column", True)),
             "display_sort_mode": str(getattr(self, "display_sort_mode", "date") or "date"),
             "expanded_meters": sorted(int(x) for x in (getattr(self, "expanded_meters", set()) or set())),
@@ -549,6 +557,20 @@ class GeoCanvasEditor(tk.Tk):
             self.step_m = float(snap.get("step_m", getattr(self, "step_m", 0.05) or 0.05) or 0.05)
         except Exception:
             pass
+        try:
+            self.depth_start = float(snap.get("depth_start", getattr(self, "depth_start", 0.0) or 0.0) or 0.0)
+        except Exception:
+            pass
+        try:
+            self.geo_kind = str(snap.get("geo_kind", getattr(self, "geo_kind", "K2")) or "K2").upper()
+        except Exception:
+            self.geo_kind = str(getattr(self, "geo_kind", "K2") or "K2").upper()
+        if self.geo_kind not in ("K2", "K4"):
+            self.geo_kind = "K2"
+        try:
+            self._set_common_params(dict(snap.get("common_params") or {}), self.geo_kind)
+        except Exception:
+            self._set_common_params({}, self.geo_kind)
 
         # restore per-test start depths (tid -> h0)
         try:
@@ -568,6 +590,10 @@ class GeoCanvasEditor(tk.Tk):
             self.compact_1m = bool(snap.get("compact_1m", getattr(self, "compact_1m", False)))
         except Exception:
             self.compact_1m = bool(getattr(self, "compact_1m", False))
+        try:
+            self.show_graphs = bool(snap.get("show_graphs", getattr(self, "show_graphs", False)))
+        except Exception:
+            self.show_graphs = bool(getattr(self, "show_graphs", False))
         try:
             self.show_geology_column = bool(snap.get("show_geology_column", getattr(self, "show_geology_column", True)))
         except Exception:
@@ -592,8 +618,10 @@ class GeoCanvasEditor(tk.Tk):
         try:
             if getattr(self, "ribbon_view", None):
                 self.ribbon_view.set_compact_1m(bool(self.compact_1m))
+                self.ribbon_view.set_show_graphs(bool(self.show_graphs))
                 self.ribbon_view.set_show_geology_column(bool(self.show_geology_column))
                 self.ribbon_view.set_display_sort_mode(str(self.display_sort_mode))
+                self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
                 self.ribbon_view.set_layer_edit_mode(True)
         except Exception:
             pass
@@ -2166,37 +2194,24 @@ class GeoCanvasEditor(tk.Tk):
         if upd:
             self._set_common_params(upd, getattr(self, "geo_kind", "K2"))
 
+    def _current_calibration(self):
+        return calibration_from_common_params(
+            self._current_common_params(),
+            geo_kind=str(getattr(self, "geo_kind", "K2") or "K2"),
+        )
+
     def _calc_qc_fs_from_del(self, qc_del: int, fs_del: int) -> tuple[float, float]:
-        """Пересчёт делений в qc (МПа) и fs (кПа) как в GeoExplorer.
-        Использует: шкала (дел.), Fконуса (кН), Fмуфты (кН).
-        Приняты площади: конус 10 см², муфта 350 см² (типовая для GeoExplorer).
-        """
-        def _f(x: str, default: float) -> float:
-            try:
-                s = (x or '').strip().replace(',', '.')
-                return float(s) if s else default
-            except Exception:
-                return default
-
-        cp = self._current_common_params()
-        scale_div = int(round(_f(str(cp.get('controller_scale_div', '250')), 250.0)))
-        if scale_div <= 0:
-            scale_div = 250
-        fcone_kn = _f(str(cp.get('cone_kn', '30')), 30.0)
-        fsleeve_kn = _f(str(cp.get('sleeve_kn', '10')), 10.0)
-
-        CONE_AREA_CM2 = _f(str(cp.get('cone_area_cm2', '10')), 10.0)
-        if CONE_AREA_CM2 <= 0:
-            CONE_AREA_CM2 = 10.0
-        SLEEVE_AREA_CM2 = _f(str(cp.get('sleeve_area_cm2', '350')), 350.0)
-        if SLEEVE_AREA_CM2 <= 0:
-            SLEEVE_AREA_CM2 = 350.0
-
-        # qc: (del/scale)*F(kN) / A(cm2) * 10 -> MPa  (1 kN/cm2 = 10 MPa)
-        qc_mpa = (qc_del / scale_div) * fcone_kn * (10.0 / CONE_AREA_CM2)
-        # fs: (del/scale)*F(kN) / A(cm2) * 10000 -> kPa (1 kN/cm2 = 10000 kPa)
-        fs_kpa = (fs_del / scale_div) * fsleeve_kn * (10000.0 / SLEEVE_AREA_CM2)
-        return qc_mpa, fs_kpa
+        """Пересчёт делений в qc/fs через единый контур processing.calibration."""
+        cal = self._current_calibration()
+        return calc_qc_fs_from_del(
+            qc_del,
+            fs_del,
+            scale_div=cal.scale_div,
+            fcone_kn=cal.fcone_kn,
+            fsleeve_kn=cal.fsleeve_kn,
+            cone_area_cm2=cal.cone_area_cm2,
+            sleeve_area_cm2=cal.sleeve_area_cm2,
+        )
 
     def _prompt_missing_geo_params(self, *, need_depth: bool, need_step: bool) -> bool:
         """Спросить у пользователя недостающие параметры для GEO: h0 (0..4 м) и/или шаг (5/10 см)."""
@@ -3165,6 +3180,14 @@ class GeoCanvasEditor(tk.Tk):
             self.flags[tid] = TestFlags(False, interp_cells, force_cells, user_cells, prev_algo_cells)
 
         self._redraw()
+        try:
+            report = self._diagnostics_report()
+            summary["tests_total"] = int(report.tests_total)
+            summary["tests_invalid"] = int(report.tests_invalid)
+            summary["cells_missing"] = int(report.cells_missing)
+            summary["cells_interp"] = int(report.cells_interp)
+        except Exception:
+            pass
         return summary
 
     def _set_footer_from_scan(self):
@@ -3172,87 +3195,33 @@ class GeoCanvasEditor(tk.Tk):
         Важно: всегда перезаписывает цвет (красный/серый), чтобы не оставалось синего после отката.
         """
         try:
-            info = self._scan_by_algorithm()
-        except Exception:
-            info = {}
-        try:
-            inv = int(info.get("tests_invalid", 0) or 0)
-            miss = int(info.get("cells_missing", 0) or 0)
-            parts = []
-            if inv:
-                parts.append(f"Некорректный опыт {inv}")
-            if miss:
-                parts.append(f"отсутствуют значения {miss}")
-            msg = ", ".join(parts)
-            try:
-                self.footer_cmd.config(foreground=("#8B0000" if msg else "#666666"))
-            except Exception:
-                pass
-            self.footer_cmd.config(text=msg)
-            try:
-                self.footer_cmd.config(cursor=("hand2" if msg else "arrow"))
-            except Exception:
-                pass
+            self._scan_by_algorithm()
+            self._update_footer_realtime()
         except Exception:
             pass
 
+    def _diagnostics_report(self):
+        return evaluate_diagnostics(
+            list(getattr(self, "tests", []) or []),
+            getattr(self, "flags", {}) or {},
+        )
+
+    @staticmethod
+    def _footer_text_from_report(report) -> str:
+        parts = []
+        if int(getattr(report, "tests_invalid", 0) or 0):
+            parts.append(f"Некорректный опыт {int(report.tests_invalid)}")
+        if int(getattr(report, "cells_missing", 0) or 0):
+            parts.append(f"отсутствуют значения {int(report.cells_missing)}")
+        return ", ".join(parts)
+
     def _compute_footer_realtime(self):
-        """Пересчитать нижнюю строку (в реальном времени) по ТЕКУЩИМ данным.
-        Правила:
-          - 'Некорректный опыт X' — количество опытов с invalid=True (или по критерию >5 нулей подряд).
-          - 'отсутствуют значения Y' — количество нулевых ячеек qc/fs ТОЛЬКО по корректным опытам.
-        """
+        """Пересчитать нижнюю строку (в реальном времени) из единого диагностического отчёта."""
         try:
-            tests = list(getattr(self, "tests", []) or [])
-            if not tests:
-                return {"inv": 0, "miss": 0}
-
-            inv = 0
-            miss = 0
-            for t in tests:
-                tid = getattr(t, "tid", None)
-                if not bool(getattr(t, "export_on", True)):
-                    continue
-                qc = [(_parse_cell_int(v) or 0) for v in (getattr(t, "qc", []) or [])]
-                fs = [(_parse_cell_int(v) or 0) for v in (getattr(t, "fs", []) or [])]
-
-                fl = (getattr(self, "flags", {}) or {}).get(tid)
-                invalid_flag = bool(getattr(fl, "invalid", False)) if fl is not None else False
-                try:
-                    invalid_calc = (_max_zero_run(qc) > 5) or (_max_zero_run(fs) > 5)
-                except Exception:
-                    invalid_calc = False
-                invalid = bool(invalid_flag or invalid_calc)
-
-                if invalid:
-                    inv += 1
-                    continue
-
-                user_cells = set(getattr(fl, "user_cells", set()) or set()) if fl is not None else set()
-                n = min(len(qc), len(fs))
-                for i0 in range(n):
-                    if qc[i0] == 0 and (i0, "qc") not in user_cells:
-                        miss += 1
-                    if fs[i0] == 0 and (i0, "fs") not in user_cells:
-                        miss += 1
-
-            return {"inv": inv, "miss": miss}
+            report = self._diagnostics_report()
+            return {"inv": int(report.tests_invalid), "miss": int(report.cells_missing)}
         except Exception:
             return {"inv": 0, "miss": 0}
-
-    def _test_has_missing_values(self, t: TestData, fl: TestFlags | None = None) -> bool:
-        try:
-            qc = [(_parse_cell_int(v) or 0) for v in (getattr(t, "qc", []) or [])]
-            fs = [(_parse_cell_int(v) or 0) for v in (getattr(t, "fs", []) or [])]
-            user_cells = set(getattr(fl, "user_cells", set()) or set()) if fl is not None else set()
-            for i0 in range(min(len(qc), len(fs))):
-                if qc[i0] == 0 and (i0, "qc") not in user_cells:
-                    return True
-                if fs[i0] == 0 and (i0, "fs") not in user_cells:
-                    return True
-            return False
-        except Exception:
-            return False
 
     def _header_fill_for_test(self, *, invalid: bool, has_missing: bool, export_on: bool) -> str:
         if invalid:
@@ -3263,8 +3232,7 @@ class GeoCanvasEditor(tk.Tk):
 
     def _collect_error_protocol_items(self) -> list[dict]:
         items: list[dict] = []
-        tests = list(getattr(self, "tests", []) or [])
-        flags = getattr(self, "flags", {}) or {}
+        tests_by_tid = {int(getattr(t, "tid", 0) or 0): t for t in (getattr(self, "tests", []) or [])}
 
         def _depth_text(t: Any, row: int) -> str:
             d = self._safe_depth_m(t, row)
@@ -3272,67 +3240,29 @@ class GeoCanvasEditor(tk.Tk):
                 return "-"
             return f"{float(d):.2f} м"
 
-        def _scan_runs(arr: list[int], *, min_len: int = 6) -> list[tuple[int, int]]:
-            runs: list[tuple[int, int]] = []
-            i = 0
-            n = len(arr)
-            while i < n:
-                if arr[i] != 0:
-                    i += 1
-                    continue
-                j = i
-                while j < n and arr[j] == 0:
-                    j += 1
-                if (j - i) >= min_len:
-                    runs.append((i, j - 1))
-                i = j
-            return runs
-
-        for t in tests:
-            tid = int(getattr(t, "tid", 0) or 0)
-            fl = flags.get(tid)
-            qc = [(_parse_cell_int(v) or 0) for v in (getattr(t, "qc", []) or [])]
-            fs = [(_parse_cell_int(v) or 0) for v in (getattr(t, "fs", []) or [])]
-            user_cells = set(getattr(fl, "user_cells", set()) or set()) if fl is not None else set()
-
-            zero_runs = _scan_runs(qc, min_len=6) + _scan_runs(fs, min_len=6)
-            if zero_runs:
-                r0 = min(rr[0] for rr in zero_runs)
-                r1 = max(rr[1] for rr in zero_runs)
-                d0 = _depth_text(t, r0)
-                d1 = _depth_text(t, r1)
-                items.append({
-                    "test_id": tid,
-                    "row": r0,
-                    "type": "invalid_zero_run",
-                    "text": f"Опыт {tid} — некорректный: нули более 5 раз подряд, интервал {d0}–{d1}",
-                })
+        report = self._diagnostics_report()
+        for entry in report.protocol_entries:
+            if not isinstance(entry, ProtocolEntry):
                 continue
-
-            for i0 in range(min(len(qc), len(fs))):
-                if qc[i0] == 0 and (i0, "qc") not in user_cells:
-                    items.append({
-                        "test_id": tid,
-                        "row": i0,
-                        "type": "missing_qc",
-                        "text": f"Опыт {tid}, глубина {_depth_text(t, i0)} — отсутствует значение qc",
-                    })
-                if fs[i0] == 0 and (i0, "fs") not in user_cells:
-                    items.append({
-                        "test_id": tid,
-                        "row": i0,
-                        "type": "missing_fs",
-                        "text": f"Опыт {tid}, глубина {_depth_text(t, i0)} — отсутствует значение fs",
-                    })
-
-            invalid_flag = bool(getattr(fl, "invalid", False)) if fl is not None else False
-            if invalid_flag:
-                items.append({
-                    "test_id": tid,
-                    "row": -1,
-                    "type": "invalid_other",
-                    "text": f"Опыт {tid} — опыт помечен как некорректный по дополнительной диагностике",
-                })
+            t = tests_by_tid.get(int(entry.test_id))
+            if t is None:
+                continue
+            if entry.type == "invalid_zero_run":
+                d0 = _depth_text(t, int(entry.row))
+                d1 = _depth_text(t, int(entry.row_end))
+                text = f"Опыт {entry.test_id} — некорректный: нули более 5 раз подряд, интервал {d0}–{d1}"
+            elif entry.type == "missing_qc":
+                text = f"Опыт {entry.test_id}, глубина {_depth_text(t, int(entry.row))} — отсутствует значение qc"
+            elif entry.type == "missing_fs":
+                text = f"Опыт {entry.test_id}, глубина {_depth_text(t, int(entry.row))} — отсутствует значение fs"
+            else:
+                text = f"Опыт {entry.test_id} — опыт помечен как некорректный по дополнительной диагностике"
+            items.append({
+                "test_id": int(entry.test_id),
+                "row": int(entry.row),
+                "type": str(entry.type),
+                "text": text,
+            })
 
         items.sort(key=lambda x: (int(x.get("test_id", 0) or 0), int(x.get("row", 0) or 0), str(x.get("type") or "")))
         return items
@@ -3365,15 +3295,8 @@ class GeoCanvasEditor(tk.Tk):
     def _update_footer_realtime(self):
         """Обновить нижнюю строку (красная/серая) по текущему состоянию."""
         try:
-            res = self._compute_footer_realtime()
-            inv = int(res.get("inv", 0) or 0)
-            miss = int(res.get("miss", 0) or 0)
-            parts = []
-            if inv:
-                parts.append(f"Некорректный опыт {inv}")
-            if miss:
-                parts.append(f"отсутствуют значения {miss}")
-            msg = ", ".join(parts)
+            report = self._diagnostics_report()
+            msg = self._footer_text_from_report(report)
             if not msg:
                 try:
                     self.footer_cmd.config(foreground="#0b5ed7")
@@ -3429,14 +3352,8 @@ class GeoCanvasEditor(tk.Tk):
             self._algo_preview_mode = True
             self._redraw()
 
-            inv = int(info.get("tests_invalid", 0) or 0)
-            miss = int(info.get("cells_missing", 0) or 0)
-            parts = []
-            if inv:
-                parts.append(f"Некорректный опыт {inv}")
-            if miss:
-                parts.append(f"отсутствуют значения {miss}")
-            msg = ", ".join(parts)
+            report = self._diagnostics_report()
+            msg = self._footer_text_from_report(report)
             self.footer_cmd.config(text=msg)
             try:
                 self.footer_cmd.config(cursor=("hand2" if msg else "arrow"))
@@ -4114,12 +4031,18 @@ class GeoCanvasEditor(tk.Tk):
         qc_max = None
         fs_max = None
         try:
-            cp = self._current_common_params()
-            scale_div = int(float(str(cp.get("controller_scale_div", "250") or "250").replace(",", ".")))
-            if scale_div > 0:
-                qc_full, fs_full = self._calc_qc_fs_from_del(scale_div, scale_div)
-                qc_max = float(qc_full) if float(qc_full) > 0 else None
-                fs_max = float(fs_full) if float(fs_full) > 0 else None
+            cal = self._current_calibration()
+            qc_full, fs_full = calc_qc_fs_from_del(
+                cal.scale_div,
+                cal.scale_div,
+                scale_div=cal.scale_div,
+                fcone_kn=cal.fcone_kn,
+                fsleeve_kn=cal.fsleeve_kn,
+                cone_area_cm2=cal.cone_area_cm2,
+                sleeve_area_cm2=cal.sleeve_area_cm2,
+            )
+            qc_max = float(qc_full) if float(qc_full) > 0 else None
+            fs_max = float(fs_full) if float(fs_full) > 0 else None
         except Exception:
             pass
 
@@ -6007,6 +5930,7 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
 
+        diagnostics = self._diagnostics_report()
         for col, ti in enumerate(self.display_cols):
             t = self.tests[ti]
             x0, y0, x1, y1 = self._header_bbox(col)
@@ -6014,15 +5938,10 @@ class GeoCanvasEditor(tk.Tk):
             # checked = will be exported
             ex_on = bool(getattr(t, "export_on", True))
             fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
-            has_missing_values = self._test_has_missing_values(t, fl)
-            try:
-                qc_hdr = [(_parse_cell_int(v) or 0) for v in (getattr(t, "qc", []) or [])]
-                fs_hdr = [(_parse_cell_int(v) or 0) for v in (getattr(t, "fs", []) or [])]
-                invalid_calc_hdr = (_max_zero_run(qc_hdr) > 5) or (_max_zero_run(fs_hdr) > 5)
-            except Exception:
-                invalid_calc_hdr = False
+            td = diagnostics.by_test.get(int(getattr(t, "tid", 0) or 0))
+            has_missing_values = bool(td and td.missing_rows)
             hdr_fill = self._header_fill_for_test(
-                invalid=bool(getattr(fl, "invalid", False)) or bool(invalid_calc_hdr),
+                invalid=bool(td.invalid) if td is not None else bool(getattr(fl, "invalid", False)),
                 has_missing=bool(has_missing_values),
                 export_on=bool(ex_on),
             )
@@ -7572,19 +7491,8 @@ class GeoCanvasEditor(tk.Tk):
 
     def _read_calc_params(self):
         try:
-            cp = self._current_common_params()
-            scale_div = int(float(str(cp.get("controller_scale_div", "250")).replace(",", ".")))
-            fmax_cone_kn = float(str(cp.get("cone_kn", "30")).replace(",", "."))
-            fmax_sleeve_kn = float(str(cp.get("sleeve_kn", "10")).replace(",", "."))
-            area_cone_cm2 = float(str(cp.get("cone_area_cm2", "10")).replace(",", "."))
-            area_sleeve_cm2 = float(str(cp.get("sleeve_area_cm2", "350")).replace(",", "."))
-            if scale_div <= 0:
-                raise ValueError("Шкала делений должна быть > 0")
-            if fmax_cone_kn <= 0 or fmax_sleeve_kn <= 0:
-                raise ValueError("Диапазоны калибровки должны быть > 0")
-            if area_cone_cm2 <= 0 or area_sleeve_cm2 <= 0:
-                raise ValueError("Площади должны быть > 0")
-            return scale_div, fmax_cone_kn, fmax_sleeve_kn, area_cone_cm2, area_sleeve_cm2
+            cal = self._current_calibration()
+            return cal.scale_div, cal.fcone_kn, cal.fsleeve_kn, cal.cone_area_cm2, cal.sleeve_area_cm2
         except Exception as e:
             messagebox.showerror("Ошибка", f"Некорректные параметры пересчёта: {e}")
             return None
@@ -7671,6 +7579,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.tests,
                 geo_kind=getattr(self, "geo_kind", "K2"),
                 out_path=Path(out),
+                cal=self._current_calibration(),
                 include_only_export_on=True,
             )
             messagebox.showinfo("Готово", f"Excel сохранён:\n{out}")
@@ -7880,8 +7789,6 @@ class GeoCanvasEditor(tk.Tk):
         if not params:
             return
         scale_div, fmax_cone_kn, fmax_sleeve_kn, area_cone_cm2, area_sleeve_cm2 = params
-        A_cone = _cm2_to_m2(area_cone_cm2)
-        A_sleeve = _cm2_to_m2(area_sleeve_cm2)
 
         out_zip = filedialog.asksaveasfilename(
             title="Куда сохранить ZIP для CREDO",
@@ -7933,12 +7840,26 @@ class GeoCanvasEditor(tk.Tk):
 
                     qc_MPa = None
                     fs_kPa = None
-                    if qc_del is not None and A_cone:
-                        F_cone_N = (qc_del / scale_div) * (fmax_cone_kn * 1000.0)
-                        qc_MPa = (F_cone_N / A_cone) / 1e6
-                    if fs_del is not None and A_sleeve:
-                        F_sleeve_N = (fs_del / scale_div) * (fmax_sleeve_kn * 1000.0)
-                        fs_kPa = (F_sleeve_N / A_sleeve) / 1e3
+                    if qc_del is not None:
+                        qc_MPa, _ = calc_qc_fs_from_del(
+                            int(qc_del),
+                            0,
+                            scale_div=scale_div,
+                            fcone_kn=fmax_cone_kn,
+                            fsleeve_kn=fmax_sleeve_kn,
+                            cone_area_cm2=area_cone_cm2,
+                            sleeve_area_cm2=area_sleeve_cm2,
+                        )
+                    if fs_del is not None:
+                        _, fs_kPa = calc_qc_fs_from_del(
+                            0,
+                            int(fs_del),
+                            scale_div=scale_div,
+                            fcone_kn=fmax_cone_kn,
+                            fsleeve_kn=fmax_sleeve_kn,
+                            cone_area_cm2=area_cone_cm2,
+                            sleeve_area_cm2=area_sleeve_cm2,
+                        )
 
                     d_str = fmt_depth(depth_val)
                     qc_str = "" if qc_MPa is None else fmt_float_comma(round(qc_MPa, 2), nd=2)
@@ -8079,6 +8000,45 @@ class GeoCanvasEditor(tk.Tk):
 
         ttk.Button(top, text="Закрыть", command=win.destroy).pack(anchor="e", pady=(10,0))
 
+
+    def _common_params_from_project_settings(self, settings: ProjectSettings | None) -> dict[str, str]:
+        s = settings or ProjectSettings()
+        params = {
+            "controller_type": str(getattr(s, "controller_type", "") or ""),
+            "controller_scale_div": str(getattr(s, "controller_scale_div", "") or ""),
+            "probe_type": str(getattr(s, "probe_type", "") or ""),
+            "cone_kn": str(getattr(s, "cone_kn", "") or ""),
+            "sleeve_kn": str(getattr(s, "sleeve_kn", "") or ""),
+            "cone_area_cm2": str(getattr(s, "cone_area_cm2", "") or ""),
+            "sleeve_area_cm2": str(getattr(s, "sleeve_area_cm2", "") or ""),
+        }
+        if not params["controller_scale_div"]:
+            params["controller_scale_div"] = str(getattr(s, "scale", "") or "")
+        if not params["cone_kn"]:
+            params["cone_kn"] = str(getattr(s, "fcone", "") or "")
+        if not params["sleeve_kn"]:
+            params["sleeve_kn"] = str(getattr(s, "fsleeve", "") or "")
+        if not params["cone_area_cm2"]:
+            params["cone_area_cm2"] = str(getattr(s, "acon", "") or "")
+        if not params["sleeve_area_cm2"]:
+            params["sleeve_area_cm2"] = str(getattr(s, "asleeve", "") or "")
+        return params
+
+    def _normalized_project_state(self, project: Project) -> dict:
+        state = copy.deepcopy(dict(getattr(project, "state", {}) or {}))
+        settings = getattr(project, "settings", ProjectSettings())
+        if "step_m" not in state:
+            state["step_m"] = float(getattr(settings, "step_m", getattr(self, "step_m", 0.1) or 0.1) or 0.1)
+        if "depth_start" not in state:
+            state["depth_start"] = float(getattr(self, "depth_start", 0.0) or 0.0)
+        if "geo_kind" not in state:
+            src_kind = str((getattr(getattr(project, "source", None), "kind", "") or "")).upper()
+            state["geo_kind"] = "K4" if src_kind == "GXL" else str(getattr(self, "geo_kind", "K2") or "K2")
+        if "common_params" not in state:
+            state["common_params"] = self._common_params_from_project_settings(settings)
+        if "cpt_calc_settings" not in state:
+            state["cpt_calc_settings"] = dict((getattr(settings, "extras", {}) or {}).get("cpt_calc_settings") or {})
+        return state
 
     def _project_settings_from_ui(self) -> ProjectSettings:
         extras = {"cpt_calc_settings": dict(getattr(self, "cpt_calc_settings", {}) or {})}
@@ -8275,11 +8235,11 @@ class GeoCanvasEditor(tk.Tk):
     def _project_open_diagnostics(self, status_info: dict | None = None) -> str:
         status_info = status_info or {}
         try:
-            status_now = self._compute_footer_realtime()
+            report = self._diagnostics_report()
         except Exception:
-            status_now = {}
-        miss = int(status_now.get("miss", 0) or 0)
-        invalid = int(status_now.get("inv", 0) or 0)
+            report = None
+        miss = int(getattr(report, "cells_missing", 0) or 0)
+        invalid = int(getattr(report, "tests_invalid", 0) or 0)
         return (
             f"Проект открыт: ops={self._marks_ops_count}, marks_total={self._marks_built_count}, "
             f"marks_green={self._marks_color_counts.get('green', 0)}, "
@@ -8329,9 +8289,10 @@ class GeoCanvasEditor(tk.Tk):
         src_kind = str((project.source.kind if project.source else "") or "").strip().upper()
         self.is_gxl = (src_kind == "GXL")
         src_ext = str((project.source.ext if project.source else "") or "").strip().lower()
-        self._restore(project.state or {})
-        self._apply_open_file_view_defaults()
-        if src_ext in {"geo", "ge0"}:
+        had_geo_kind_in_state = "geo_kind" in dict(getattr(project, "state", {}) or {})
+        normalized_state = self._normalized_project_state(project)
+        self._restore(normalized_state)
+        if src_ext in {"geo", "ge0"} and not had_geo_kind_in_state:
             self.geo_kind = "K2"
             if any(getattr(t, "incl", None) not in (None, []) for t in (getattr(self, "tests", []) or [])):
                 self.geo_kind = "K4"
@@ -8342,29 +8303,6 @@ class GeoCanvasEditor(tk.Tk):
         self._geo_template_blocks_info = list(getattr(self, "_geo_template_blocks_info_full", []) or [])
         self._rebuild_marks_index()
         status_info = self._recompute_statuses_after_data_load(preview_mode=False)
-        if hasattr(self, "scale_var"):
-            self.scale_var.set(project.settings.scale)
-            self.fcone_var.set(project.settings.fcone)
-            self.fsleeve_var.set(project.settings.fsleeve)
-            self.acon_var.set(project.settings.acon)
-            self.asl_var.set(project.settings.asleeve)
-        if hasattr(self, "controller_type_var"):
-            self.controller_type_var.set(str(getattr(project.settings, "controller_type", "") or ""))
-        if hasattr(self, "probe_type_var"):
-            self.probe_type_var.set(str(getattr(project.settings, "probe_type", "") or ""))
-        try:
-            if str(getattr(project.settings, "controller_scale_div", "") or "").strip() and hasattr(self, "scale_var"):
-                self.scale_var.set(str(project.settings.controller_scale_div))
-            if str(getattr(project.settings, "cone_kn", "") or "").strip() and hasattr(self, "fcone_var"):
-                self.fcone_var.set(str(project.settings.cone_kn))
-            if str(getattr(project.settings, "sleeve_kn", "") or "").strip() and hasattr(self, "fsleeve_var"):
-                self.fsleeve_var.set(str(project.settings.sleeve_kn))
-            if str(getattr(project.settings, "cone_area_cm2", "") or "").strip() and hasattr(self, "acon_var"):
-                self.acon_var.set(str(project.settings.cone_area_cm2))
-            if str(getattr(project.settings, "sleeve_area_cm2", "") or "").strip() and hasattr(self, "asl_var"):
-                self.asl_var.set(str(project.settings.sleeve_area_cm2))
-        except Exception:
-            pass
         self.cpt_calc_settings = dict((project.settings.extras or {}).get("cpt_calc_settings") or self.cpt_calc_settings or {"method": METHOD_SP446, "alluvial_sands": True, "groundwater_level": None})
         self._dirty = False
         if getattr(self, "ribbon_view", None):
@@ -8745,9 +8683,10 @@ class GeoCanvasEditor(tk.Tk):
             f"fsleeve_kN={fsleeve}",
             f"depth_start_m={depth0 if depth0 is not None else ''}",
             f"step_m={step if step is not None else ''}",
-            f"tests={len([t for t in self.tests if bool(getattr(t, 'export_on', True))])}",
+            f"tests={len(self._collect_export_tests().tests)}",
         ]
         path.write_text("\n".join(lines), encoding="utf-8")
+
     def _export_excel_silent(self, out_path: Path):
         """Тихий экспорт в Excel без диалогов (для экспорта-архива)."""
         if export_excel_file is None:
@@ -8756,53 +8695,20 @@ class GeoCanvasEditor(tk.Tk):
             self.tests,
             geo_kind=getattr(self, "geo_kind", "K2"),
             out_path=out_path,
+            cal=self._current_calibration(),
             include_only_export_on=True,
         )
 
     def _export_credo_silent(self, out_zip_path: Path):
         """Тихий экспорт ZIP для CREDO (две CSV на опыт) без диалогов (для экспорта-архива)."""
-        import zipfile
+        export_credo_zip(
+            self.tests,
+            out_zip_path=out_zip_path,
+            geo_kind=str(getattr(self, "geo_kind", "K2") or "K2"),
+            cal=self._current_calibration(),
+            include_only_export_on=True,
+        )
 
-        selection = self._collect_export_tests()
-        tests_exp = list(selection.tests)
-        if not tests_exp:
-            # нечего экспортировать
-            with zipfile.ZipFile(out_zip_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
-                pass
-            return
-
-        def fmt_comma(x, nd=2):
-            s = f"{x:.{nd}f}"
-            return s.replace(".", ",")
-
-        def fmt_depth(x):
-            # GeoExplorer/CREDO ожидает глубину с 2 знаками после запятой
-            return f"{x:.2f}".replace(".", ",")
-
-        with zipfile.ZipFile(str(out_zip_path), "w", compression=zipfile.ZIP_DEFLATED) as z:
-            for t in tests_exp:
-                tid = str(getattr(t, "tid", ""))
-                qc_lines = []
-                fs_lines = []
-                depth_arr = getattr(t, "depth", []) or []
-                qc_arr = getattr(t, "qc", []) or []
-                fs_arr = getattr(t, "fs", []) or []
-                n = max(len(depth_arr), len(qc_arr), len(fs_arr))
-                for i in range(n):
-                    d = _parse_depth_float(depth_arr[i]) if i < len(depth_arr) else None
-                    qv = _parse_cell_int(qc_arr[i]) if i < len(qc_arr) else None
-                    fv = _parse_cell_int(fs_arr[i]) if i < len(fs_arr) else None
-                    if d is None and qv is None and fv is None:
-                        continue
-                    if d is None:
-                        continue
-                    if qv is None: qv = 0
-                    if fv is None: fv = 0
-                    qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(qv), int(fv))
-                    qc_lines.append(f"{fmt_depth(d)};{fmt_comma(qc_mpa, 2)}")
-                    fs_lines.append(f"{fmt_depth(d)};{int(round(fs_kpa))}")
-                z.writestr(f"СЗ-{tid} лоб.csv", "\n".join(qc_lines))
-                z.writestr(f"СЗ-{tid} бок.csv", "\n".join(fs_lines))
     def save_file(self):
         """Сохранение через диалог "Сохранить как..." без silent overwrite."""
         try:
@@ -9003,14 +8909,18 @@ def export_gxl_generated(self, out_file: str):
         obj_name = 'name'
         privazka = 'По плану...'
 
-        # шаг
-        step_cm = getattr(self, 'step_cm', None)
-        step_m_default = 0.10 if step_cm == 10 else (0.05 if step_cm == 5 else 0.10)
-
-        # Сортировка опытов по времени (как в UI)
-        tests = list(self.tests)
+        # шаг из модельного состояния
         try:
-            tests = sorted(tests, key=lambda t: (t.dt or ''))
+            step_m_default = float(getattr(self, 'step_m', 0.10) or 0.10)
+            if step_m_default <= 0:
+                step_m_default = 0.10
+        except Exception:
+            step_m_default = 0.10
+
+        # Экспортируем только тесты из единого контура selection
+        tests = list(self._collect_export_tests().tests)
+        try:
+            tests = sorted(tests, key=lambda t: (getattr(t, 'dt', '') or ''))
         except Exception:
             pass
 
@@ -9234,7 +9144,7 @@ def export_gxl_generated(self, out_file: str):
 
 # --- bind module-level helpers as methods (fix for indentation) ---
 try:
-    GeoCanvasEditor.save_gxl_generated = save_gxl_generated  # type: ignore[attr-defined]
+    GeoCanvasEditor.save_gxl_generated = export_gxl_generated  # type: ignore[attr-defined]
 except Exception:
     pass
 
