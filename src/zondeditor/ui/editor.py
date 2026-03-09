@@ -531,10 +531,14 @@ class GeoCanvasEditor(tk.Tk):
             "tests": tests_snap,
             "flags": flags_snap,
             "step_m": float(getattr(self, "step_m", 0.05) or 0.05),
+            "depth_start": float(getattr(self, "depth_start", 0.0) or 0.0),
+            "geo_kind": str(getattr(self, "geo_kind", "K2") or "K2"),
+            "common_params": dict(getattr(self, "_common_params", self._default_common_params(getattr(self, "geo_kind", "K2"))) or {}),
             "depth0_by_tid": dict(getattr(self, "depth0_by_tid", {}) or {}),
             "step_by_tid": dict(getattr(self, "step_by_tid", {}) or {}),
             "gwl_by_tid": copy.deepcopy(dict(getattr(self, "gwl_by_tid", {}) or {})),
             "compact_1m": bool(getattr(self, "compact_1m", False)),
+            "show_graphs": bool(getattr(self, "show_graphs", False)),
             "show_geology_column": bool(getattr(self, "show_geology_column", True)),
             "display_sort_mode": str(getattr(self, "display_sort_mode", "date") or "date"),
             "expanded_meters": sorted(int(x) for x in (getattr(self, "expanded_meters", set()) or set())),
@@ -553,6 +557,20 @@ class GeoCanvasEditor(tk.Tk):
             self.step_m = float(snap.get("step_m", getattr(self, "step_m", 0.05) or 0.05) or 0.05)
         except Exception:
             pass
+        try:
+            self.depth_start = float(snap.get("depth_start", getattr(self, "depth_start", 0.0) or 0.0) or 0.0)
+        except Exception:
+            pass
+        try:
+            self.geo_kind = str(snap.get("geo_kind", getattr(self, "geo_kind", "K2")) or "K2").upper()
+        except Exception:
+            self.geo_kind = str(getattr(self, "geo_kind", "K2") or "K2").upper()
+        if self.geo_kind not in ("K2", "K4"):
+            self.geo_kind = "K2"
+        try:
+            self._set_common_params(dict(snap.get("common_params") or {}), self.geo_kind)
+        except Exception:
+            self._set_common_params({}, self.geo_kind)
 
         # restore per-test start depths (tid -> h0)
         try:
@@ -572,6 +590,10 @@ class GeoCanvasEditor(tk.Tk):
             self.compact_1m = bool(snap.get("compact_1m", getattr(self, "compact_1m", False)))
         except Exception:
             self.compact_1m = bool(getattr(self, "compact_1m", False))
+        try:
+            self.show_graphs = bool(snap.get("show_graphs", getattr(self, "show_graphs", False)))
+        except Exception:
+            self.show_graphs = bool(getattr(self, "show_graphs", False))
         try:
             self.show_geology_column = bool(snap.get("show_geology_column", getattr(self, "show_geology_column", True)))
         except Exception:
@@ -596,8 +618,10 @@ class GeoCanvasEditor(tk.Tk):
         try:
             if getattr(self, "ribbon_view", None):
                 self.ribbon_view.set_compact_1m(bool(self.compact_1m))
+                self.ribbon_view.set_show_graphs(bool(self.show_graphs))
                 self.ribbon_view.set_show_geology_column(bool(self.show_geology_column))
                 self.ribbon_view.set_display_sort_mode(str(self.display_sort_mode))
+                self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
                 self.ribbon_view.set_layer_edit_mode(True)
         except Exception:
             pass
@@ -7985,6 +8009,45 @@ class GeoCanvasEditor(tk.Tk):
         ttk.Button(top, text="Закрыть", command=win.destroy).pack(anchor="e", pady=(10,0))
 
 
+    def _common_params_from_project_settings(self, settings: ProjectSettings | None) -> dict[str, str]:
+        s = settings or ProjectSettings()
+        params = {
+            "controller_type": str(getattr(s, "controller_type", "") or ""),
+            "controller_scale_div": str(getattr(s, "controller_scale_div", "") or ""),
+            "probe_type": str(getattr(s, "probe_type", "") or ""),
+            "cone_kn": str(getattr(s, "cone_kn", "") or ""),
+            "sleeve_kn": str(getattr(s, "sleeve_kn", "") or ""),
+            "cone_area_cm2": str(getattr(s, "cone_area_cm2", "") or ""),
+            "sleeve_area_cm2": str(getattr(s, "sleeve_area_cm2", "") or ""),
+        }
+        if not params["controller_scale_div"]:
+            params["controller_scale_div"] = str(getattr(s, "scale", "") or "")
+        if not params["cone_kn"]:
+            params["cone_kn"] = str(getattr(s, "fcone", "") or "")
+        if not params["sleeve_kn"]:
+            params["sleeve_kn"] = str(getattr(s, "fsleeve", "") or "")
+        if not params["cone_area_cm2"]:
+            params["cone_area_cm2"] = str(getattr(s, "acon", "") or "")
+        if not params["sleeve_area_cm2"]:
+            params["sleeve_area_cm2"] = str(getattr(s, "asleeve", "") or "")
+        return params
+
+    def _normalized_project_state(self, project: Project) -> dict:
+        state = copy.deepcopy(dict(getattr(project, "state", {}) or {}))
+        settings = getattr(project, "settings", ProjectSettings())
+        if "step_m" not in state:
+            state["step_m"] = float(getattr(settings, "step_m", getattr(self, "step_m", 0.1) or 0.1) or 0.1)
+        if "depth_start" not in state:
+            state["depth_start"] = float(getattr(self, "depth_start", 0.0) or 0.0)
+        if "geo_kind" not in state:
+            src_kind = str((getattr(getattr(project, "source", None), "kind", "") or "")).upper()
+            state["geo_kind"] = "K4" if src_kind == "GXL" else str(getattr(self, "geo_kind", "K2") or "K2")
+        if "common_params" not in state:
+            state["common_params"] = self._common_params_from_project_settings(settings)
+        if "cpt_calc_settings" not in state:
+            state["cpt_calc_settings"] = dict((getattr(settings, "extras", {}) or {}).get("cpt_calc_settings") or {})
+        return state
+
     def _project_settings_from_ui(self) -> ProjectSettings:
         extras = {"cpt_calc_settings": dict(getattr(self, "cpt_calc_settings", {}) or {})}
         cp = self._current_common_params()
@@ -8234,9 +8297,10 @@ class GeoCanvasEditor(tk.Tk):
         src_kind = str((project.source.kind if project.source else "") or "").strip().upper()
         self.is_gxl = (src_kind == "GXL")
         src_ext = str((project.source.ext if project.source else "") or "").strip().lower()
-        self._restore(project.state or {})
-        self._apply_open_file_view_defaults()
-        if src_ext in {"geo", "ge0"}:
+        had_geo_kind_in_state = "geo_kind" in dict(getattr(project, "state", {}) or {})
+        normalized_state = self._normalized_project_state(project)
+        self._restore(normalized_state)
+        if src_ext in {"geo", "ge0"} and not had_geo_kind_in_state:
             self.geo_kind = "K2"
             if any(getattr(t, "incl", None) not in (None, []) for t in (getattr(self, "tests", []) or [])):
                 self.geo_kind = "K4"
@@ -8247,29 +8311,6 @@ class GeoCanvasEditor(tk.Tk):
         self._geo_template_blocks_info = list(getattr(self, "_geo_template_blocks_info_full", []) or [])
         self._rebuild_marks_index()
         status_info = self._recompute_statuses_after_data_load(preview_mode=False)
-        if hasattr(self, "scale_var"):
-            self.scale_var.set(project.settings.scale)
-            self.fcone_var.set(project.settings.fcone)
-            self.fsleeve_var.set(project.settings.fsleeve)
-            self.acon_var.set(project.settings.acon)
-            self.asl_var.set(project.settings.asleeve)
-        if hasattr(self, "controller_type_var"):
-            self.controller_type_var.set(str(getattr(project.settings, "controller_type", "") or ""))
-        if hasattr(self, "probe_type_var"):
-            self.probe_type_var.set(str(getattr(project.settings, "probe_type", "") or ""))
-        try:
-            if str(getattr(project.settings, "controller_scale_div", "") or "").strip() and hasattr(self, "scale_var"):
-                self.scale_var.set(str(project.settings.controller_scale_div))
-            if str(getattr(project.settings, "cone_kn", "") or "").strip() and hasattr(self, "fcone_var"):
-                self.fcone_var.set(str(project.settings.cone_kn))
-            if str(getattr(project.settings, "sleeve_kn", "") or "").strip() and hasattr(self, "fsleeve_var"):
-                self.fsleeve_var.set(str(project.settings.sleeve_kn))
-            if str(getattr(project.settings, "cone_area_cm2", "") or "").strip() and hasattr(self, "acon_var"):
-                self.acon_var.set(str(project.settings.cone_area_cm2))
-            if str(getattr(project.settings, "sleeve_area_cm2", "") or "").strip() and hasattr(self, "asl_var"):
-                self.asl_var.set(str(project.settings.sleeve_area_cm2))
-        except Exception:
-            pass
         self.cpt_calc_settings = dict((project.settings.extras or {}).get("cpt_calc_settings") or self.cpt_calc_settings or {"method": METHOD_SP446, "alluvial_sands": True, "groundwater_level": None})
         self._dirty = False
         if getattr(self, "ribbon_view", None):
