@@ -3223,14 +3223,6 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             return {"inv": 0, "miss": 0}
 
-    def _test_has_missing_values(self, t: TestData, fl: TestFlags | None = None) -> bool:
-        try:
-            report = self._diagnostics_report()
-            td = report.by_test.get(int(getattr(t, "tid", 0) or 0))
-            return bool(td and td.missing_rows)
-        except Exception:
-            return False
-
     def _header_fill_for_test(self, *, invalid: bool, has_missing: bool, export_on: bool) -> str:
         if invalid:
             return GUI_RED if export_on else "#f4b6b0"  # muted red
@@ -3303,7 +3295,6 @@ class GeoCanvasEditor(tk.Tk):
     def _update_footer_realtime(self):
         """Обновить нижнюю строку (красная/серая) по текущему состоянию."""
         try:
-            res = self._compute_footer_realtime()
             report = self._diagnostics_report()
             msg = self._footer_text_from_report(report)
             if not msg:
@@ -9153,7 +9144,7 @@ def export_gxl_generated(self, out_file: str):
 
 # --- bind module-level helpers as methods (fix for indentation) ---
 try:
-    GeoCanvasEditor.save_gxl_generated = save_gxl_generated  # type: ignore[attr-defined]
+    GeoCanvasEditor.save_gxl_generated = export_gxl_generated  # type: ignore[attr-defined]
 except Exception:
     pass
 
