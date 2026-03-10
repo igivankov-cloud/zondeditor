@@ -96,7 +96,9 @@ def fix_tests_by_algorithm(
             out.append(TestFlagsCls(False, set(), set(), _prev_user_cells, algo_cells))
             continue
 
-        n = len(t.qc)
+        # Never extend probing length in algorithm mode: process only
+        # rows that already have both qc and fs cells.
+        n = min(len(getattr(t, "qc", []) or []), len(getattr(t, "fs", []) or []))
         if n == 0:
             out.append(TestFlagsCls(False, set(), set(), _prev_user_cells, algo_cells))
             continue
@@ -175,10 +177,6 @@ def fix_tests_by_algorithm(
         for i in range(n):
             qv = max(1, int(qc[i]))
             fv = max(1, int(fs[i]))
-            while i >= len(t.qc):
-                t.qc.append("")
-            while i >= len(t.fs):
-                t.fs.append("")
             t.qc[i] = str(qv)
             t.fs[i] = str(fv)
 
@@ -192,12 +190,6 @@ def fix_tests_by_algorithm(
                     algo_cells.add((i2, "qc"))
                 if (i2, "fs") not in _prev_user_cells and new_f != old_f:
                     algo_cells.add((i2, "fs"))
-            if len(t.qc) > len(_orig_qc):
-                for i2 in range(len(_orig_qc), len(t.qc)):
-                    if (i2, "qc") not in _prev_user_cells:
-                        algo_cells.add((i2, "qc"))
-                    if (i2, "fs") not in _prev_user_cells:
-                        algo_cells.add((i2, "fs"))
         except Exception:
             pass
 

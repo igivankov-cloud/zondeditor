@@ -7610,7 +7610,9 @@ class GeoCanvasEditor(tk.Tk):
             _orig_fs = list(getattr(t, 'fs', []) or [])
             _orig_depth = list(getattr(t, 'depth', []) or [])
             algo_cells: set[tuple[int, str]] = set()
-            n = len(t.qc)
+            # Алгоритм не должен создавать новые строки: работаем только
+            # по пересечению уже существующих пар qc/fs.
+            n = min(len(getattr(t, 'qc', []) or []), len(getattr(t, 'fs', []) or []))
             if n == 0:
                 # сохраняем пользовательские правки (на случай пустого зондирования)
                 self.flags[tid] = TestFlags(False, set(), set(), _prev_user_cells, algo_cells)
@@ -7704,13 +7706,6 @@ class GeoCanvasEditor(tk.Tk):
                         algo_cells.add((i2, "qc"))
                     if (i2, "fs") not in _prev_user_cells and new_f != old_f:
                         algo_cells.add((i2, "fs"))
-                # если алгоритм добавил новые строки — помечаем их целиком (qc/fs)
-                if len(t.qc) > len(_orig_qc):
-                    for i2 in range(len(_orig_qc), len(t.qc)):
-                        if (i2, "qc") not in _prev_user_cells:
-                            algo_cells.add((i2, "qc"))
-                        if (i2, "fs") not in _prev_user_cells:
-                            algo_cells.add((i2, "fs"))
             except Exception:
                 pass
 
