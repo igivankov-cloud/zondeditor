@@ -6172,24 +6172,27 @@ class GeoCanvasEditor(tk.Tk):
                     depth_txt = ""
 
 
+                meter_has_data = bool((meter_qc_max is not None) or (meter_fs_max is not None)) if is_meter_row else False
+
                 if is_meter_row:
-                    depth_fill = "#f3f6fb"
+                    # В свернутом режиме: существующий интервал окрашен единообразно,
+                    # отсутствующий интервал (пустая зона) — белый.
+                    depth_fill = "#f3f6fb" if meter_has_data else "white"
                 elif has_row and int(data_i) == 0:
                     depth_fill = "white"   # editable cell (только абсолютная первая data-row)
                 else:
-                    depth_fill = (GUI_DEPTH_BG if has_row else "#e6e6e6")
+                    depth_fill = (GUI_DEPTH_BG if has_row else "white")
 
                 if not depth_txt:
-                    depth_fill = "#e6e6e6"
+                    depth_fill = "white"
 
                 def fill_for(kind: str):
                     # Обычная логика по существующим/пустым строкам
                     if is_meter_row:
-                        if bool(getattr(self, "compact_1m", False)) and kind in ("qc", "fs"):
-                            return "#e6e6e6"
-                        return "#f3f6fb"
+                        # Для существующего meter-интервала все ячейки строки одного цвета.
+                        return depth_fill
                     if not has_row:
-                        return "#e6e6e6"
+                        return "white"
                     if is_blank_row:
                         return "white"
 
