@@ -170,8 +170,17 @@ class RibbonView(ttk.Frame):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Вид")
 
+        cols = ttk.Frame(tab)
+        cols.pack(side="top", anchor="w")
+
+        opts_col = ttk.Frame(cols)
+        opts_col.grid(row=0, column=0, sticky="nw", padx=(0, 20))
+
+        sort_col = ttk.Frame(cols)
+        sort_col.grid(row=0, column=1, sticky="nw")
+
         compact_chk = ttk.Checkbutton(
-            tab,
+            opts_col,
             text="Развернуть / Свернуть",
             variable=self.compact_1m_var,
             command=lambda: self.commands.get("toggle_compact_1m", lambda *_: None)(bool(self.compact_1m_var.get())),
@@ -180,7 +189,7 @@ class RibbonView(ttk.Frame):
         ToolTip(compact_chk, "Использует текущую логику сворачивания/разворачивания вида по 1-метровым интервалам")
 
         graphs_chk = ttk.Checkbutton(
-            tab,
+            opts_col,
             text="График зондирования",
             variable=self.show_graphs_var,
             command=lambda: self.commands.get("toggle_graphs", lambda *_: None)(bool(self.show_graphs_var.get())),
@@ -189,7 +198,7 @@ class RibbonView(ttk.Frame):
         ToolTip(graphs_chk, "Показывать графическую часть зондирования")
 
         geology_chk = ttk.Checkbutton(
-            tab,
+            opts_col,
             text="Геологическая колонка",
             variable=self.show_geology_var,
             command=lambda: self.commands.get("toggle_geology_column", lambda *_: None)(bool(self.show_geology_var.get())),
@@ -198,7 +207,7 @@ class RibbonView(ttk.Frame):
         ToolTip(geology_chk, "Показывать/скрывать геологическую колонку")
 
         incl_chk = ttk.Checkbutton(
-            tab,
+            opts_col,
             text="Инклинометр",
             variable=self.show_inclinometer_var,
             command=lambda: self.commands.get("toggle_inclinometer", lambda *_: None)(bool(self.show_inclinometer_var.get())),
@@ -207,8 +216,8 @@ class RibbonView(ttk.Frame):
         ToolTip(incl_chk, "Показывать/скрывать колонку инклинометра для К4")
         self._inclinometer_chk = incl_chk
 
-        sort_frame = ttk.LabelFrame(tab, text="Сортировка отображения", padding=4)
-        sort_frame.pack(side="top", fill="x", pady=(6, 0))
+        sort_frame = ttk.LabelFrame(sort_col, text="Сортировка отображения", padding=4)
+        sort_frame.pack(side="top", anchor="w")
         sort_date = ttk.Radiobutton(
             sort_frame,
             text="Отсортировать по дате",

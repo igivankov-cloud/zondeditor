@@ -4177,17 +4177,34 @@ class GeoCanvasEditor(tk.Tk):
 
 
     def _test_effective_data_depth_range(self, t) -> tuple[float, float]:
-        """Фактический диапазон глубин опыта по depth-массиву (без ухода за пределы данных)."""
-        d_arr = getattr(t, "depth", []) or []
-        dvals: list[float] = []
-        for ds in d_arr:
-            dv = _parse_depth_float(ds)
-            if dv is not None:
-                dvals.append(float(dv))
-        if not dvals:
+        """Фактический диапазон глубин опыта по строкам с реальными измерениями."""
+        d_arr = list(getattr(t, "depth", []) or [])
+        q_arr = list(getattr(t, "qc", []) or [])
+        f_arr = list(getattr(t, "fs", []) or [])
+        incl_arr = getattr(t, "incl", None)
+        if incl_arr is None:
+            incl_arr = []
+        else:
+            incl_arr = list(incl_arr or [])
+
+        n = max(len(d_arr), len(q_arr), len(f_arr), len(incl_arr))
+        valid_depths: list[float] = []
+        for i in range(n):
+            dv = _parse_depth_float(d_arr[i]) if i < len(d_arr) else None
+            if dv is None:
+                continue
+            q_raw = _parse_cell_int(q_arr[i]) if i < len(q_arr) else None
+            f_raw = _parse_cell_int(f_arr[i]) if i < len(f_arr) else None
+            incl_raw = _parse_cell_int(incl_arr[i]) if i < len(incl_arr) else None
+            if q_raw is None and f_raw is None and incl_raw is None:
+                continue
+            valid_depths.append(float(dv))
+
+        if not valid_depths:
             return self._test_depth_range(t)
-        top = min(dvals)
-        bot = max(dvals)
+
+        top = min(valid_depths)
+        bot = max(valid_depths)
         if bot <= top:
             return self._test_depth_range(t)
         return float(top), float(bot)
@@ -4465,6 +4482,18 @@ class GeoCanvasEditor(tk.Tk):
         data_top, data_bot = self._test_effective_data_depth_range(t)
         data_top = float(data_top)
         data_bot = float(data_bot)
+        inactive_fill = "#eeeeee"
+
+        ty_top = depth_to_y(data_top)
+        ty_bot = depth_to_y(data_bot)
+        if ty_top is not None and ty_bot is not None:
+            data_y0 = max(y0, min(float(ty_top), float(ty_bot)))
+            data_y1 = min(y1, max(float(ty_top), float(ty_bot)))
+            if data_y0 > y0:
+                self.canvas.create_rectangle(x0, y0, x1, data_y0, fill=inactive_fill, outline="", tags=tags)
+            if data_y1 < y1:
+                self.canvas.create_rectangle(x0, data_y1, x1, y1, fill=inactive_fill, outline="", tags=tags)
+
         label_spans = []
         for lyr in layers:
             lt = max(data_top, float(lyr.top_m))
