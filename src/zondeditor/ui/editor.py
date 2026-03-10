@@ -7096,21 +7096,29 @@ class GeoCanvasEditor(tk.Tk):
                 # keep previous coloring info, but mark this cell as manually edited (purple)
                 fl = self.flags.get(t.tid) or TestFlags(False, set(), set(), set(), set())
                 old = t.qc[row] if field == 'qc' else t.fs[row]
-                newv = _sanitize_int_0_300(val)
-                # Undo: фиксируем снимок ДО изменения данных/раскраски
-                if commit:
-                    try:
-                        # если реально меняем значение или удаляем строку
-                        if (str(old).strip() != str(newv).strip()):
-                            self._push_undo()
-                    except Exception:
-                        self._push_undo()
-
-                # Пустой/неизменённый выход из редактирования не должен менять данные.
-                if str(old).strip() == str(newv).strip():
+                old_text = "" if old is None else str(old)
+                val_text = str(val or "")
+                # 1) Кликнули и ушли без изменения видимого текста: no-op.
+                if old_text.strip() == val_text.strip():
                     self._redraw()
                     self.schedule_graph_redraw()
                     return
+
+                old_norm = _sanitize_int_0_300(old_text)
+                newv = _sanitize_int_0_300(val_text)
+
+                # 2) Нормализованные значения совпали: тоже no-op.
+                if old_norm.strip() == newv.strip():
+                    self._redraw()
+                    self.schedule_graph_redraw()
+                    return
+
+                # Undo: фиксируем снимок ДО изменения данных/раскраски
+                if commit:
+                    try:
+                        self._push_undo()
+                    except Exception:
+                        pass
                 # Запрет: в середине зондирования нельзя ставить 0 или оставлять пусто.
                 # Пустое значение разрешено только на краях (первая/последняя строка) — тогда удаляем строку целиком.
                 last_filled_before = self._last_filled_row(t)
