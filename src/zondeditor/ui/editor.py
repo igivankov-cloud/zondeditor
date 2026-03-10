@@ -7028,6 +7028,16 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
         def commit_and_next():
+            # Защита от "разрыва" хвоста: Enter по уже пустой ячейке без ввода
+            # не должен порождать новую пустую строку.
+            try:
+                raw_now = str(e.get() or "").strip()
+            except Exception:
+                raw_now = ""
+            if raw_now == "" and str(current).strip() == "":
+                self._tail_debug_log("TAIL_EDIT", f"enter_block_empty ti={int(ti)} field={field} row={int(row)} disp_r={display_row}", ti=int(ti))
+                return
+
             setattr(self, "_edit_end_reason", "return")
             self._end_edit(commit=True)
 
