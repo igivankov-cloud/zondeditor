@@ -1056,6 +1056,12 @@ class GeoCanvasEditor(tk.Tk):
         ent.setdefault("consistency", "")
         ent.setdefault("note", "")
         ent.setdefault("source_flags", {"CPT": True, "LAB": False, "Stamp": False})
+        ent.setdefault("sand_kind", "")
+        ent.setdefault("sand_water_saturation", "")
+        ent.setdefault("density_state", "")
+        ent.setdefault("sand_is_alluvial", False)
+        ent.setdefault("sandy_loam_kind", "")
+        ent.setdefault("notes", "")
         return ent
 
     def _auto_recalculate_cpt(self):
@@ -1224,9 +1230,12 @@ class GeoCanvasEditor(tk.Tk):
         }
 
     def _add_unassigned_ige_from_ribbon(self):
+        if len(self.ige_registry or {}) >= MAX_LAYERS_PER_TEST:
+            self._set_status("Достигнут лимит 12 ИГЭ")
+            return
         self._push_undo()
         new_ige_id = self._next_free_ige_id()
-        self.ige_registry[new_ige_id] = {"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}}
+        self.ige_registry[new_ige_id] = self._ensure_ige_cpt_fields({"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {}))})
         self._sync_layers_panel()
         self.schedule_graph_redraw()
         if getattr(self, "ribbon_view", None):
@@ -1302,110 +1311,82 @@ class GeoCanvasEditor(tk.Tk):
         self._push_undo()
         self._insert_layer_from_bottom(int(ti))
 
-    def _delete_layer_by_ige(self, layer_id: str):
-        ti = self._active_layers_test_index()
-        if ti is None or ti < 0 or ti >= len(self.tests):
+    def _delete_layer_by_ige(self, ige_id: str):
+        target = str(ige_id or "").strip()
+        keys = sorted((self.ige_registry or {}).keys(), key=self._ige_id_to_num)
+        if target not in keys:
             return
-        t = self.tests[int(ti)]
-        layers = self._ensure_test_layers(t)
-        if len(layers) <= MIN_LAYERS_PER_TEST:
-            self._set_status("Нельзя удалить единственный слой")
+        if len(keys) <= MIN_LAYERS_PER_TEST:
+            self._set_status("Нельзя удалить единственный ИГЭ")
             return
-        target = str(layer_id or "").strip()
-        for idx, lyr in enumerate(layers):
-            params = dict(getattr(lyr, "params", {}) or {})
-            if str(params.get("layer_id", "") or "").strip() != target:
-                continue
-            self._push_undo()
-            self._remove_layer_at_index(int(ti), idx)
-            return
+        fallback = next((k for k in keys if k != target), keys[0])
+        self._push_undo()
+        self.ige_registry.pop(target, None)
+        for t in (self.tests or []):
+            for lyr in self._ensure_test_layers(t):
+                if str(getattr(lyr, "ige_id", "") or "").strip() == target:
+                    lyr.ige_id = fallback
+                    self._apply_ige_to_layer(lyr)
+        self._sync_layers_panel()
+        self.schedule_graph_redraw()
 
-    def _set_layer_soil_from_ribbon(self, layer_id: str, soil_raw: str):
-        ti = self._active_layers_test_index()
-        if ti is None or ti < 0 or ti >= len(self.tests):
+    def _set_layer_soil_from_ribbon(self, ige_id: str, soil_raw: str):
+        ige = str(ige_id or "").strip()
+        if not ige:
             return
-        t = self.tests[int(ti)]
-        target = str(layer_id or "").strip()
         soil_text = str(soil_raw or "").strip()
         try:
             soil = SoilType(soil_text)
         except Exception:
             return
-        for lyr in self._ensure_test_layers(t):
-            params = dict(getattr(lyr, "params", {}) or {})
-            if str(params.get("layer_id", "") or "").strip() != target:
-                continue
-            self._push_undo()
-            lyr.soil_type = soil
-            lyr.calc_mode = calc_mode_for_soil(soil)
-            lyr.style = dict(SOIL_STYLE.get(soil, {}))
-            params["soil_type"] = soil.value
-            params["sand_is_alluvial"] = bool(params.get("sand_is_alluvial", False)) if soil == SoilType.SAND else False
-            lyr.params = params
-            break
-        self._calc_layer_params_for_test(int(ti))
+        self._push_undo()
+        ent = self._ensure_ige_entry(ige)
+        ent.update({"soil_type": soil.value, "calc_mode": calc_mode_for_soil(soil).value, "style": dict(SOIL_STYLE.get(soil, {}))})
+        if soil != SoilType.SAND:
+            ent["sand_is_alluvial"] = False
+        for t in (self.tests or []):
+            for lyr in self._ensure_test_layers(t):
+                if str(getattr(lyr, "ige_id", "") or "").strip() == ige:
+                    self._apply_ige_to_layer(lyr)
         self._sync_layers_panel()
+        self.schedule_graph_redraw()
 
-    def _change_layer_field_from_ribbon(self, layer_id: str, field_name: str, value):
-        ti = self._active_layers_test_index()
-        if ti is None or ti < 0 or ti >= len(self.tests):
-            return
-        t = self.tests[int(ti)]
-        target = str(layer_id or "").strip()
+    def _change_layer_field_from_ribbon(self, ige_id: str, field_name: str, value):
+        target = str(ige_id or "").strip()
         field = str(field_name or "").strip()
-        changed = False
-        for lyr in self._ensure_test_layers(t):
-            params = dict(getattr(lyr, "params", {}) or {})
-            if str(params.get("layer_id", "") or "").strip() != target:
-                continue
-            self._push_undo()
-            params[field] = value
-            lyr.params = params
-            changed = True
-            break
-        if changed:
-            self._calc_layer_params_for_test(int(ti))
-            self._sync_layers_panel()
+        if not target or not field:
+            return
+        ent = self._ensure_ige_entry(target)
+        self._push_undo()
+        ent[field] = value
+        self._sync_layers_panel()
 
     def _sync_layers_panel(self):
         self._ensure_default_iges()
         if not getattr(self, "ribbon_view", None):
             return
-        ti = self._active_layers_test_index()
-        if ti is None or ti < 0 or ti >= len(self.tests):
-            self.ribbon_view.set_layers([], [x.value for x in SoilType])
-            return
-        self._calc_layer_params_for_test(int(ti))
-        layers = self._ensure_test_layers(self.tests[ti])
+        keys = sorted((self.ige_registry or {}).keys(), key=self._ige_id_to_num)
         rows = []
-        for idx, lyr in enumerate(layers, start=1):
-            params = dict(getattr(lyr, "params", {}) or {})
-            ige_label = str(params.get("ige_label") or getattr(lyr, "ige_id", "") or f"ИГЭ-{idx}")
+        for ige_id in keys:
+            ent = self._ensure_ige_cpt_fields(self._ensure_ige_entry(ige_id))
             rows.append(
                 {
-                    "layer_id": str(params.get("layer_id") or f"layer-{idx}"),
-                    "visual_order": int(params.get("visual_order") or idx),
-                    "ige_label": ige_label,
-                    "soil": str(getattr(lyr, "soil_type", SoilType.SANDY_LOAM).value),
-                    "top_depth": f"{float(getattr(lyr, 'top_m', 0.0)):.2f}",
-                    "bottom_depth": f"{float(getattr(lyr, 'bot_m', 0.0)):.2f}",
-                    "data_source": str(params.get("data_source", "manual") or "manual"),
-                    "qc_avg": params.get("qc_avg", None),
-                    "n_points": params.get("n_points", None),
-                    "variation_coeff": params.get("variation_coeff", None),
-                    "sand_kind": str(params.get("sand_kind", "") or ""),
-                    "sand_water_saturation": str(params.get("sand_water_saturation", "") or ""),
-                    "sand_is_alluvial": bool(params.get("sand_is_alluvial", False)),
-                    "density_state": str(params.get("density_state", "") or ""),
-                    "sandy_loam_kind": str(params.get("sandy_loam_kind", "") or ""),
-                    "consistency": str(params.get("consistency", "") or ""),
-                    "IL": params.get("IL", None),
-                    "notes": str(params.get("notes", "") or ""),
+                    "ige_id": str(ige_id),
+                    "label": str(ige_id),
+                    "soil": str(ent.get("soil_type") or ""),
+                    "sand_kind": str(ent.get("sand_kind") or ""),
+                    "sand_water_saturation": str(ent.get("sand_water_saturation") or ""),
+                    "density_state": str(ent.get("density_state") or ""),
+                    "sand_is_alluvial": bool(ent.get("sand_is_alluvial", False)),
+                    "sandy_loam_kind": str(ent.get("sandy_loam_kind") or ""),
+                    "consistency": str(ent.get("consistency") or ""),
+                    "IL": ent.get("IL", ""),
+                    "notes": str(ent.get("notes") or ""),
                 }
             )
-        self.ribbon_view.set_layers(rows, [x.value for x in SoilType], can_add=self._can_add_layer(int(ti)), can_delete=self._can_delete_layer(int(ti)))
+        self.ribbon_view.set_layers(rows, [x.value for x in SoilType], can_add=(len(keys) < MAX_LAYERS_PER_TEST), can_delete=(len(keys) > MIN_LAYERS_PER_TEST))
         if rows:
-            self.ribbon_view.layer_ige_var.set(str(rows[0].get("ige_label") or "ИГЭ-1"))
+            self.ribbon_view.layer_ige_var.set(str(rows[0].get("ige_id") or "ИГЭ-1"))
             self.ribbon_view.layer_soil_var.set(str(rows[0].get("soil") or ""))
             self.ribbon_view.layer_mode_var.set("")
 
@@ -1642,9 +1623,8 @@ class GeoCanvasEditor(tk.Tk):
                 "edit_ige": self._edit_ige_from_ribbon,
                 "select_ige": self._select_ige_for_ribbon,
                 "add_ige": self._add_unassigned_ige_from_ribbon,
-                "add_layer": self._add_layer_from_ribbon,
-                "delete_layer": self._delete_layer_by_ige,
-                "change_layer_field": self._change_layer_field_from_ribbon,
+                "delete_ige": self._delete_layer_by_ige,
+                "change_ige_field": self._change_layer_field_from_ribbon,
                 "set_layer_soil": self._set_layer_soil_from_ribbon,
                 "calc_cpt": self.calculate_cpt_params,
                 "edit_ige_cpt": self._edit_selected_ige_cpt_params,
