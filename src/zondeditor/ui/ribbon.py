@@ -3,7 +3,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
-from src.zondeditor.ui.consts import ICON_EXPORT, ICON_IMPORT, ICON_REDO, ICON_SAVE, ICON_UNDO
+from src.zondeditor.ui.consts import ICON_EXPORT, ICON_IMPORT, ICON_REDO, ICON_SAVE, ICON_UNDO, ICON_TRASH
 from src.zondeditor.ui.widgets import ToolTip
 
 
@@ -32,6 +32,8 @@ class RibbonView(ttk.Frame):
         self._buttons: dict[str, ttk.Button] = {}
         self._layer_rows: list[dict] = []
         self._ige_controls: dict[str, ttk.Combobox] = {}
+        self._layer_delete_buttons: dict[str, ttk.Button] = {}
+        self._layer_add_enabled = True
 
         try:
             style = ttk.Style(self)
@@ -242,20 +244,128 @@ class RibbonView(ttk.Frame):
         self.tabs.add(tab, text="Слои")
 
         tools = ttk.Frame(tab)
-        tools.pack(fill="x", expand=False, pady=(0, 4))
-        self._add_btn_grid(tools, "add_ige", "+ ИГЭ", "Добавить ИГЭ без назначенного грунта", 0, 0)
-        self._add_btn_grid(tools, "calc_cpt", "Рассчитать CPT", "Рассчитать qc_ср, φнорм и Eнорм по ИГЭ", 0, 1)
+        tools.pack(fill="x", expand=False, pady=(0, 6))
+        self._add_btn_grid(tools, "add_layer", "+ Слой", "Добавить новый слой в активном опыте", 0, 0)
+        self._add_btn_grid(tools, "add_ige", "+ ИГЭ", "Добавить ИГЭ без назначенного грунта", 0, 1)
+        self._add_btn_grid(tools, "calc_cpt", "Рассчитать CPT", "Рассчитать qc_ср, φнорм и Eнорм по ИГЭ", 0, 2)
 
-        tbl = ttk.Frame(tab)
-        tbl.pack(fill="x", expand=False)
-        ttk.Label(tbl, text="Параметр", width=12, anchor="w").grid(row=1, column=0, sticky="w", padx=(0, 8))
-        ttk.Label(tbl, text="Грунт", width=12, anchor="w").grid(row=2, column=0, sticky="w", padx=(0, 8))
-        ttk.Label(tbl, text="Параметры", width=12, anchor="w").grid(row=3, column=0, sticky="w", padx=(0, 8))
-        ttk.Label(tbl, text="Источник", width=12, anchor="w").grid(row=4, column=0, sticky="w", padx=(0, 8))
-        ttk.Label(tbl, text="φ / E (CPT)", width=12, anchor="w").grid(row=5, column=0, sticky="w", padx=(0, 8))
-        ttk.Label(tbl, text="Статус", width=12, anchor="w").grid(row=6, column=0, sticky="w", padx=(0, 8))
-        self.layers_table = tbl
+        cont = ttk.Frame(tab)
+        cont.pack(fill="both", expand=True)
+        self.layers_table = cont
 
+    def _build_layer_row(self, parent, row: dict, soil_values: list[str], can_delete: bool):
+        card = ttk.Frame(parent, padding=(6, 4), relief="solid", borderwidth=1)
+        card.pack(fill="x", pady=(0, 6))
+        header = ttk.Frame(card)
+        header.pack(fill="x")
+        ige_id = str(row.get("ige", "") or "")
+        depth_text = f"{row.get('top_depth', '-') }–{row.get('bottom_depth', '-')} м"
+        ttk.Label(header, text=f"{ige_id}", anchor="w").pack(side="left")
+        ttk.Label(header, text=depth_text, anchor="w").pack(side="left", padx=(8, 0))
+        trash_text = f"{ICON_TRASH}"
+        btn_del = ttk.Button(header, text=trash_text, width=3, command=lambda ig=ige_id: self._request_delete_layer(ig))
+        if self.icon_font:
+            try:
+                style = ttk.Style(btn_del)
+                style.configure('Zond.LayerTrash.TButton', font=self.icon_font)
+                btn_del.configure(style='Zond.LayerTrash.TButton')
+            except Exception:
+                pass
+        btn_del.pack(side="right")
+        if not can_delete:
+            btn_del.configure(state="disabled")
+        ToolTip(btn_del, "Удалить слой")
+        self._layer_delete_buttons[ige_id] = btn_del
+
+        body = ttk.Frame(card)
+        body.pack(fill="x", pady=(4, 0))
+        soil_var = tk.StringVar(value=str(row.get("soil", "") or ""))
+        ttk.Label(body, text="Тип:").grid(row=0, column=0, sticky="w")
+        cb = ttk.Combobox(body, state="readonly", width=16, textvariable=soil_var, values=list(soil_values or []))
+        cb.grid(row=0, column=1, sticky="w", padx=(4, 8))
+        self._ige_controls[ige_id] = cb
+
+        ttk.Label(body, text="Источник:").grid(row=0, column=2, sticky="w")
+        source_var = tk.StringVar(value=str(row.get("data_source", "manual") or "manual"))
+        source_cb = ttk.Combobox(body, state="readonly", width=10, textvariable=source_var, values=["auto", "manual", "lab"])
+        source_cb.grid(row=0, column=3, sticky="w", padx=(4, 8))
+
+        ttk.Label(body, text="qc_avg:").grid(row=0, column=4, sticky="w")
+        qc_var = tk.StringVar(value=str(row.get("qc_avg", "") if row.get("qc_avg", None) is not None else ""))
+        qc_ent = ttk.Entry(body, width=8, textvariable=qc_var)
+        qc_ent.grid(row=0, column=5, sticky="w", padx=(4, 8))
+
+        ttk.Label(body, text="n:").grid(row=0, column=6, sticky="w")
+        n_var = tk.StringVar(value=str(row.get("n_points", "") if row.get("n_points", None) is not None else ""))
+        n_ent = ttk.Entry(body, width=6, textvariable=n_var)
+        n_ent.grid(row=0, column=7, sticky="w", padx=(4, 8))
+
+        ttk.Label(body, text="V:").grid(row=0, column=8, sticky="w")
+        v_var = tk.StringVar(value=str(row.get("variation_coeff", "") if row.get("variation_coeff", None) is not None else ""))
+        v_ent = ttk.Entry(body, width=6, textvariable=v_var)
+        v_ent.grid(row=0, column=9, sticky="w", padx=(4, 8))
+
+        notes_var = tk.StringVar(value=str(row.get("notes", "") or ""))
+        ttk.Label(body, text="Описание:").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        notes_ent = ttk.Entry(body, width=36, textvariable=notes_var)
+        notes_ent.grid(row=1, column=1, columnspan=3, sticky="we", padx=(4, 8), pady=(4, 0))
+
+        dynamic = ttk.Frame(card)
+        dynamic.pack(fill="x", pady=(4, 0))
+        self._rebuild_dynamic_fields(dynamic, row)
+
+        cb.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, sv=soil_var: self._apply_ige_edit(ig, sv))
+        cb.bind("<Button-1>", lambda _e, ig=ige_id: self._select_ige(ig), add="+")
+        source_cb.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=source_var: self._change_layer_field(ig, "data_source", vv.get()))
+        qc_ent.bind("<FocusOut>", lambda _e, ig=ige_id, vv=qc_var: self._change_layer_field(ig, "qc_avg", vv.get()))
+        n_ent.bind("<FocusOut>", lambda _e, ig=ige_id, vv=n_var: self._change_layer_field(ig, "n_points", vv.get()))
+        v_ent.bind("<FocusOut>", lambda _e, ig=ige_id, vv=v_var: self._change_layer_field(ig, "variation_coeff", vv.get()))
+        notes_ent.bind("<FocusOut>", lambda _e, ig=ige_id, vv=notes_var: self._change_layer_field(ig, "notes", vv.get()))
+
+    def _rebuild_dynamic_fields(self, holder, row: dict):
+        for ch in holder.winfo_children():
+            ch.destroy()
+        soil = str(row.get("soil", "") or "").lower()
+        ige_id = str(row.get("ige", "") or "")
+        if "пес" in soil:
+            ttk.Label(holder, text="Разновидность:").grid(row=0, column=0, sticky="w")
+            sand_kind = tk.StringVar(value=str(row.get("sand_kind", "") or ""))
+            sand_kind_cb = ttk.Combobox(holder, state="readonly", width=16, textvariable=sand_kind, values=["гравелистый", "крупный", "средней крупности", "мелкий", "пылеватый"])
+            sand_kind_cb.grid(row=0, column=1, sticky="w", padx=(4, 8))
+            sand_kind_cb.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=sand_kind: self._change_layer_field(ig, "sand_kind", vv.get()))
+            ttk.Label(holder, text="Водонасыщение:").grid(row=0, column=2, sticky="w")
+            sat = tk.StringVar(value=str(row.get("sand_water_saturation", "") or ""))
+            sat_cb = ttk.Combobox(holder, state="readonly", width=16, textvariable=sat, values=["малой степени", "влажный", "водонасыщенный"])
+            sat_cb.grid(row=0, column=3, sticky="w", padx=(4, 8))
+            sat_cb.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=sat: self._change_layer_field(ig, "sand_water_saturation", vv.get()))
+            alluvial = tk.BooleanVar(value=bool(row.get("sand_is_alluvial", False)))
+            ttk.Checkbutton(holder, text="Алювиальный", variable=alluvial, command=lambda ig=ige_id, vv=alluvial: self._change_layer_field(ig, "sand_is_alluvial", bool(vv.get()))).grid(row=0, column=4, sticky="w")
+            ttk.Label(holder, text="Плотность:").grid(row=0, column=5, sticky="w", padx=(8,0))
+            dens = tk.StringVar(value=str(row.get("density_state", "") or ""))
+            dens_cb = ttk.Combobox(holder, state="readonly", width=14, textvariable=dens, values=["рыхлый", "средней плотности", "плотный"])
+            dens_cb.grid(row=0, column=6, sticky="w", padx=(4, 0))
+            dens_cb.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=dens: self._change_layer_field(ig, "density_state", vv.get()))
+        else:
+            ttk.Label(holder, text="Консистенция:").grid(row=0, column=0, sticky="w")
+            cons = tk.StringVar(value=str(row.get("consistency", "") or ""))
+            cons_cb = ttk.Combobox(holder, state="readonly", width=16, textvariable=cons, values=["твёрдая", "полутвёрдая", "тугопластичная", "мягкопластичная", "текучепластичная", "текучая"])
+            cons_cb.grid(row=0, column=1, sticky="w", padx=(4, 8))
+            cons_cb.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=cons: self._change_layer_field(ig, "consistency", vv.get()))
+            ttk.Label(holder, text="IL:").grid(row=0, column=2, sticky="w")
+            il = tk.StringVar(value=str(row.get("IL", "") if row.get("IL", None) is not None else ""))
+            il_ent = ttk.Entry(holder, width=8, textvariable=il)
+            il_ent.grid(row=0, column=3, sticky="w", padx=(4, 8))
+            il_ent.bind("<FocusOut>", lambda _e, ig=ige_id, vv=il: self._change_layer_field(ig, "IL", vv.get()))
+
+    def _request_delete_layer(self, ige_id: str):
+        cmd = self.commands.get("delete_layer")
+        if callable(cmd):
+            cmd(str(ige_id or "").strip())
+
+    def _change_layer_field(self, ige_id: str, field_name: str, value):
+        cmd = self.commands.get("change_layer_field")
+        if callable(cmd):
+            cmd(str(ige_id or "").strip(), str(field_name or "").strip(), value)
     def _build_processing_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Обработка")
@@ -341,33 +451,22 @@ class RibbonView(ttk.Frame):
     def set_layer_edit_mode(self, value: bool):
         self.layers_edit_var.set(bool(value))
 
-    def set_layers(self, rows: list[dict], soil_values: list[str]):
+    def set_layers(self, rows: list[dict], soil_values: list[str], *, can_add: bool = True, can_delete: bool = True):
         self._layer_rows = list(rows or [])
         self._ige_controls = {}
+        self._layer_delete_buttons = {}
+        self._layer_add_enabled = bool(can_add)
         if not hasattr(self, "layers_table"):
             return
-        for child in self.layers_table.grid_slaves():
-            if int(child.grid_info().get("column", 0)) > 0:
-                child.destroy()
+        for child in self.layers_table.winfo_children():
+            child.destroy()
+        if not can_add:
+            self.set_enabled("add_layer", False, "Достигнут лимит 12 слоёв")
+        else:
+            self.set_enabled("add_layer", True)
 
-        for idx, row in enumerate(self._layer_rows, start=1):
-            ige_id = str(row.get("ige", "") or "")
-            soil_var = tk.StringVar(value=str(row.get("soil", "") or ""))
-            self.layers_table.columnconfigure(idx, weight=0)
-            lbl = ttk.Label(self.layers_table, text=ige_id, anchor="center", width=18)
-            lbl.grid(row=1, column=idx, sticky="ew", padx=2, pady=(0, 1))
-            cb = ttk.Combobox(self.layers_table, state="readonly", width=16, textvariable=soil_var, values=list(soil_values or []))
-            cb.grid(row=2, column=idx, sticky="ew", padx=2, pady=1)
-            btn_params = ttk.Button(self.layers_table, text="Выбрать…", width=16, style="RibbonCompact.TButton", command=lambda ig=ige_id: self._open_ige_params(ig))
-            btn_params.grid(row=3, column=idx, sticky="ew", padx=2, pady=1)
-            ttk.Label(self.layers_table, text=str(row.get("source", "")), width=18, anchor="center").grid(row=4, column=idx, sticky="ew", padx=2, pady=1)
-            ttk.Label(self.layers_table, text=f"{row.get('phi', '-')} / {row.get('e', '-')}", width=18, anchor="center").grid(row=5, column=idx, sticky="ew", padx=2, pady=1)
-            ttk.Label(self.layers_table, text=str(row.get("status", "")), width=18, anchor="center").grid(row=6, column=idx, sticky="ew", padx=2, pady=1)
-            cb.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, sv=soil_var: self._apply_ige_edit(ig, sv))
-            lbl.bind("<Button-1>", lambda _e, ig=ige_id: self._select_ige(ig))
-            cb.bind("<Button-1>", lambda _e, ig=ige_id: self._select_ige(ig), add="+")
-            self._ige_controls[ige_id] = cb
-
+        for row in self._layer_rows:
+            self._build_layer_row(self.layers_table, row, soil_values, can_delete)
     def focus_ige_row(self, ige_id: str):
         ig = str(ige_id or "").strip()
         cb = self._ige_controls.get(ig)

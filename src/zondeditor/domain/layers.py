@@ -7,6 +7,8 @@ from typing import Any
 MIN_LAYER_THICKNESS_M = 0.20
 SNAP_STEP_M = 0.10
 INSERT_LAYER_THICKNESS_M = 1.00
+MIN_LAYERS_PER_TEST = 1
+MAX_LAYERS_PER_TEST = 12
 
 
 class CalcMode(str, Enum):
@@ -79,6 +81,31 @@ def snap_depth(value_m: float, step_m: float = SNAP_STEP_M) -> float:
 
 
 def layer_to_dict(layer: Layer) -> dict[str, Any]:
+    params = dict(layer.params or {})
+    params.setdefault("layer_id", str(getattr(layer, "ige_id", "") or f"ИГЭ-{int(getattr(layer, 'ige_num', 1) or 1)}"))
+    params.setdefault("ige_num", int(getattr(layer, "ige_num", 1) or 1))
+    params.setdefault("top_depth", float(layer.top_m))
+    params.setdefault("bottom_depth", float(layer.bot_m))
+    params.setdefault("soil_type", str(layer.soil_type.value))
+    params.setdefault("soil_description", "")
+    params.setdefault("data_source", "manual")
+    params.setdefault("qc_avg", None)
+    params.setdefault("n_points", None)
+    params.setdefault("variation_coeff", None)
+    params.setdefault("sand_kind", "")
+    params.setdefault("sand_water_saturation", "")
+    params.setdefault("sand_is_alluvial", False)
+    params.setdefault("density_state", "")
+    params.setdefault("consistency", "")
+    params.setdefault("IL", None)
+    params.setdefault("Ip", None)
+    params.setdefault("e", None)
+    params.setdefault("Sr", None)
+    params.setdefault("w", None)
+    params.setdefault("wL", None)
+    params.setdefault("wP", None)
+    params.setdefault("organic_content", None)
+    params.setdefault("notes", "")
     return {
         "top_m": float(layer.top_m),
         "bot_m": float(layer.bot_m),
@@ -88,7 +115,7 @@ def layer_to_dict(layer: Layer) -> dict[str, Any]:
         "calc_mode": str(layer.calc_mode.value),
         "style": dict(layer.style or {}),
         "name": str(layer.name or ""),
-        "params": dict(layer.params or {}),
+        "params": params,
     }
 
 
@@ -101,6 +128,31 @@ def layer_from_dict(data: dict[str, Any]) -> Layer:
     raw_ige_id = str(data.get("ige_id") or "").strip()
     if not raw_ige_id:
         raw_ige_id = f"ИГЭ-{int(data.get('ige_num', 1) or 1)}"
+    params = dict(data.get("params") or {})
+    params.setdefault("layer_id", raw_ige_id)
+    params.setdefault("ige_num", int(data.get("ige_num", 1) or 1))
+    params.setdefault("top_depth", float(data.get("top_m", 0.0) or 0.0))
+    params.setdefault("bottom_depth", float(data.get("bot_m", 0.0) or 0.0))
+    params.setdefault("soil_type", str(soil.value))
+    params.setdefault("soil_description", "")
+    params.setdefault("data_source", "manual")
+    params.setdefault("qc_avg", None)
+    params.setdefault("n_points", None)
+    params.setdefault("variation_coeff", None)
+    params.setdefault("sand_kind", "")
+    params.setdefault("sand_water_saturation", "")
+    params.setdefault("sand_is_alluvial", False)
+    params.setdefault("density_state", "")
+    params.setdefault("consistency", "")
+    params.setdefault("IL", None)
+    params.setdefault("Ip", None)
+    params.setdefault("e", None)
+    params.setdefault("Sr", None)
+    params.setdefault("w", None)
+    params.setdefault("wL", None)
+    params.setdefault("wP", None)
+    params.setdefault("organic_content", None)
+    params.setdefault("notes", "")
     return Layer(
         top_m=float(data.get("top_m", 0.0) or 0.0),
         bot_m=float(data.get("bot_m", 0.0) or 0.0),
@@ -110,7 +162,7 @@ def layer_from_dict(data: dict[str, Any]) -> Layer:
         calc_mode=calc_mode,
         style=style,
         name=str(data.get("name") or ""),
-        params=dict(data.get("params") or {}),
+        params=params,
     )
 
 

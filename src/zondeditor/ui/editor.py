@@ -60,6 +60,8 @@ from src.zondeditor.domain.layers import (
     move_layer_boundary,
     normalize_layers,
     validate_layers,
+    MIN_LAYERS_PER_TEST,
+    MAX_LAYERS_PER_TEST,
 )
 
 from src.zondeditor.ui.consts import *
@@ -1275,6 +1277,68 @@ class GeoCanvasEditor(tk.Tk):
             return 0
         return None
 
+    def _can_add_layer(self, ti: int) -> bool:
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return False
+        layers = self._ensure_test_layers(self.tests[int(ti)])
+        return len(layers) < MAX_LAYERS_PER_TEST
+
+    def _can_delete_layer(self, ti: int) -> bool:
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return False
+        layers = self._ensure_test_layers(self.tests[int(ti)])
+        return len(layers) > MIN_LAYERS_PER_TEST
+
+    def _add_layer_from_ribbon(self):
+        ti = self._active_layers_test_index()
+        if ti is None:
+            return
+        if not self._can_add_layer(int(ti)):
+            self._set_status("Достигнут лимит 12 слоёв")
+            return
+        if not self._can_insert_layer_from_bottom(int(ti)):
+            self._set_status("Недостаточно мощности для добавления слоя")
+            return
+        self._push_undo()
+        self._insert_layer_from_bottom(int(ti))
+
+    def _delete_layer_by_ige(self, ige_id: str):
+        ti = self._active_layers_test_index()
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return
+        t = self.tests[int(ti)]
+        layers = self._ensure_test_layers(t)
+        if len(layers) <= MIN_LAYERS_PER_TEST:
+            self._set_status("Нельзя удалить единственный слой")
+            return
+        target = str(ige_id or "").strip()
+        for idx, lyr in enumerate(layers):
+            if str(getattr(lyr, "ige_id", "") or "").strip() == target:
+                self._push_undo()
+                self._remove_layer_at_index(int(ti), idx)
+                return
+
+    def _change_layer_field_from_ribbon(self, ige_id: str, field_name: str, value):
+        ti = self._active_layers_test_index()
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return
+        t = self.tests[int(ti)]
+        target = str(ige_id or "").strip()
+        field = str(field_name or "").strip()
+        changed = False
+        for lyr in self._ensure_test_layers(t):
+            if str(getattr(lyr, "ige_id", "") or "").strip() != target:
+                continue
+            self._push_undo()
+            params = dict(getattr(lyr, "params", {}) or {})
+            params[field] = value
+            lyr.params = params
+            changed = True
+            break
+        if changed:
+            self._calc_layer_params_for_test(int(ti))
+            self._sync_layers_panel()
+
     def _sync_layers_panel(self):
         self._ensure_default_iges()
         if not getattr(self, "ribbon_view", None):
@@ -1288,20 +1352,35 @@ class GeoCanvasEditor(tk.Tk):
         ige_ids = {self._layer_ige_id(lyr) for lyr in layers}
         ige_ids.update(str(x) for x in (self.ige_registry or {}).keys())
         rows = []
-        for ige_id in sorted(ige_ids, key=self._ige_id_to_num):
+        for lyr in layers:
+            ige_id = self._layer_ige_id(lyr)
             ent = self._ensure_ige_entry(ige_id)
             cpt = dict(ent.get("cpt_result") or {})
+            params = dict(getattr(lyr, "params", {}) or {})
             rows.append(
                 {
                     "ige": ige_id,
                     "soil": str(ent.get("soil_type") or ""),
+                    "top_depth": f"{float(getattr(lyr, 'top_m', 0.0)):.2f}",
+                    "bottom_depth": f"{float(getattr(lyr, 'bot_m', 0.0)):.2f}",
+                    "data_source": str(params.get("data_source", "manual") or "manual"),
+                    "qc_avg": params.get("qc_avg", None),
+                    "n_points": params.get("n_points", None),
+                    "variation_coeff": params.get("variation_coeff", None),
+                    "sand_kind": str(params.get("sand_kind", "") or ""),
+                    "sand_water_saturation": str(params.get("sand_water_saturation", "") or ""),
+                    "sand_is_alluvial": bool(params.get("sand_is_alluvial", False)),
+                    "density_state": str(params.get("density_state", "") or ""),
+                    "consistency": str(params.get("consistency", "") or ""),
+                    "IL": params.get("IL", None),
+                    "notes": str(params.get("notes", "") or ""),
                     "source": str(cpt.get("source") or "-"),
                     "phi": ("-" if cpt.get("phi_norm") is None else f"{float(cpt.get('phi_norm')):.1f}"),
                     "e": ("-" if cpt.get("E_norm") is None else f"{float(cpt.get('E_norm')):.1f}"),
                     "status": str(cpt.get("status_text") or "-")
                 }
             )
-        self.ribbon_view.set_layers(rows, [x.value for x in SoilType])
+        self.ribbon_view.set_layers(rows, [x.value for x in SoilType], can_add=self._can_add_layer(int(ti)), can_delete=self._can_delete_layer(int(ti)))
         if rows:
             current_ige = str(rows[0].get("ige") or "ИГЭ-1")
             ent = self._ensure_ige_entry(current_ige)
@@ -1542,6 +1621,9 @@ class GeoCanvasEditor(tk.Tk):
                 "edit_ige": self._edit_ige_from_ribbon,
                 "select_ige": self._select_ige_for_ribbon,
                 "add_ige": self._add_unassigned_ige_from_ribbon,
+                "add_layer": self._add_layer_from_ribbon,
+                "delete_layer": self._delete_layer_by_ige,
+                "change_layer_field": self._change_layer_field_from_ribbon,
                 "calc_cpt": self.calculate_cpt_params,
                 "edit_ige_cpt": self._edit_selected_ige_cpt_params,
                 "apply_calc": lambda: self._redraw(),
@@ -5458,6 +5540,9 @@ class GeoCanvasEditor(tk.Tk):
         t = self.tests[int(ti)]
         layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
         li = int(layer_index)
+        if len(layers) >= MAX_LAYERS_PER_TEST:
+            self._set_status("Достигнут лимит 12 слоёв")
+            return
         if not (0 <= li < len(layers)):
             return
         base = layers[li]
@@ -5490,6 +5575,7 @@ class GeoCanvasEditor(tk.Tk):
         soil = SoilType.SANDY_LOAM
         layers.insert(ins_idx, Layer(top_m=ins_top, bot_m=ins_bot, ige_id=new_ige_id, soil_type=soil, calc_mode=calc_mode_for_soil(soil), style=dict(SOIL_STYLE.get(soil, {})), ige_num=self._ige_id_to_num(new_ige_id)))
         t.layers = normalize_layers(layers)
+        self._renumber_layers(t)
         self.ige_registry[new_ige_id] = {"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}}
         try:
             self._apply_ige_to_layer(t.layers[int(ins_idx)])
@@ -5507,6 +5593,10 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
     def _can_insert_layer_from_top(self, ti: int) -> bool:
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return False
+        if len(self._ensure_test_layers(self.tests[int(ti)])) >= MAX_LAYERS_PER_TEST:
+            return False
         return self._can_split_layer_index(int(ti), 0)
 
     def _can_insert_layer_from_bottom(self, ti: int) -> bool:
@@ -5515,6 +5605,8 @@ class GeoCanvasEditor(tk.Tk):
         t = self.tests[int(ti)]
         layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
         if not layers:
+            return False
+        if len(layers) >= MAX_LAYERS_PER_TEST:
             return False
         return self._can_split_layer_index(int(ti), len(layers) - 1)
 
@@ -5529,6 +5621,7 @@ class GeoCanvasEditor(tk.Tk):
         removed = layers.pop(0)
         layers[0].top_m = float(removed.top_m)
         t.layers = normalize_layers(layers)
+        self._renumber_layers(t)
         self._calc_layer_params_for_test(int(ti))
         self._sync_layers_panel()
         self._redraw()
@@ -5546,6 +5639,7 @@ class GeoCanvasEditor(tk.Tk):
         removed = layers.pop()
         layers[-1].bot_m = float(removed.bot_m)
         t.layers = normalize_layers(layers)
+        self._renumber_layers(t)
         self._calc_layer_params_for_test(int(ti))
         self._sync_layers_panel()
         self._redraw()
@@ -5571,11 +5665,23 @@ class GeoCanvasEditor(tk.Tk):
         # Внутренний слой поглощается нижележащим соседним слоем.
         layers[li].top_m = float(removed.top_m)
         t.layers = normalize_layers(layers)
+        self._renumber_layers(t)
         self._calc_layer_params_for_test(int(ti))
         self._sync_layers_panel()
         self._redraw()
         self._redraw_graphs_now()
         self.schedule_graph_redraw()
+
+    def _renumber_layers(self, t):
+        for idx, lyr in enumerate(getattr(t, "layers", []) or [], start=1):
+            lyr.ige_num = idx
+            lyr.ige_id = f"ИГЭ-{idx}"
+            p = dict(getattr(lyr, "params", {}) or {})
+            p["ige_num"] = idx
+            p["layer_id"] = lyr.ige_id
+            p["top_depth"] = float(getattr(lyr, "top_m", 0.0))
+            p["bottom_depth"] = float(getattr(lyr, "bot_m", 0.0))
+            lyr.params = p
 
     def _on_layer_drag_motion(self, event):
         drag = getattr(self, "_layer_drag", None)
