@@ -253,6 +253,7 @@ class GeoCanvasEditor(tk.Tk):
             self.graph_w = 150
 
         self._editing = None  # (test_idx,row,field, entry)
+        self._editing_meta = None
         self._ctx_menu = None
         self._ctx_target = None  # (ti,row) for delete
         self._rc_preview = None  # (ti,row) transient red row highlight for context menu
@@ -6929,7 +6930,7 @@ class GeoCanvasEditor(tk.Tk):
 
 
 
-    def _begin_edit(self, ti: int, row: int, field: str, display_row: int | None = None):
+    def _begin_edit(self, ti: int, row: int, field: str, display_row: int | None = None, *, new_tail: bool = False):
         """Edit qc/fs cell. row is data index, display_row is grid index."""
         if self._is_test_locked(int(ti)):
             self._set_status("Опыт заблокирован")
@@ -7019,7 +7020,7 @@ class GeoCanvasEditor(tk.Tk):
                 # добавляем новую строку в хвост и начинаем редактирование
                 self._append_row(ti)
                 try:
-                    self._begin_edit(ti, next_row, field, (display_row or row) + 1)
+                    self._begin_edit(ti, next_row, field, (display_row or row) + 1, new_tail=True)
                 except Exception:
                     pass
 
@@ -7030,6 +7031,7 @@ class GeoCanvasEditor(tk.Tk):
         e.bind("<FocusOut>", lambda _ev: (setattr(self, "_edit_end_reason", "focusout"), self._end_edit(commit=True)))
 
         self._editing = (ti, row, field, e, display_row)
+        self._editing_meta = {"new_tail": bool(new_tail), "row": int(row), "field": str(field), "ti": int(ti)}
 
     def _begin_edit_depth0(self, ti: int, display_row: int = 0):
         """Редактирование первой глубины (depth[0]) с автопересчётом всей колонки depth."""
@@ -7067,6 +7069,7 @@ class GeoCanvasEditor(tk.Tk):
         e.bind("<FocusOut>", lambda _ev: self._end_edit_depth0(ti, e, commit=True))
 
         self._editing = (ti, 0, "depth", e, display_row)
+        self._editing_meta = {"new_tail": False, "row": 0, "field": "depth", "ti": int(ti)}
 
     def _end_edit_depth0(self, ti: int, e, commit: bool):
         try:
@@ -7079,6 +7082,7 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
         self._editing = None
+        self._editing_meta = None
         if not commit:
             self._redraw()
             self._redraw_graphs_now()
@@ -7151,6 +7155,36 @@ class GeoCanvasEditor(tk.Tk):
         self._redraw()
         self._redraw_graphs_now()
         self.schedule_graph_redraw()
+
+    def _cleanup_new_tail_row_if_empty(self, ti: int, row: int, *, reason: str = "") -> bool:
+        if ti is None or ti < 0 or ti >= len(getattr(self, "tests", []) or []):
+            return False
+        t = self.tests[int(ti)]
+        q_arr = list(getattr(t, "qc", []) or [])
+        f_arr = list(getattr(t, "fs", []) or [])
+        d_arr = list(getattr(t, "depth", []) or [])
+        n = max(len(q_arr), len(f_arr), len(d_arr))
+        if n <= 0:
+            return False
+        row = int(row)
+        if row < 0 or row >= n or row != (n - 1):
+            return False
+        qv = str(q_arr[row]).strip() if row < len(q_arr) and q_arr[row] is not None else ""
+        fv = str(f_arr[row]).strip() if row < len(f_arr) and f_arr[row] is not None else ""
+        if qv != "" or fv != "":
+            return False
+        self._tail_debug_log("TAIL_TRIM", f"new_tail_cleanup APPLY ti={int(ti)} row={int(row)} reason={reason} len_depth={len(d_arr)} len_qc={len(q_arr)} len_fs={len(f_arr)}", ti=int(ti))
+        fl = self.flags.get(t.tid) or TestFlags(False, set(), set(), set(), set())
+        self._delete_data_row_in_test(t, fl, row)
+        self.flags[t.tid] = fl
+        try:
+            self._sync_layers_to_test_depth_range(int(ti))
+        except Exception:
+            pass
+        self._redraw()
+        self.schedule_graph_redraw()
+        return True
+
     def _end_edit(self, commit: bool):
         if not self._editing:
             return
@@ -7168,10 +7202,16 @@ class GeoCanvasEditor(tk.Tk):
             e.destroy()
         except Exception:
             pass
+        edit_meta = dict(getattr(self, "_editing_meta", {}) or {})
         self._editing = None
+        self._editing_meta = None
         end_reason = str(getattr(self, "_edit_end_reason", "unknown") or "unknown")
         self._edit_end_reason = None
-        self._tail_debug_log("TAIL_EDIT", f"end_edit ENTER ti={int(ti)} field={field} row={int(row)} disp_r={_disp} commit={bool(commit)} reason={end_reason} raw_val={repr(val)}", ti=int(ti))
+        self._tail_debug_log("TAIL_EDIT", f"end_edit ENTER ti={int(ti)} field={field} row={int(row)} disp_r={_disp} commit={bool(commit)} reason={end_reason} raw_val={repr(val)} new_tail={bool(edit_meta.get('new_tail', False))}", ti=int(ti))
+
+        if bool(edit_meta.get("new_tail", False)) and str(val or "").strip() == "" and end_reason in ("focusout", "escape"):
+            if self._cleanup_new_tail_row_if_empty(int(ti), int(row), reason=str(end_reason)):
+                return
 
         if field == "depth":
             self._redraw()
