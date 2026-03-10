@@ -22,6 +22,7 @@ class RibbonView(ttk.Frame):
         self.sleeve_area_cm2_var = tk.StringVar(value="350")
         self.show_graphs_var = tk.BooleanVar(value=False)
         self.show_geology_var = tk.BooleanVar(value=True)
+        self.show_inclinometer_var = tk.BooleanVar(value=True)
         self.compact_1m_var = tk.BooleanVar(value=False)
         self.display_sort_var = tk.StringVar(value="date")
         self.layers_edit_var = tk.BooleanVar(value=False)
@@ -196,6 +197,16 @@ class RibbonView(ttk.Frame):
         geology_chk.pack(side="top", anchor="w", pady=(2, 0))
         ToolTip(geology_chk, "Показывать/скрывать геологическую колонку")
 
+        incl_chk = ttk.Checkbutton(
+            tab,
+            text="Инклинометр",
+            variable=self.show_inclinometer_var,
+            command=lambda: self.commands.get("toggle_inclinometer", lambda *_: None)(bool(self.show_inclinometer_var.get())),
+        )
+        incl_chk.pack(side="top", anchor="w", pady=(2, 0))
+        ToolTip(incl_chk, "Показывать/скрывать колонку инклинометра для К4")
+        self._inclinometer_chk = incl_chk
+
         sort_frame = ttk.LabelFrame(tab, text="Сортировка отображения", padding=4)
         sort_frame.pack(side="top", fill="x", pady=(6, 0))
         sort_date = ttk.Radiobutton(
@@ -305,6 +316,15 @@ class RibbonView(ttk.Frame):
 
     def set_show_geology_column(self, value: bool):
         self.show_geology_var.set(bool(value))
+
+    def set_show_inclinometer(self, value: bool, *, enabled: bool = True):
+        self.show_inclinometer_var.set(bool(value))
+        chk = getattr(self, "_inclinometer_chk", None)
+        if chk is not None:
+            try:
+                chk.configure(state=("normal" if enabled else "disabled"))
+            except Exception:
+                pass
 
     def set_display_sort_mode(self, value: str):
         self.display_sort_var.set("tid" if str(value or "").lower() == "tid" else "date")

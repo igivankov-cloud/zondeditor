@@ -212,6 +212,7 @@ class GeoCanvasEditor(tk.Tk):
         self.pad_y = 8
         self.show_graphs = False
         self.show_geology_column = True
+        self.show_inclinometer = True
         self.compact_1m = False
         self.display_sort_mode = "date"
         self.expanded_meters: set[int] = set()
@@ -230,6 +231,7 @@ class GeoCanvasEditor(tk.Tk):
         self._layer_label_hitbox = []
         self._layer_ige_picker = None
         self._layer_ige_picker_meta = None
+        self._ige_picker_debug = bool(os.environ.get("ZONDEDITOR_DEBUG_IGE_PICKER") == "1")
         self._boundary_depth_editor = None
         self._editor_just_opened = False
         self._inline_edit_active = False
@@ -540,6 +542,7 @@ class GeoCanvasEditor(tk.Tk):
             "compact_1m": bool(getattr(self, "compact_1m", False)),
             "show_graphs": bool(getattr(self, "show_graphs", False)),
             "show_geology_column": bool(getattr(self, "show_geology_column", True)),
+            "show_inclinometer": bool(getattr(self, "show_inclinometer", True)),
             "display_sort_mode": str(getattr(self, "display_sort_mode", "date") or "date"),
             "expanded_meters": sorted(int(x) for x in (getattr(self, "expanded_meters", set()) or set())),
             "layer_edit_mode": bool(getattr(self, "layer_edit_mode", False)),
@@ -599,6 +602,10 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             self.show_geology_column = bool(getattr(self, "show_geology_column", True))
         try:
+            self.show_inclinometer = bool(snap.get("show_inclinometer", getattr(self, "show_inclinometer", True)))
+        except Exception:
+            self.show_inclinometer = bool(getattr(self, "show_inclinometer", True))
+        try:
             self.display_sort_mode = str(snap.get("display_sort_mode", getattr(self, "display_sort_mode", "date")) or "date").lower()
         except Exception:
             self.display_sort_mode = "date"
@@ -620,6 +627,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.set_compact_1m(bool(self.compact_1m))
                 self.ribbon_view.set_show_graphs(bool(self.show_graphs))
                 self.ribbon_view.set_show_geology_column(bool(self.show_geology_column))
+                self.ribbon_view.set_show_inclinometer(bool(self.show_inclinometer), enabled=(str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"))
                 self.ribbon_view.set_display_sort_mode(str(self.display_sort_mode))
                 self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
                 self.ribbon_view.set_layer_edit_mode(True)
@@ -836,6 +844,40 @@ class GeoCanvasEditor(tk.Tk):
         self._redraw()
         self.schedule_graph_redraw()
 
+    def _sync_view_ribbon_state(self):
+        try:
+            rv = getattr(self, "ribbon_view", None)
+            if rv is None:
+                return
+            is_k4 = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"
+            if not is_k4:
+                self.show_inclinometer = False
+            rv.set_show_inclinometer(bool(getattr(self, "show_inclinometer", True)) if is_k4 else False, enabled=is_k4)
+        except Exception:
+            pass
+
+    def _toggle_show_inclinometer(self, value: bool | None = None):
+        is_k4 = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"
+        if not is_k4:
+            self.show_inclinometer = False
+            try:
+                if getattr(self, "ribbon_view", None):
+                    self.ribbon_view.set_show_inclinometer(False, enabled=False)
+            except Exception:
+                pass
+            return
+        if value is None:
+            value = bool(getattr(self, "show_inclinometer", True))
+        self.show_inclinometer = bool(value)
+        try:
+            if getattr(self, "ribbon_view", None):
+                self.ribbon_view.set_show_inclinometer(self.show_inclinometer, enabled=True)
+        except Exception:
+            pass
+        self._build_grid()
+        self._redraw()
+        self.schedule_graph_redraw()
+
     def _set_display_sort_mode(self, mode: str | None):
         mode_norm = str(mode or "date").strip().lower()
         mode_norm = "tid" if mode_norm == "tid" else "date"
@@ -847,6 +889,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.set_display_sort_mode(self.display_sort_mode)
         except Exception:
             pass
+        self._build_grid()
         self._redraw()
         self.schedule_graph_redraw()
 
@@ -1458,6 +1501,7 @@ class GeoCanvasEditor(tk.Tk):
                 "reduce_step": self.convert_10_to_5,
                 "toggle_graphs": self._toggle_show_graphs,
                 "toggle_geology_column": self._toggle_show_geology_column,
+                "toggle_inclinometer": self._toggle_show_inclinometer,
                 "toggle_compact_1m": self._toggle_compact_1m,
                 "set_display_sort_mode": self._set_display_sort_mode,
                 "toggle_layer_edit": self._toggle_layer_edit_mode,
@@ -1476,6 +1520,7 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
             self.ribbon_view.set_show_graphs(bool(getattr(self, "show_graphs", False)))
             self.ribbon_view.set_show_geology_column(bool(getattr(self, "show_geology_column", True)))
+            self.ribbon_view.set_show_inclinometer(bool(getattr(self, "show_inclinometer", True)), enabled=(str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"))
             self.ribbon_view.set_compact_1m(bool(getattr(self, "compact_1m", False)))
             self.ribbon_view.set_display_sort_mode(str(getattr(self, "display_sort_mode", "date")))
             self.ribbon_view.set_layer_edit_mode(True)
@@ -3798,7 +3843,8 @@ class GeoCanvasEditor(tk.Tk):
 
     # ---------------- drawing helpers ----------------
     def _table_col_width(self) -> int:
-        return self.w_depth + self.w_val*2 + (self.w_val if getattr(self, "geo_kind", "K2")=="K4" else 0)
+        show_incl = bool(getattr(self, "show_inclinometer", True)) and (str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4")
+        return self.w_depth + self.w_val*2 + (self.w_val if show_incl else 0)
 
     def _is_graph_panel_visible(self) -> bool:
         return bool(getattr(self, "show_graphs", False) or getattr(self, "show_geology_column", True))
@@ -4926,6 +4972,7 @@ class GeoCanvasEditor(tk.Tk):
                 #   - Сверху: клик только в СТРОКУ ПЕРЕД первой существующей.
                 if field in ("qc", "fs"):
                     t = self.tests[ti]
+                    start_r = int((getattr(self, "_grid_start_rows", {}) or {}).get(ti, 0))
 
                     # --- TOP: разрешаем дописывать "верх" по принципу "низа" ---
                     top_disp = start_r - 1
@@ -5096,6 +5143,8 @@ class GeoCanvasEditor(tk.Tk):
         self._hover_after = self.after(delay_ms, _show)
 
     def _ige_picker_log(self, msg: str):
+        if not bool(getattr(self, "_ige_picker_debug", False)):
+            return
         try:
             print(f"[IGE_PICKER] {msg}")
         except Exception:
@@ -5903,6 +5952,7 @@ class GeoCanvasEditor(tk.Tk):
 
 
     def _redraw(self):
+        self._sync_view_ribbon_state()
         # два холста: hcanvas (фиксированная шапка) + canvas (данные)
         try:
             self.canvas.delete("all")
@@ -6018,7 +6068,7 @@ class GeoCanvasEditor(tk.Tk):
             self.hcanvas.create_text(x0 + self.w_depth / 2, sh_y, text="H, м", font=("Segoe UI", 9), fill=hdr_text)
             self.hcanvas.create_text(x0 + self.w_depth + self.w_val / 2, sh_y, text="qc", font=("Segoe UI", 9), fill=hdr_text)
             self.hcanvas.create_text(x0 + self.w_depth + self.w_val + self.w_val / 2, sh_y, text="fs", font=("Segoe UI", 9), fill=hdr_text)
-            if getattr(self, "geo_kind", "K2") == "K4":
+            if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True)):
                 self.hcanvas.create_text(x0 + self.w_depth + self.w_val*2 + self.w_val/2, sh_y, text="U", font=("Segoe UI", 9), fill=hdr_text)
 
             # --- ТАБЛИЦА (canvas) ---
@@ -6041,7 +6091,8 @@ class GeoCanvasEditor(tk.Tk):
                 qc_txt = str(t.qc[data_i]) if has_row else ""
                 fs_txt = str(t.fs[data_i]) if has_row else ""
                 incl_txt = ""
-                if getattr(self, "geo_kind", "K2") == "K4":
+                incl_enabled = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True))
+                if incl_enabled:
                     incl_list = getattr(t, "incl", None)
                     if has_row and incl_list is not None and data_i < len(incl_list):
                         incl_txt = str(incl_list[data_i])
@@ -6069,11 +6120,11 @@ class GeoCanvasEditor(tk.Tk):
                     fs_txt = "" if meter_fs_max is None else str(int(round(float(meter_fs_max))))
                     if meter_qc_max is None and meter_fs_max is None:
                         depth_txt = ""
-                    if getattr(self, "geo_kind", "K2") == "K4":
+                    if incl_enabled:
                         incl_txt = ""
 
                 # K4: если канал инклинометра отсутствует/пустой — показываем 0
-                if getattr(self, "geo_kind", "K2") == "K4":
+                if incl_enabled:
                     try:
                         if has_row and (incl_txt is None or str(incl_txt).strip() == ""):
                             incl_txt = "0"
@@ -6081,7 +6132,7 @@ class GeoCanvasEditor(tk.Tk):
                         pass
 
 
-                is_blank_row = (qc_txt.strip()=="" and fs_txt.strip()=="" and (incl_txt.strip()=="" if getattr(self, "geo_kind", "K2")=="K4" else True))
+                is_blank_row = (qc_txt.strip()=="" and fs_txt.strip()=="" and (incl_txt.strip()=="" if incl_enabled else True))
 
                 if not has_row and not is_meter_row:
                     depth_txt = ""
@@ -6154,7 +6205,7 @@ class GeoCanvasEditor(tk.Tk):
                     ("qc", qc_txt, fill_for("qc")),
                     ("fs", fs_txt, fill_for("fs")),
                 ]
-                if getattr(self, "geo_kind", "K2") == "K4":
+                if incl_enabled:
                     cells.append(("incl", incl_txt, fill_for("incl")))
 
                 for field, txt, fill in cells:
@@ -6281,8 +6332,10 @@ class GeoCanvasEditor(tk.Tk):
                     field = "depth"
                 elif relx < (self.w_depth + self.w_val):
                     field = "qc"
-                else:
+                elif relx < (self.w_depth + self.w_val * 2):
                     field = "fs"
+                else:
+                    field = "incl"
                 if bool(getattr(self, "compact_1m", False)):
                     meter_n = (getattr(self, "_grid_meter_rows", {}) or {}).get(row)
                     if meter_n is not None:
