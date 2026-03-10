@@ -241,6 +241,8 @@ class GeoCanvasEditor(tk.Tk):
         }
         self.layer_store = LayerStore()
         self._debug_layers_overlay = bool(os.environ.get("ZONDEDITOR_DEBUG_LAYERS") == "1")
+        self._debug_tail_edit = bool(os.environ.get("ZONDEDITOR_DEBUG_TAIL_EDIT") == "1")
+        self._debug_tail_rows = int(os.environ.get("ZONDEDITOR_DEBUG_TAIL_ROWS", "10") or 10)
         self.cpt_calc_settings = {"method": METHOD_SP446, "alluvial_sands": True, "groundwater_level": None}
 
         try:
@@ -251,6 +253,7 @@ class GeoCanvasEditor(tk.Tk):
             self.graph_w = 150
 
         self._editing = None  # (test_idx,row,field, entry)
+        self._editing_meta = None
         self._ctx_menu = None
         self._ctx_target = None  # (ti,row) for delete
         self._rc_preview = None  # (ti,row) transient red row highlight for context menu
@@ -729,6 +732,29 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
 
+    def _tail_debug_log(self, prefix: str, msg: str, *, ti: int | None = None):
+        if not bool(getattr(self, "_debug_tail_edit", False)):
+            return
+        if ti is not None:
+            active = getattr(self, "_active_test_idx", None)
+            if active is not None and int(active) != int(ti):
+                return
+        try:
+            print(f"[{prefix}] {msg}", file=sys.stderr)
+        except Exception:
+            pass
+
+    def _is_tail_display_row(self, display_row: int, *, window: int | None = None) -> bool:
+        try:
+            units = getattr(self, "_grid_units", []) or []
+            if not units:
+                return False
+            w = int(window if window is not None else getattr(self, "_debug_tail_rows", 10) or 10)
+            w = max(1, w)
+            return int(display_row) >= max(0, len(units) - w)
+        except Exception:
+            return False
+
     def _push_undo(self):
         if not self.tests:
             self._sync_layers_panel()
@@ -946,24 +972,32 @@ class GeoCanvasEditor(tk.Tk):
             self.expanded_meters.add(meter_n)
         self._schedule_rebuild_redraw()
 
-    def _expanded_meter_for_depth_cell(self, ti: int, display_row: int) -> int | None:
+    def _meter_for_display_row(self, display_row: int) -> int | None:
         if not bool(getattr(self, "compact_1m", False)):
             return None
         try:
-            mp = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {}) or {}
-            data_row = mp.get(display_row)
-            if data_row is None:
+            units = getattr(self, "_grid_units", []) or []
+            if int(display_row) < 0 or int(display_row) >= len(units):
                 return None
-            t = self.tests[ti]
-            dv = self._depth_at_index(t, int(data_row))
-            if dv is None:
+            unit = units[int(display_row)]
+            if not unit:
                 return None
-            meter_n = int(math.floor(float(dv)))
-            if meter_n in (getattr(self, "expanded_meters", set()) or set()):
-                return meter_n
+            if unit[0] == "meter":
+                return int(unit[1])
+            if unit[0] == "row":
+                base_i = int(unit[1])
+                base = getattr(self, "_grid_base", []) or []
+                if 0 <= base_i < len(base) and base[base_i] is not None:
+                    return int(math.floor(float(base[base_i])))
         except Exception:
             return None
         return None
+
+    def _expanded_meter_for_depth_cell(self, ti: int, display_row: int) -> int | None:
+        meter_n = self._meter_for_display_row(int(display_row))
+        if meter_n is None:
+            return None
+        return meter_n if meter_n in (getattr(self, "expanded_meters", set()) or set()) else None
 
     def _toggle_compact_1m_from_ui(self):
         self._toggle_compact_1m(bool(getattr(self, "_compact_1m_var", None).get() if getattr(self, "_compact_1m_var", None) is not None else False))
@@ -4482,7 +4516,7 @@ class GeoCanvasEditor(tk.Tk):
         data_top, data_bot = self._test_effective_data_depth_range(t)
         data_top = float(data_top)
         data_bot = float(data_bot)
-        inactive_fill = "#eeeeee"
+        inactive_fill = "white"
 
         ty_top = depth_to_y(data_top)
         ty_bot = depth_to_y(data_bot)
@@ -5856,9 +5890,37 @@ class GeoCanvasEditor(tk.Tk):
                 return False
         data_i = self._display_row_data_index(int(ti), int(display_row))
         if data_i is None:
+            if self._is_tail_display_row(int(display_row)):
+                self._tail_debug_log("TAIL_DEBUG", f"is_real_cell ti={int(ti)} field={field} disp_r={int(display_row)} data_i=None len_qc={len(getattr(self.tests[int(ti)], 'qc', []) or [])} len_fs={len(getattr(self.tests[int(ti)], 'fs', []) or [])} result=not_real(reason=no_data_index)", ti=int(ti))
             return False
         t = self.tests[int(ti)]
-        return 0 <= int(data_i) < len(getattr(t, "qc", []) or [])
+        if field == "qc":
+            arr = (getattr(t, "qc", []) or [])
+        elif field == "fs":
+            arr = (getattr(t, "fs", []) or [])
+        else:
+            arr = (getattr(t, "incl", []) or [])
+        real = 0 <= int(data_i) < len(arr)
+        if real and bool(getattr(self, "compact_1m", False)):
+            try:
+                cell_raw = arr[int(data_i)]
+            except Exception:
+                cell_raw = ""
+            # В свернутом режиме кликабельна только реально существующая ячейка
+            # в текущей колонке (не пустая именно в этом поле).
+            if str(cell_raw).strip() == "":
+                real = False
+        if self._is_tail_display_row(int(display_row)):
+            try:
+                mp = (getattr(self, "_grid_row_maps", {}) or {}).get(int(ti), {}) or {}
+                mapped_rows = sorted(int(x) for x in mp.keys())
+                start_r = (mapped_rows[0] if mapped_rows else None)
+                end_r = (mapped_rows[-1] if mapped_rows else None)
+            except Exception:
+                start_r = None
+                end_r = None
+            self._tail_debug_log("TAIL_DEBUG", f"is_real_cell ti={int(ti)} field={field} disp_r={int(display_row)} data_i={int(data_i)} start_r={start_r} end_r={end_r} len_qc={len(getattr(t, 'qc', []) or [])} len_fs={len(getattr(t, 'fs', []) or [])} result={'real' if real else 'not_real'}", ti=int(ti))
+        return real
 
     def _ensure_cell_visible(self, col: int, row: int, field: str, pad: int = 6):
         """Автопрокрутка: при навигации стрелками/Enter держим редактируемую ячейку в видимой зоне."""
@@ -6054,9 +6116,17 @@ class GeoCanvasEditor(tk.Tk):
                     depth_txt = ""
 
                 data_i = mp.get(r, None)
-                has_row = (data_i is not None) and (data_i < len(getattr(t, "qc", []) or []))
-                qc_txt = str(t.qc[data_i]) if has_row else ""
-                fs_txt = str(t.fs[data_i]) if has_row else ""
+                q_arr = (getattr(t, "qc", []) or [])
+                f_arr = (getattr(t, "fs", []) or [])
+                has_row = (data_i is not None) and (data_i < max(len(q_arr), len(f_arr)))
+                qc_txt = str(q_arr[data_i]) if (data_i is not None and data_i < len(q_arr)) else ""
+                fs_txt = str(f_arr[data_i]) if (data_i is not None and data_i < len(f_arr)) else ""
+                if self._is_tail_display_row(int(r)):
+                    self._tail_debug_log(
+                        "TAIL_RENDER",
+                        f"ti={int(ti)} disp_r={int(r)} data_i={data_i} qc_exists={bool(data_i is not None and data_i < len(q_arr))} fs_exists={bool(data_i is not None and data_i < len(f_arr))} qc_txt={repr(qc_txt)} fs_txt={repr(fs_txt)} has_row={bool(has_row)}",
+                        ti=int(ti),
+                    )
                 incl_txt = ""
                 incl_enabled = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True))
                 if incl_enabled:
@@ -6119,24 +6189,27 @@ class GeoCanvasEditor(tk.Tk):
                     depth_txt = ""
 
 
+                meter_has_data = bool((meter_qc_max is not None) or (meter_fs_max is not None)) if is_meter_row else False
+
                 if is_meter_row:
-                    depth_fill = "#f3f6fb"
+                    # В свернутом режиме: существующий интервал окрашен единообразно,
+                    # отсутствующий интервал (пустая зона) — белый.
+                    depth_fill = "#f3f6fb" if meter_has_data else "white"
                 elif has_row and int(data_i) == 0:
                     depth_fill = "white"   # editable cell (только абсолютная первая data-row)
                 else:
-                    depth_fill = (GUI_DEPTH_BG if has_row else "#e6e6e6")
+                    depth_fill = (GUI_DEPTH_BG if has_row else "white")
 
                 if not depth_txt:
-                    depth_fill = "#e6e6e6"
+                    depth_fill = "white"
 
                 def fill_for(kind: str):
                     # Обычная логика по существующим/пустым строкам
                     if is_meter_row:
-                        if bool(getattr(self, "compact_1m", False)) and kind in ("qc", "fs"):
-                            return "#e6e6e6"
-                        return "#f3f6fb"
+                        # Для существующего meter-интервала все ячейки строки одного цвета.
+                        return depth_fill
                     if not has_row:
-                        return "#e6e6e6"
+                        return "white"
                     if is_blank_row:
                         return "white"
 
@@ -6521,6 +6594,7 @@ class GeoCanvasEditor(tk.Tk):
             target_depth = pdepth(t.depth[int(display_row)])
 
         if target_depth is None:
+            self._tail_debug_log("TAIL_TRIM", f"delete_by_display_row SKIP ti={int(ti)} disp_r={int(display_row)} mode={mode} reason=no_target_depth", ti=int(ti))
             return
 
         n = max(len(getattr(t, 'depth', []) or []), len(getattr(t, 'qc', []) or []), len(getattr(t, 'fs', []) or []))
@@ -6553,6 +6627,7 @@ class GeoCanvasEditor(tk.Tk):
                 return
             r0, r1 = min(inds), max(inds)
 
+        self._tail_debug_log("TAIL_TRIM", f"delete_by_display_row APPLY ti={int(ti)} disp_r={int(display_row)} mode={mode} target_depth={target_depth} r0={int(r0)} r1={int(r1)}", ti=int(ti))
         self._delete_range_indices(ti, r0, r1)
 
     def _delete_range_indices(self, ti, r0, r1):
@@ -6565,6 +6640,7 @@ class GeoCanvasEditor(tk.Tk):
         r0 = max(0, int(r0))
         r1 = min(n - 1, int(r1))
         if r1 < r0:
+            self._tail_debug_log("TAIL_TRIM", f"delete_range SKIP ti={int(ti)} r0={int(r0)} r1={int(r1)} reason=bad_range", ti=int(ti))
             return
         while len(t.depth) < n: t.depth.append('')
         while len(t.qc) < n: t.qc.append('')
@@ -6580,7 +6656,7 @@ class GeoCanvasEditor(tk.Tk):
                 pass
 
 
-
+        self._tail_debug_log("TAIL_TRIM", f"delete_range START ti={int(ti)} r0={int(r0)} r1={int(r1)} before_len_depth={len(t.depth)} before_len_qc={len(t.qc)} before_len_fs={len(t.fs)}", ti=int(ti))
         self._push_undo()
 
         # Сдвиг флагов подсветки (жёлтый/синий/фиолетовый) при удалении строк,
@@ -6626,6 +6702,7 @@ class GeoCanvasEditor(tk.Tk):
 
         del t.qc[r0:r1+1]
         del t.fs[r0:r1+1]
+        self._tail_debug_log("TAIL_TRIM", f"delete_range CUT ti={int(ti)} r0={int(r0)} r1={int(r1)} after_len_depth={len(t.depth)} after_len_qc={len(t.qc)} after_len_fs={len(t.fs)}", ti=int(ti))
 
         # K4: удаляем U синхронно, если есть
         if getattr(self, "geo_kind", "K2") == "K4":
@@ -6873,15 +6950,18 @@ class GeoCanvasEditor(tk.Tk):
 
 
 
-    def _begin_edit(self, ti: int, row: int, field: str, display_row: int | None = None):
+    def _begin_edit(self, ti: int, row: int, field: str, display_row: int | None = None, *, new_tail: bool = False):
         """Edit qc/fs cell. row is data index, display_row is grid index."""
         if self._is_test_locked(int(ti)):
             self._set_status("Опыт заблокирован")
             return
         self._end_edit(commit=True)
         t = self.tests[ti]
-        # Не даём вводить значения "после конца" зондирования.
-        if row < 0 or row >= len(t.qc):
+        # Не даём вводить значения "после конца" выбранного канала.
+        vals = (getattr(t, "qc", []) or []) if field == "qc" else (getattr(t, "fs", []) or [])
+        src_exists = (0 <= int(row) < len(vals))
+        if row < 0 or row >= len(vals):
+            self._tail_debug_log("TAIL_EDIT", f"begin_edit REJECT ti={int(ti)} field={field} row={int(row)} disp_r={display_row} data_i={int(row)} len_field={len(vals)} src_exists={src_exists} reason=row_out_of_bounds", ti=int(ti))
             return
 
         if display_row is None:
@@ -6896,6 +6976,17 @@ class GeoCanvasEditor(tk.Tk):
         if display_row is None:
             display_row = row
 
+        # В нижнем хвосте после commit предыдущей ячейки индекс data-row может сдвинуться.
+        # Приоритетно берём актуальный data_i из текущей карты display->data.
+        try:
+            mp_now = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {}) or {}
+            mapped_row = mp_now.get(int(display_row), None)
+            if mapped_row is not None and int(mapped_row) != int(row):
+                self._tail_debug_log("TAIL_ENTRY", f"begin_edit REMAP ti={int(ti)} field={field} disp_r={int(display_row)} row_arg={int(row)} row_mapped={int(mapped_row)}", ti=int(ti))
+                row = int(mapped_row)
+        except Exception:
+            pass
+
         self._refresh_display_order()
         col = self.display_cols.index(ti)
 
@@ -6906,39 +6997,71 @@ class GeoCanvasEditor(tk.Tk):
         vx0 = bx0 - self.canvas.canvasx(0)
         vy0 = by0 - self.canvas.canvasy(0)
 
-        current = t.qc[row] if field == "qc" else t.fs[row]
+        vals = (getattr(t, "qc", []) or []) if field == "qc" else (getattr(t, "fs", []) or [])
+        current_raw = vals[row] if 0 <= row < len(vals) else ""
+        current = "" if current_raw is None else str(current_raw)
+        self._tail_debug_log("TAIL_ENTRY", f"begin_edit SOURCE ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} source_before_create={repr(current_raw)} source_norm={repr(current)} len_field={len(vals)}", ti=int(ti))
         e = tk.Entry(self.canvas, validate="key", validatecommand=(self.register(_validate_int_0_300_key), "%P"))
+        self._tail_debug_log("TAIL_ENTRY", f"begin_edit CREATED ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} entry_text_after_create={repr(e.get())}", ti=int(ti))
         e.insert(0, current)
+        self._tail_debug_log("TAIL_ENTRY", f"begin_edit INSERTED ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} entry_text_after_insert={repr(e.get())}", ti=int(ti))
         try:
             e.configure(bg="white")
         except Exception:
             pass
+        self._tail_debug_log("TAIL_ENTRY", f"begin_edit BEFORE_SELECT ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} entry_text={repr(e.get())}", ti=int(ti))
         e.select_range(0, tk.END)
+        self._tail_debug_log("TAIL_SELECT", f"begin_edit SELECT_NOW ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} text_len={len(e.get())} selection_called=True", ti=int(ti))
         e.place(x=vx0 + 1, y=vy0 + 1, width=(bx1 - bx0) - 2, height=(by1 - by0) - 2)
         e.focus_set()
+        try:
+            # На некоторых темах/платформах выделение теряется из-за клика,
+            # поэтому закрепляем поведение «видно + выделено целиком» после фокуса.
+            def _tail_select_after_idle():
+                e.focus_set()
+                e.icursor(tk.END)
+                e.select_range(0, tk.END)
+                self._tail_debug_log("TAIL_SELECT", f"begin_edit SELECT_IDLE ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} text_len={len(e.get())} final_entry_text={repr(e.get())}", ti=int(ti))
+            e.after_idle(_tail_select_after_idle)
+        except Exception:
+            self._tail_debug_log("TAIL_SELECT", f"begin_edit SELECT_IDLE ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} selection_called=False", ti=int(ti))
+            pass
 
         def commit_and_next():
+            # Защита от "разрыва" хвоста: Enter по уже пустой ячейке без ввода
+            # не должен порождать новую пустую строку.
+            try:
+                raw_now = str(e.get() or "").strip()
+            except Exception:
+                raw_now = ""
+            if raw_now == "" and str(current).strip() == "":
+                self._tail_debug_log("TAIL_EDIT", f"enter_block_empty ti={int(ti)} field={field} row={int(row)} disp_r={display_row}", ti=int(ti))
+                return
+
+            setattr(self, "_edit_end_reason", "return")
             self._end_edit(commit=True)
 
             # Enter: вниз. Если дошли до конца — добавляем новую строку и продолжаем ввод.
             next_row = row + 1
-            if next_row < len(t.qc):
+            field_vals = (getattr(t, "qc", []) or []) if field == "qc" else (getattr(t, "fs", []) or [])
+            if next_row < len(field_vals):
                 self._begin_edit(ti, next_row, field, (display_row or row) + 1)
             else:
                 # добавляем новую строку в хвост и начинаем редактирование
                 self._append_row(ti)
                 try:
-                    self._begin_edit(ti, next_row, field, (display_row or row) + 1)
+                    self._begin_edit(ti, next_row, field, (display_row or row) + 1, new_tail=True)
                 except Exception:
                     pass
 
         e.bind("<Return>", lambda _ev: commit_and_next())
         for _k in ("<Up>","<Down>","<Left>","<Right>"):
             e.bind(_k, self._on_arrow_key)
-        e.bind("<Escape>", lambda _ev: self._end_edit(commit=False))
-        e.bind("<FocusOut>", lambda _ev: self._end_edit(commit=True))
+        e.bind("<Escape>", lambda _ev: (setattr(self, "_edit_end_reason", "escape"), self._end_edit(commit=False)))
+        e.bind("<FocusOut>", lambda _ev: (setattr(self, "_edit_end_reason", "focusout"), self._end_edit(commit=True)))
 
         self._editing = (ti, row, field, e, display_row)
+        self._editing_meta = {"new_tail": bool(new_tail), "row": int(row), "field": str(field), "ti": int(ti)}
 
     def _begin_edit_depth0(self, ti: int, display_row: int = 0):
         """Редактирование первой глубины (depth[0]) с автопересчётом всей колонки depth."""
@@ -6976,6 +7099,7 @@ class GeoCanvasEditor(tk.Tk):
         e.bind("<FocusOut>", lambda _ev: self._end_edit_depth0(ti, e, commit=True))
 
         self._editing = (ti, 0, "depth", e, display_row)
+        self._editing_meta = {"new_tail": False, "row": 0, "field": "depth", "ti": int(ti)}
 
     def _end_edit_depth0(self, ti: int, e, commit: bool):
         try:
@@ -6988,6 +7112,7 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
         self._editing = None
+        self._editing_meta = None
         if not commit:
             self._redraw()
             self._redraw_graphs_now()
@@ -7060,11 +7185,42 @@ class GeoCanvasEditor(tk.Tk):
         self._redraw()
         self._redraw_graphs_now()
         self.schedule_graph_redraw()
+
+    def _cleanup_new_tail_row_if_empty(self, ti: int, row: int, *, reason: str = "") -> bool:
+        if ti is None or ti < 0 or ti >= len(getattr(self, "tests", []) or []):
+            return False
+        t = self.tests[int(ti)]
+        q_arr = list(getattr(t, "qc", []) or [])
+        f_arr = list(getattr(t, "fs", []) or [])
+        d_arr = list(getattr(t, "depth", []) or [])
+        n = max(len(q_arr), len(f_arr), len(d_arr))
+        if n <= 0:
+            return False
+        row = int(row)
+        if row < 0 or row >= n or row != (n - 1):
+            return False
+        qv = str(q_arr[row]).strip() if row < len(q_arr) and q_arr[row] is not None else ""
+        fv = str(f_arr[row]).strip() if row < len(f_arr) and f_arr[row] is not None else ""
+        if qv != "" or fv != "":
+            return False
+        self._tail_debug_log("TAIL_TRIM", f"new_tail_cleanup APPLY ti={int(ti)} row={int(row)} reason={reason} len_depth={len(d_arr)} len_qc={len(q_arr)} len_fs={len(f_arr)}", ti=int(ti))
+        fl = self.flags.get(t.tid) or TestFlags(False, set(), set(), set(), set())
+        self._delete_data_row_in_test(t, fl, row)
+        self.flags[t.tid] = fl
+        try:
+            self._sync_layers_to_test_depth_range(int(ti))
+        except Exception:
+            pass
+        self._redraw()
+        self.schedule_graph_redraw()
+        return True
+
     def _end_edit(self, commit: bool):
         if not self._editing:
             return
         if len(self._editing) == 4:
             ti, row, field, e = self._editing
+            _disp = None
         else:
             ti, row, field, e, _disp = self._editing
         try:
@@ -7076,7 +7232,16 @@ class GeoCanvasEditor(tk.Tk):
             e.destroy()
         except Exception:
             pass
+        edit_meta = dict(getattr(self, "_editing_meta", {}) or {})
         self._editing = None
+        self._editing_meta = None
+        end_reason = str(getattr(self, "_edit_end_reason", "unknown") or "unknown")
+        self._edit_end_reason = None
+        self._tail_debug_log("TAIL_EDIT", f"end_edit ENTER ti={int(ti)} field={field} row={int(row)} disp_r={_disp} commit={bool(commit)} reason={end_reason} raw_val={repr(val)} new_tail={bool(edit_meta.get('new_tail', False))}", ti=int(ti))
+
+        if bool(edit_meta.get("new_tail", False)) and str(val or "").strip() == "" and end_reason in ("focusout", "escape"):
+            if self._cleanup_new_tail_row_if_empty(int(ti), int(row), reason=str(end_reason)):
+                return
 
         if field == "depth":
             self._redraw()
@@ -7085,19 +7250,49 @@ class GeoCanvasEditor(tk.Tk):
 
         if commit and self.tests:
             t = self.tests[ti]
-            if row < len(t.qc):
+            vals = (getattr(t, 'qc', []) or []) if field == 'qc' else (getattr(t, 'fs', []) or [])
+            if row < len(vals):
                 # keep previous coloring info, but mark this cell as manually edited (purple)
                 fl = self.flags.get(t.tid) or TestFlags(False, set(), set(), set(), set())
-                old = t.qc[row] if field == 'qc' else t.fs[row]
-                newv = _sanitize_int_0_300(val)
+                old = vals[row] if 0 <= row < len(vals) else ""
+                old_text = "" if old is None else str(old)
+                val_text = str(val or "")
+                # 1) Кликнули и ушли без изменения видимого текста: no-op.
+                if old_text.strip() == val_text.strip():
+                    self._tail_debug_log("TAIL_EDIT", f"end_edit NOOP_TEXT ti={int(ti)} field={field} row={int(row)} old={repr(old_text)} new={repr(val_text)}", ti=int(ti))
+                    self._redraw()
+                    self.schedule_graph_redraw()
+                    return
+
+                old_norm = _sanitize_int_0_300(old_text)
+                newv = _sanitize_int_0_300(val_text)
+
+                # 2) Нормализованные значения совпали: тоже no-op.
+                if old_norm.strip() == newv.strip():
+                    self._tail_debug_log("TAIL_EDIT", f"end_edit NOOP_NORM ti={int(ti)} field={field} row={int(row)} old_norm={repr(old_norm)} new_norm={repr(newv)}", ti=int(ti))
+                    self._redraw()
+                    self.schedule_graph_redraw()
+                    return
+
+                # Важная семантика: implicit focusout/blur с пустым raw значения НЕ равен
+                # явному намерению очистить крайнюю строку.
+                explicit_clear = (end_reason == "return") and (val_text.strip() == "")
+                if val_text.strip() == "" and old_text.strip() != "" and not explicit_clear:
+                    self._tail_debug_log(
+                        "TAIL_EDIT",
+                        f"end_edit IMPLICIT_EMPTY_NOOP ti={int(ti)} field={field} row={int(row)} reason={end_reason} old={repr(old_text)} raw={repr(val_text)}",
+                        ti=int(ti),
+                    )
+                    self._redraw()
+                    self.schedule_graph_redraw()
+                    return
+
                 # Undo: фиксируем снимок ДО изменения данных/раскраски
                 if commit:
                     try:
-                        # если реально меняем значение или удаляем строку
-                        if (str(old).strip() != str(newv).strip()):
-                            self._push_undo()
-                    except Exception:
                         self._push_undo()
+                    except Exception:
+                        pass
                 # Запрет: в середине зондирования нельзя ставить 0 или оставлять пусто.
                 # Пустое значение разрешено только на краях (первая/последняя строка) — тогда удаляем строку целиком.
                 last_filled_before = self._last_filled_row(t)
@@ -7105,20 +7300,32 @@ class GeoCanvasEditor(tk.Tk):
                 # edge-delete when clearing first/last filled row
                 if newv.strip() == "":
                     if row == 0 or row == last_filled_before:
+                        if end_reason != "return":
+                            self._tail_debug_log("TAIL_EDIT", f"end_edit SKIP_DELETE_EDGE ti={int(ti)} field={field} row={int(row)} last_filled={int(last_filled_before)} reason={end_reason} old={repr(old_text)} raw={repr(val_text)}", ti=int(ti))
+                            self._redraw()
+                            self.schedule_graph_redraw()
+                            return
+                        self._tail_debug_log("TAIL_TRIM", f"end_edit DELETE_EDGE ti={int(ti)} field={field} row={int(row)} last_filled={int(last_filled_before)} old={repr(old_text)} new={repr(newv)}", ti=int(ti))
                         # удалить строку данных и глубину
                         fl = self.flags.get(t.tid) or TestFlags(False, set(), set(), set(), set())
                         self._delete_data_row_in_test(t, fl, row)
                         self.flags[t.tid] = fl
+                        try:
+                            self._sync_layers_to_test_depth_range(int(ti))
+                        except Exception:
+                            pass
                         self._redraw()
                         self.schedule_graph_redraw()
                         return
                     else:
+                        self._tail_debug_log("TAIL_EDIT", f"end_edit REJECT_EMPTY_MIDDLE ti={int(ti)} field={field} row={int(row)} last_filled={int(last_filled_before)}", ti=int(ti))
                         self.status.config(text="Нельзя оставлять пустые значения в середине зондирования.")
                         self._redraw()
                         self.schedule_graph_redraw()
                         return
 
                 if newv.strip() == "0" and (0 < row < last_filled_before):
+                    self._tail_debug_log("TAIL_EDIT", f"end_edit REJECT_ZERO_MIDDLE ti={int(ti)} field={field} row={int(row)} last_filled={int(last_filled_before)}", ti=int(ti))
                     self.status.config(text="Нельзя записывать 0 в середине зондирования.")
                     self._redraw()
                     return
@@ -7126,6 +7333,7 @@ class GeoCanvasEditor(tk.Tk):
                     t.qc[row] = newv
                 else:
                     t.fs[row] = newv
+                self._tail_debug_log("TAIL_EDIT", f"end_edit APPLY ti={int(ti)} field={field} row={int(row)} old={repr(old_text)} new={repr(newv)}", ti=int(ti))
                 try:
                     if str(old).strip() != str(newv).strip():
                         mark_reason = "manual_zero" if str(newv).strip() == "0" else "manual_edit"
@@ -7151,18 +7359,34 @@ class GeoCanvasEditor(tk.Tk):
 
     def _last_filled_row(self, t: TestData) -> int:
         """Последняя строка с данными (qc или fs не пустые)."""
-        try:
-            n = min(len(getattr(t, 'qc', []) or []), len(getattr(t, 'fs', []) or []))
-        except Exception:
-            return -1
+        q_arr = list(getattr(t, 'qc', []) or [])
+        f_arr = list(getattr(t, 'fs', []) or [])
+        n = max(len(q_arr), len(f_arr))
         for i in range(n - 1, -1, -1):
-            if str(t.qc[i]).strip() != "" or str(t.fs[i]).strip() != "":
+            qv = str(q_arr[i]).strip() if i < len(q_arr) and q_arr[i] is not None else ""
+            fv = str(f_arr[i]).strip() if i < len(f_arr) and f_arr[i] is not None else ""
+            if qv != "" or fv != "":
+                try:
+                    ti_dbg = next((idx for idx, _t in enumerate(self.tests) if _t is t), None)
+                except Exception:
+                    ti_dbg = None
+                self._tail_debug_log("TAIL_DEBUG", f"last_filled_row ti={ti_dbg} len_qc={len(q_arr)} len_fs={len(f_arr)} result={i} rule=max_len_scan", ti=ti_dbg)
                 return i
+        try:
+            ti_dbg = next((idx for idx, _t in enumerate(self.tests) if _t is t), None)
+        except Exception:
+            ti_dbg = None
+        self._tail_debug_log("TAIL_DEBUG", f"last_filled_row ti={ti_dbg} len_qc={len(q_arr)} len_fs={len(f_arr)} result=-1 rule=max_len_scan", ti=ti_dbg)
         return -1
 
 
     def _delete_data_row_in_test(self, t: TestData, fl: TestFlags, row: int):
         """Удаляет строку row из depth/qc/fs и корректирует раскраски (interp/force/user)."""
+        try:
+            ti_dbg = next((idx for idx, _t in enumerate(self.tests) if _t is t), None)
+        except Exception:
+            ti_dbg = None
+        self._tail_debug_log("TAIL_TRIM", f"delete_data_row START ti={ti_dbg} row={int(row)} before_len_depth={len(getattr(t, 'depth', []) or [])} before_len_qc={len(getattr(t, 'qc', []) or [])} before_len_fs={len(getattr(t, 'fs', []) or [])}", ti=ti_dbg)
         try:
             if 0 <= row < len(t.depth):
                 t.depth.pop(row)
@@ -7203,6 +7427,8 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             fl.user_cells = set()
 
+        self._tail_debug_log("TAIL_TRIM", f"delete_data_row DONE ti={ti_dbg} row={int(row)} after_len_depth={len(getattr(t, 'depth', []) or [])} after_len_qc={len(getattr(t, 'qc', []) or [])} after_len_fs={len(getattr(t, 'fs', []) or [])}", ti=ti_dbg)
+
 
     def _append_row(self, ti: int):
         if self._is_test_locked(int(ti)):
@@ -7230,6 +7456,10 @@ class GeoCanvasEditor(tk.Tk):
         # не сбрасываем подсветку при добавлении строки; только гарантируем наличие флагов
         if t.tid not in self.flags:
             self.flags[t.tid] = TestFlags(False, set(), set(), set(), set())
+        try:
+            self._sync_layers_to_test_depth_range(int(ti))
+        except Exception:
+            pass
         self._redraw()
         self.schedule_graph_redraw()
 
