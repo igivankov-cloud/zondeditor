@@ -6906,7 +6906,8 @@ class GeoCanvasEditor(tk.Tk):
         vx0 = bx0 - self.canvas.canvasx(0)
         vy0 = by0 - self.canvas.canvasy(0)
 
-        current = t.qc[row] if field == "qc" else t.fs[row]
+        current_raw = t.qc[row] if field == "qc" else t.fs[row]
+        current = "" if current_raw is None else str(current_raw)
         e = tk.Entry(self.canvas, validate="key", validatecommand=(self.register(_validate_int_0_300_key), "%P"))
         e.insert(0, current)
         try:
@@ -6916,6 +6917,12 @@ class GeoCanvasEditor(tk.Tk):
         e.select_range(0, tk.END)
         e.place(x=vx0 + 1, y=vy0 + 1, width=(bx1 - bx0) - 2, height=(by1 - by0) - 2)
         e.focus_set()
+        try:
+            # На некоторых темах/платформах выделение теряется из-за клика,
+            # поэтому закрепляем поведение «видно + выделено целиком» после фокуса.
+            e.after_idle(lambda: (e.focus_set(), e.icursor(tk.END), e.select_range(0, tk.END)))
+        except Exception:
+            pass
 
         def commit_and_next():
             self._end_edit(commit=True)
@@ -7098,6 +7105,12 @@ class GeoCanvasEditor(tk.Tk):
                             self._push_undo()
                     except Exception:
                         self._push_undo()
+
+                # Пустой/неизменённый выход из редактирования не должен менять данные.
+                if str(old).strip() == str(newv).strip():
+                    self._redraw()
+                    self.schedule_graph_redraw()
+                    return
                 # Запрет: в середине зондирования нельзя ставить 0 или оставлять пусто.
                 # Пустое значение разрешено только на краях (первая/последняя строка) — тогда удаляем строку целиком.
                 last_filled_before = self._last_filled_row(t)
@@ -7109,6 +7122,10 @@ class GeoCanvasEditor(tk.Tk):
                         fl = self.flags.get(t.tid) or TestFlags(False, set(), set(), set(), set())
                         self._delete_data_row_in_test(t, fl, row)
                         self.flags[t.tid] = fl
+                        try:
+                            self._sync_layers_to_test_depth_range(int(ti))
+                        except Exception:
+                            pass
                         self._redraw()
                         self.schedule_graph_redraw()
                         return
@@ -7230,6 +7247,10 @@ class GeoCanvasEditor(tk.Tk):
         # не сбрасываем подсветку при добавлении строки; только гарантируем наличие флагов
         if t.tid not in self.flags:
             self.flags[t.tid] = TestFlags(False, set(), set(), set(), set())
+        try:
+            self._sync_layers_to_test_depth_range(int(ti))
+        except Exception:
+            pass
         self._redraw()
         self.schedule_graph_redraw()
 
