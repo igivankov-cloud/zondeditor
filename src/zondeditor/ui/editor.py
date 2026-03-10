@@ -5858,7 +5858,13 @@ class GeoCanvasEditor(tk.Tk):
         if data_i is None:
             return False
         t = self.tests[int(ti)]
-        return 0 <= int(data_i) < len(getattr(t, "qc", []) or [])
+        if field == "qc":
+            arr = (getattr(t, "qc", []) or [])
+        elif field == "fs":
+            arr = (getattr(t, "fs", []) or [])
+        else:
+            arr = (getattr(t, "incl", []) or [])
+        return 0 <= int(data_i) < len(arr)
 
     def _ensure_cell_visible(self, col: int, row: int, field: str, pad: int = 6):
         """Автопрокрутка: при навигации стрелками/Enter держим редактируемую ячейку в видимой зоне."""
@@ -6054,9 +6060,11 @@ class GeoCanvasEditor(tk.Tk):
                     depth_txt = ""
 
                 data_i = mp.get(r, None)
-                has_row = (data_i is not None) and (data_i < len(getattr(t, "qc", []) or []))
-                qc_txt = str(t.qc[data_i]) if has_row else ""
-                fs_txt = str(t.fs[data_i]) if has_row else ""
+                q_arr = (getattr(t, "qc", []) or [])
+                f_arr = (getattr(t, "fs", []) or [])
+                has_row = (data_i is not None) and (data_i < max(len(q_arr), len(f_arr)))
+                qc_txt = str(q_arr[data_i]) if (data_i is not None and data_i < len(q_arr)) else ""
+                fs_txt = str(f_arr[data_i]) if (data_i is not None and data_i < len(f_arr)) else ""
                 incl_txt = ""
                 incl_enabled = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True))
                 if incl_enabled:
@@ -6880,8 +6888,9 @@ class GeoCanvasEditor(tk.Tk):
             return
         self._end_edit(commit=True)
         t = self.tests[ti]
-        # Не даём вводить значения "после конца" зондирования.
-        if row < 0 or row >= len(t.qc):
+        # Не даём вводить значения "после конца" выбранного канала.
+        vals = (getattr(t, "qc", []) or []) if field == "qc" else (getattr(t, "fs", []) or [])
+        if row < 0 or row >= len(vals):
             return
 
         if display_row is None:
@@ -6906,7 +6915,8 @@ class GeoCanvasEditor(tk.Tk):
         vx0 = bx0 - self.canvas.canvasx(0)
         vy0 = by0 - self.canvas.canvasy(0)
 
-        current_raw = t.qc[row] if field == "qc" else t.fs[row]
+        vals = (getattr(t, "qc", []) or []) if field == "qc" else (getattr(t, "fs", []) or [])
+        current_raw = vals[row] if 0 <= row < len(vals) else ""
         current = "" if current_raw is None else str(current_raw)
         e = tk.Entry(self.canvas, validate="key", validatecommand=(self.register(_validate_int_0_300_key), "%P"))
         e.insert(0, current)
@@ -7092,10 +7102,11 @@ class GeoCanvasEditor(tk.Tk):
 
         if commit and self.tests:
             t = self.tests[ti]
-            if row < len(t.qc):
+            vals = (getattr(t, 'qc', []) or []) if field == 'qc' else (getattr(t, 'fs', []) or [])
+            if row < len(vals):
                 # keep previous coloring info, but mark this cell as manually edited (purple)
                 fl = self.flags.get(t.tid) or TestFlags(False, set(), set(), set(), set())
-                old = t.qc[row] if field == 'qc' else t.fs[row]
+                old = vals[row] if 0 <= row < len(vals) else ""
                 old_text = "" if old is None else str(old)
                 val_text = str(val or "")
                 # 1) Кликнули и ушли без изменения видимого текста: no-op.
@@ -7176,12 +7187,13 @@ class GeoCanvasEditor(tk.Tk):
 
     def _last_filled_row(self, t: TestData) -> int:
         """Последняя строка с данными (qc или fs не пустые)."""
-        try:
-            n = min(len(getattr(t, 'qc', []) or []), len(getattr(t, 'fs', []) or []))
-        except Exception:
-            return -1
+        q_arr = list(getattr(t, 'qc', []) or [])
+        f_arr = list(getattr(t, 'fs', []) or [])
+        n = max(len(q_arr), len(f_arr))
         for i in range(n - 1, -1, -1):
-            if str(t.qc[i]).strip() != "" or str(t.fs[i]).strip() != "":
+            qv = str(q_arr[i]).strip() if i < len(q_arr) and q_arr[i] is not None else ""
+            fv = str(f_arr[i]).strip() if i < len(f_arr) and f_arr[i] is not None else ""
+            if qv != "" or fv != "":
                 return i
         return -1
 
