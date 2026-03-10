@@ -972,24 +972,32 @@ class GeoCanvasEditor(tk.Tk):
             self.expanded_meters.add(meter_n)
         self._schedule_rebuild_redraw()
 
-    def _expanded_meter_for_depth_cell(self, ti: int, display_row: int) -> int | None:
+    def _meter_for_display_row(self, display_row: int) -> int | None:
         if not bool(getattr(self, "compact_1m", False)):
             return None
         try:
-            mp = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {}) or {}
-            data_row = mp.get(display_row)
-            if data_row is None:
+            units = getattr(self, "_grid_units", []) or []
+            if int(display_row) < 0 or int(display_row) >= len(units):
                 return None
-            t = self.tests[ti]
-            dv = self._depth_at_index(t, int(data_row))
-            if dv is None:
+            unit = units[int(display_row)]
+            if not unit:
                 return None
-            meter_n = int(math.floor(float(dv)))
-            if meter_n in (getattr(self, "expanded_meters", set()) or set()):
-                return meter_n
+            if unit[0] == "meter":
+                return int(unit[1])
+            if unit[0] == "row":
+                base_i = int(unit[1])
+                base = getattr(self, "_grid_base", []) or []
+                if 0 <= base_i < len(base) and base[base_i] is not None:
+                    return int(math.floor(float(base[base_i])))
         except Exception:
             return None
         return None
+
+    def _expanded_meter_for_depth_cell(self, ti: int, display_row: int) -> int | None:
+        meter_n = self._meter_for_display_row(int(display_row))
+        if meter_n is None:
+            return None
+        return meter_n if meter_n in (getattr(self, "expanded_meters", set()) or set()) else None
 
     def _toggle_compact_1m_from_ui(self):
         self._toggle_compact_1m(bool(getattr(self, "_compact_1m_var", None).get() if getattr(self, "_compact_1m_var", None) is not None else False))
