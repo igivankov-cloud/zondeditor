@@ -34,6 +34,9 @@ class RibbonView(ttk.Frame):
         self._ige_controls: dict[str, ttk.Combobox] = {}
         self._layer_delete_buttons: dict[str, ttk.Button] = {}
         self._layer_add_enabled = True
+        self._ige_cards: dict[str, ttk.Frame] = {}
+        self._ige_rows_cache: dict[str, dict] = {}
+        self._ige_soil_values: list[str] = []
 
         try:
             style = ttk.Style(self)
@@ -247,10 +250,7 @@ class RibbonView(ttk.Frame):
         host = ttk.Frame(tab)
         host.pack(fill="x", expand=False)
         self._ige_canvas = tk.Canvas(host, height=190, highlightthickness=0, bd=0)
-        self._ige_hsb = ttk.Scrollbar(host, orient="horizontal", command=self._ige_canvas.xview)
-        self._ige_canvas.configure(xscrollcommand=self._ige_hsb.set)
         self._ige_canvas.pack(side="top", fill="x", expand=True)
-        self._ige_hsb.pack(side="top", fill="x")
 
         self._ige_columns_frame = ttk.Frame(self._ige_canvas)
         self._ige_window_id = self._ige_canvas.create_window((0, 0), window=self._ige_columns_frame, anchor="nw")
@@ -282,6 +282,16 @@ class RibbonView(ttk.Frame):
         dlg.title(f"Описание {ige_id}")
         dlg.transient(root)
         dlg.grab_set()
+        try:
+            root.update_idletasks()
+            rw, rh = int(root.winfo_width()), int(root.winfo_height())
+            rx, ry = int(root.winfo_rootx()), int(root.winfo_rooty())
+            dw, dh = 560, 300
+            dx = rx + max((rw - dw) // 2, 0)
+            dy = ry + max((rh - dh) // 2, 0)
+            dlg.geometry(f"{dw}x{dh}+{dx}+{dy}")
+        except Exception:
+            pass
         frm = ttk.Frame(dlg, padding=8)
         frm.pack(fill="both", expand=True)
         txt = tk.Text(frm, width=52, height=10)
@@ -328,22 +338,22 @@ class RibbonView(ttk.Frame):
         soil = str(row.get("soil", "") or "").lower()
         if "пес" in soil and "супес" not in soil:
             sand_kind = tk.StringVar(value=str(row.get("sand_kind", "") or ""))
-            cb_kind = ttk.Combobox(parent, state="readonly", width=14, values=["гравелистый", "крупный", "средней крупности", "мелкий", "пылеватый"], textvariable=sand_kind)
+            cb_kind = ttk.Combobox(parent, state="readonly", width=18, values=["гравелистый", "крупный", "средней крупности", "мелкий", "пылеватый"], textvariable=sand_kind)
             cb_kind.grid(row=0, column=0, sticky="ew")
             self._set_combo_placeholder(cb_kind, sand_kind, "средней крупности")
 
             sat = tk.StringVar(value=str(row.get("sand_water_saturation", "") or ""))
-            cb_sat = ttk.Combobox(parent, state="readonly", width=14, values=["малой степени", "влажный", "водонасыщенный"], textvariable=sat)
+            cb_sat = ttk.Combobox(parent, state="readonly", width=18, values=["малой степени", "влажный", "водонасыщенный"], textvariable=sat)
             cb_sat.grid(row=1, column=0, sticky="ew", pady=(2, 0))
             self._set_combo_placeholder(cb_sat, sat, "влажный")
 
             dens = tk.StringVar(value=str(row.get("density_state", "") or ""))
-            cb_den = ttk.Combobox(parent, state="readonly", width=14, values=["рыхлый", "средней плотности", "плотный"], textvariable=dens)
+            cb_den = ttk.Combobox(parent, state="readonly", width=18, values=["рыхлый", "средней плотности", "плотный"], textvariable=dens)
             cb_den.grid(row=2, column=0, sticky="ew", pady=(2, 0))
             self._set_combo_placeholder(cb_den, dens, "средней плотности")
 
             alluvial = tk.BooleanVar(value=bool(row.get("sand_is_alluvial", False)))
-            ttk.Checkbutton(parent, text="a", width=2, variable=alluvial, command=lambda ig=ige_id, vv=alluvial: self._change_ige_field(ig, "sand_is_alluvial", bool(vv.get()))).grid(row=3, column=0, sticky="w", pady=(2, 0))
+            ttk.Checkbutton(parent, text="аллювиальный", variable=alluvial, command=lambda ig=ige_id, vv=alluvial: self._change_ige_field(ig, "sand_is_alluvial", bool(vv.get()))).grid(row=3, column=0, sticky="w", pady=(2, 0))
 
             cb_kind.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=sand_kind: self._change_ige_field(ig, "sand_kind", vv.get()))
             cb_sat.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=sat: self._change_ige_field(ig, "sand_water_saturation", vv.get()))
@@ -352,39 +362,46 @@ class RibbonView(ttk.Frame):
 
         if "супес" in soil:
             cons = tk.StringVar(value=str(row.get("consistency", "") or ""))
-            cb_cons = ttk.Combobox(parent, state="readonly", width=14, values=["твердая", "пластичная", "текучая"], textvariable=cons)
+            cb_cons = ttk.Combobox(parent, state="readonly", width=18, values=["твердая", "пластичная", "текучая"], textvariable=cons)
             cb_cons.grid(row=0, column=0, sticky="ew")
             self._set_combo_placeholder(cb_cons, cons, "пластичная")
             cb_cons.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=cons: self._change_ige_field(ig, "consistency", vv.get()))
             return
 
         cons = tk.StringVar(value=str(row.get("consistency", "") or ""))
-        cb_cons = ttk.Combobox(parent, state="readonly", width=14, values=["твердая", "полутвердая", "тугопластичная", "мягкопластичная", "текучепластичная", "текучая"], textvariable=cons)
+        cb_cons = ttk.Combobox(parent, state="readonly", width=18, values=["твердая", "полутвердая", "тугопластичная", "мягкопластичная", "текучепластичная", "текучая"], textvariable=cons)
         cb_cons.grid(row=0, column=0, sticky="ew")
         self._set_combo_placeholder(cb_cons, cons, "тугопластичная")
         cb_cons.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=cons: self._change_ige_field(ig, "consistency", vv.get()))
 
     def _build_ige_column(self, parent, row: dict, soil_values: list[str], can_delete: bool):
         ige_id = str(row.get("ige_id", "") or "")
-        card = ttk.Frame(parent, padding=(3, 3), relief="groove", borderwidth=1)
+        card = ttk.Frame(parent, padding=(4, 3), relief="solid", borderwidth=1)
         card.pack(side="left", fill="y", padx=(0, 4))
+        try:
+            card.configure(width=190, height=176)
+            card.pack_propagate(False)
+        except Exception:
+            pass
 
         hdr = ttk.Frame(card)
         hdr.pack(fill="x")
+        hdr.columnconfigure(0, weight=1)
         lbl_txt = str(row.get("label", ige_id) or ige_id)
-        lbl_btn = ttk.Button(hdr, text=lbl_txt, width=10, style="RibbonCompact.TButton", command=lambda ig=ige_id, txt=lbl_txt: self._edit_ige_label(ig, txt))
-        lbl_btn.pack(side="left")
-        btn_del = ttk.Button(hdr, text=ICON_TRASH, width=2, command=lambda ig=ige_id: self.commands.get("delete_ige", lambda *_: None)(ig))
+        lbl_btn = ttk.Button(hdr, text=lbl_txt, style="RibbonCompact.TButton", command=lambda ig=ige_id, txt=lbl_txt: self._edit_ige_label(ig, txt))
+        lbl_btn.grid(row=0, column=0, sticky="w")
         btn_note = ttk.Button(hdr, text="📄", width=2, command=lambda ig=ige_id, txt=str(row.get("notes", "") or ""): self._open_ige_notes(ig, txt))
-        btn_del.pack(side="right")
-        btn_note.pack(side="right", padx=(0, 1))
+        btn_note.grid(row=0, column=1, sticky="e", padx=(0, 1))
+        btn_del = ttk.Button(hdr, text=ICON_TRASH, width=2, command=lambda ig=ige_id: self.commands.get("delete_ige", lambda *_: None)(ig))
+        btn_del.grid(row=0, column=2, sticky="e")
         if not can_delete:
             btn_del.configure(state="disabled")
 
         body = ttk.Frame(card)
-        body.pack(fill="x", pady=(3, 0))
+        body.pack(fill="both", expand=True, pady=(3, 0))
+        body.columnconfigure(0, weight=1)
         soil_var = tk.StringVar(value=str(row.get("soil", "") or ""))
-        cb_soil = ttk.Combobox(body, state="readonly", width=14, values=list(soil_values or []), textvariable=soil_var)
+        cb_soil = ttk.Combobox(body, state="readonly", width=18, values=list(soil_values or []), textvariable=soil_var)
         cb_soil.grid(row=0, column=0, sticky="ew")
         self._set_combo_placeholder(cb_soil, soil_var, "супесь")
         cb_soil.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, sv=soil_var: self.commands.get("edit_ige", lambda *_: None)(ig, sv.get(), ""))
@@ -483,12 +500,70 @@ class RibbonView(ttk.Frame):
     def set_layer_edit_mode(self, value: bool):
         self.layers_edit_var.set(bool(value))
 
+    def _rows_signature(self, row: dict) -> tuple:
+        return (
+            str(row.get("label", "")),
+            str(row.get("soil", "")),
+            str(row.get("sand_kind", "")),
+            str(row.get("sand_water_saturation", "")),
+            str(row.get("density_state", "")),
+            bool(row.get("sand_is_alluvial", False)),
+            str(row.get("consistency", "")),
+            str(row.get("notes", "")),
+            bool(row.get("_can_delete", True)),
+        )
+
+    def _render_ige_cards(self, rows: list[dict], soil_values: list[str], can_delete: bool):
+        ids = [str(r.get("ige_id", "") or "") for r in rows]
+        existing = list(self._ige_cards.keys())
+        if ids != existing:
+            for ch in self._ige_columns_frame.winfo_children():
+                ch.destroy()
+            self._ige_cards = {}
+            self._ige_rows_cache = {}
+            for row in rows:
+                row = dict(row)
+                row["_can_delete"] = bool(can_delete)
+                self._build_ige_column(self._ige_columns_frame, row, soil_values, can_delete)
+                self._ige_cards[str(row.get("ige_id", "") or "")] = self._ige_columns_frame.winfo_children()[-1]
+                self._ige_rows_cache[str(row.get("ige_id", "") or "")] = row
+            return
+
+        for row in rows:
+            rid = str(row.get("ige_id", "") or "")
+            cur = dict(row)
+            cur["_can_delete"] = bool(can_delete)
+            if self._rows_signature(cur) == self._rows_signature(self._ige_rows_cache.get(rid, {})):
+                continue
+            card = self._ige_cards.get(rid)
+            if card is None:
+                continue
+            try:
+                card.destroy()
+            except Exception:
+                continue
+            self._build_ige_column(self._ige_columns_frame, cur, soil_values, can_delete)
+            # reposition card to original index
+            idx = ids.index(rid)
+            new_card = self._ige_columns_frame.winfo_children()[-1]
+            new_card.pack_forget()
+            new_card.pack(side="left", fill="y", padx=(0, 4), before=self._ige_columns_frame.winfo_children()[idx])
+            self._ige_cards[rid] = new_card
+            self._ige_rows_cache[rid] = cur
+
     def set_layers(self, rows: list[dict], soil_values: list[str], *, can_add: bool = True, can_delete: bool = True):
         self._layer_rows = list(rows or [])
-        for ch in self._ige_columns_frame.winfo_children():
-            ch.destroy()
-        for row in self._layer_rows:
-            self._build_ige_column(self._ige_columns_frame, row, soil_values, can_delete)
+        self._ige_soil_values = list(soil_values or [])
+        # remove trailing add button before incremental refresh
+        kids = list(self._ige_columns_frame.winfo_children())
+        if kids:
+            last = kids[-1]
+            if str(last.winfo_class()) == "TButton":
+                try:
+                    last.destroy()
+                except Exception:
+                    pass
+        self._render_ige_cards(self._layer_rows, self._ige_soil_values, bool(can_delete))
         btn_add = ttk.Button(self._ige_columns_frame, text="+ ИГЭ", style="RibbonCompact.TButton", command=self.commands.get("add_ige"))
         if not can_add:
             btn_add.configure(state="disabled")
