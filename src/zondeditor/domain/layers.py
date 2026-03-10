@@ -82,8 +82,10 @@ def snap_depth(value_m: float, step_m: float = SNAP_STEP_M) -> float:
 
 def layer_to_dict(layer: Layer) -> dict[str, Any]:
     params = dict(layer.params or {})
-    params.setdefault("layer_id", str(getattr(layer, "ige_id", "") or f"ИГЭ-{int(getattr(layer, 'ige_num', 1) or 1)}"))
+    params.setdefault("layer_id", f"layer-{int(getattr(layer, 'ige_num', 1) or 1)}")
     params.setdefault("ige_num", int(getattr(layer, "ige_num", 1) or 1))
+    params.setdefault("visual_order", int(getattr(layer, "ige_num", 1) or 1))
+    params.setdefault("ige_label", str(getattr(layer, "ige_id", "") or f"ИГЭ-{int(getattr(layer, 'ige_num', 1) or 1)}"))
     params.setdefault("top_depth", float(layer.top_m))
     params.setdefault("bottom_depth", float(layer.bot_m))
     params.setdefault("soil_type", str(layer.soil_type.value))
@@ -93,6 +95,7 @@ def layer_to_dict(layer: Layer) -> dict[str, Any]:
     params.setdefault("n_points", None)
     params.setdefault("variation_coeff", None)
     params.setdefault("sand_kind", "")
+    params.setdefault("sandy_loam_kind", "")
     params.setdefault("sand_water_saturation", "")
     params.setdefault("sand_is_alluvial", False)
     params.setdefault("density_state", "")
@@ -129,8 +132,10 @@ def layer_from_dict(data: dict[str, Any]) -> Layer:
     if not raw_ige_id:
         raw_ige_id = f"ИГЭ-{int(data.get('ige_num', 1) or 1)}"
     params = dict(data.get("params") or {})
-    params.setdefault("layer_id", raw_ige_id)
+    params.setdefault("layer_id", f"layer-{int(data.get('ige_num', 1) or 1)}")
     params.setdefault("ige_num", int(data.get("ige_num", 1) or 1))
+    params.setdefault("visual_order", int(data.get("ige_num", 1) or 1))
+    params.setdefault("ige_label", raw_ige_id)
     params.setdefault("top_depth", float(data.get("top_m", 0.0) or 0.0))
     params.setdefault("bottom_depth", float(data.get("bot_m", 0.0) or 0.0))
     params.setdefault("soil_type", str(soil.value))
@@ -140,6 +145,7 @@ def layer_from_dict(data: dict[str, Any]) -> Layer:
     params.setdefault("n_points", None)
     params.setdefault("variation_coeff", None)
     params.setdefault("sand_kind", "")
+    params.setdefault("sandy_loam_kind", "")
     params.setdefault("sand_water_saturation", "")
     params.setdefault("sand_is_alluvial", False)
     params.setdefault("density_state", "")
