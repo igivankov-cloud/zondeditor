@@ -4994,99 +4994,14 @@ class GeoCanvasEditor(tk.Tk):
 
             # qc/fs cells
             data_row = mp.get(row, None)
-
             if data_row is None:
-                # Вставка строки СВЕРХУ/СНИЗУ (без разрывов).
-                #   - Снизу: клик только в СЛЕДУЮЩУЮ строку после последней существующей.
-                #   - Сверху: клик только в СТРОКУ ПЕРЕД первой существующей.
-                if field in ("qc", "fs"):
-                    t = self.tests[ti]
-                    start_r = int((getattr(self, "_grid_start_rows", {}) or {}).get(ti, 0))
-
-                    # --- TOP: разрешаем дописывать "верх" по принципу "низа" ---
-                    top_disp = start_r - 1
-                    if row == top_disp:
-                        # не даём создавать "дырки" сверху: если первая строка уже пустая — заполни её сначала
-                        if len(t.qc) > 0:
-                            try:
-                                q0 = t.qc[0]
-                                f0 = t.fs[0]
-                            except Exception:
-                                q0 = None
-                                f0 = None
-                            if (q0 in (None, "")) and (f0 in (None, "")):
-                                self._set_status("Сначала заполните следующую строку")
-                                return
-                        # вычисляем шаг по глубинам (если есть), иначе дефолт
-                        step = 0.05
-                        try:
-                            if len(t.depth) >= 2:
-                                step = float(str(t.depth[1]).replace(",", ".")) - float(str(t.depth[0]).replace(",", "."))
-                                if step <= 0:
-                                    step = 0.05
-                            elif getattr(self, "current_step", None):
-                                step = float(self.current_step)
-                        except Exception:
-                            step = 0.05
-                        # новая глубина = первая - step
-                        d_new = 0.0
-                        try:
-                            if len(t.depth) >= 1:
-                                d_new = float(str(t.depth[0]).replace(",", ".")) - step
-                            else:
-                                d_new = 0.0
-                        except Exception:
-                            d_new = 0.0
-                        t.depth.insert(0, f"{d_new:.2f}")
-                        t.qc.insert(0, "")
-                        t.fs.insert(0, "")
-                        # сдвигаем подсветку (флаги) вниз на 1 строку
-                        try:
-                            fl = self.flags.get(getattr(t, "tid", None))
-                            if fl:
-                                # сдвиг всех cell-наборов на +1 (вставка строки в начале)
-                                def _bump(cells):
-                                    out=set()
-                                    for (r, knd) in (cells or set()):
-                                        try:
-                                            rr=int(r)
-                                        except Exception:
-                                            continue
-                                        out.add((rr+1, knd))
-                                    return out
-                                fl.user_cells = _bump(getattr(fl, 'user_cells', set()))
-                                fl.interp_cells = _bump(getattr(fl, 'interp_cells', set()))
-                                fl.force_cells = _bump(getattr(fl, 'force_cells', set()))
-                        except Exception:
-                            pass
-                        self._redraw()
-                        self.schedule_graph_redraw()
-                        self._begin_edit(ti, 0, field, display_row=row)
-                        return
-
-                    # --- BOTTOM (tail) ---
-                    next_disp = start_r + len(t.qc)
-                    if row != next_disp:
-                        return
-                    # если последняя строка существует, но она полностью пустая — не даём добавлять следующую
-                    if len(t.qc) > 0:
-                        try:
-                            q_last = t.qc[-1]
-                            f_last = t.fs[-1]
-                        except Exception:
-                            q_last = None
-                            f_last = None
-                        if (q_last in (None, "") ) and (f_last in (None, "") ):
-                            self._set_status("Сначала заполните предыдущую строку")
-                            return
-                    new_idx = len(t.qc)
-                    self._append_row(ti)
-                    self._begin_edit(ti, new_idx, field, display_row=row)
                 return
 
 
             # Normal in-range cell → start edit immediately
             if field in ("qc", "fs"):
+                if not self._is_real_interval_cell(int(ti), int(row), str(field)):
+                    return
                 if self._is_test_locked(int(ti)):
                     self._set_status("Опыт заблокирован")
                     return
@@ -5922,6 +5837,29 @@ class GeoCanvasEditor(tk.Tk):
             return x0 + self.w_depth + self.w_val*2, y0, x0 + self.w_depth + self.w_val*3, y1
         raise ValueError("bad field")
 
+    def _display_row_data_index(self, ti: int, display_row: int) -> int | None:
+        try:
+            mp = (getattr(self, "_grid_row_maps", {}) or {}).get(int(ti), {}) or {}
+            data_i = mp.get(int(display_row))
+            return int(data_i) if data_i is not None else None
+        except Exception:
+            return None
+
+    def _is_real_interval_cell(self, ti: int, display_row: int, field: str) -> bool:
+        """True only for cells that map to real data intervals and can be edited/selected."""
+        if field not in ("qc", "fs", "incl"):
+            return False
+        units = getattr(self, "_grid_units", []) or []
+        if 0 <= int(display_row) < len(units):
+            unit = units[int(display_row)]
+            if bool(getattr(self, "compact_1m", False)) and unit[0] == "meter":
+                return False
+        data_i = self._display_row_data_index(int(ti), int(display_row))
+        if data_i is None:
+            return False
+        t = self.tests[int(ti)]
+        return 0 <= int(data_i) < len(getattr(t, "qc", []) or [])
+
     def _ensure_cell_visible(self, col: int, row: int, field: str, pad: int = 6):
         """Автопрокрутка: при навигации стрелками/Enter держим редактируемую ячейку в видимой зоне."""
         try:
@@ -6186,16 +6124,20 @@ class GeoCanvasEditor(tk.Tk):
                 elif has_row and int(data_i) == 0:
                     depth_fill = "white"   # editable cell (только абсолютная первая data-row)
                 else:
-                    depth_fill = (GUI_DEPTH_BG if has_row else "white")
+                    depth_fill = (GUI_DEPTH_BG if has_row else "#e6e6e6")
 
                 if not depth_txt:
-                    depth_fill = "white"
+                    depth_fill = "#e6e6e6"
 
                 def fill_for(kind: str):
                     # Обычная логика по существующим/пустым строкам
                     if is_meter_row:
+                        if bool(getattr(self, "compact_1m", False)) and kind in ("qc", "fs"):
+                            return "#e6e6e6"
                         return "#f3f6fb"
-                    if not has_row or is_blank_row:
+                    if not has_row:
+                        return "#e6e6e6"
+                    if is_blank_row:
                         return "white"
 
                     # Нули (пропуски) подсвечиваем оранжевым во всех опытах, включая некорректные.
@@ -6238,6 +6180,8 @@ class GeoCanvasEditor(tk.Tk):
                     cells.append(("incl", incl_txt, fill_for("incl")))
 
                 for field, txt, fill in cells:
+                    if bool(getattr(self, "compact_1m", False)) and is_meter_row and field in ("qc", "fs"):
+                        txt = ""
                     # preview highlight for context-menu deletion
                     try:
                         if getattr(self, "_rc_preview", None) == (ti, r):
@@ -6372,6 +6316,8 @@ class GeoCanvasEditor(tk.Tk):
                         if field == "depth":
                             return ("meter_row", ti, row, int(meter_n))
                         return None
+                if field in ("qc", "fs", "incl") and not self._is_real_interval_cell(int(ti), int(row), str(field)):
+                    return None
                 return ("cell", ti, row, field)
 
         return None
@@ -6412,11 +6358,8 @@ class GeoCanvasEditor(tk.Tk):
 
         data_row = mp.get(row, None)
         if data_row is None:
-            # Клик по пустой строке ниже конца зондирования: добавляем строку и даём ввод
-            if field in ("qc", "fs"):
-                new_idx = len(self.tests[ti].qc)
-                self._append_row(ti)
-                self._begin_edit(ti, new_idx, field, display_row=row)
+            return
+        if field in ("qc", "fs") and not self._is_real_interval_cell(int(ti), int(row), str(field)):
             return
         self._begin_edit(ti, data_row, field, display_row=row)
 
