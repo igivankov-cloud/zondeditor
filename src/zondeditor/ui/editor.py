@@ -6938,8 +6938,9 @@ class GeoCanvasEditor(tk.Tk):
         t = self.tests[ti]
         # Не даём вводить значения "после конца" выбранного канала.
         vals = (getattr(t, "qc", []) or []) if field == "qc" else (getattr(t, "fs", []) or [])
+        src_exists = (0 <= int(row) < len(vals))
         if row < 0 or row >= len(vals):
-            self._tail_debug_log("TAIL_EDIT", f"begin_edit REJECT ti={int(ti)} field={field} row={int(row)} disp_r={display_row} len_field={len(vals)} reason=row_out_of_bounds", ti=int(ti))
+            self._tail_debug_log("TAIL_EDIT", f"begin_edit REJECT ti={int(ti)} field={field} row={int(row)} disp_r={display_row} data_i={int(row)} len_field={len(vals)} src_exists={src_exists} reason=row_out_of_bounds", ti=int(ti))
             return
 
         if display_row is None:
@@ -6954,6 +6955,17 @@ class GeoCanvasEditor(tk.Tk):
         if display_row is None:
             display_row = row
 
+        # В нижнем хвосте после commit предыдущей ячейки индекс data-row может сдвинуться.
+        # Приоритетно берём актуальный data_i из текущей карты display->data.
+        try:
+            mp_now = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {}) or {}
+            mapped_row = mp_now.get(int(display_row), None)
+            if mapped_row is not None and int(mapped_row) != int(row):
+                self._tail_debug_log("TAIL_ENTRY", f"begin_edit REMAP ti={int(ti)} field={field} disp_r={int(display_row)} row_arg={int(row)} row_mapped={int(mapped_row)}", ti=int(ti))
+                row = int(mapped_row)
+        except Exception:
+            pass
+
         self._refresh_display_order()
         col = self.display_cols.index(ti)
 
@@ -6967,23 +6979,31 @@ class GeoCanvasEditor(tk.Tk):
         vals = (getattr(t, "qc", []) or []) if field == "qc" else (getattr(t, "fs", []) or [])
         current_raw = vals[row] if 0 <= row < len(vals) else ""
         current = "" if current_raw is None else str(current_raw)
-        self._tail_debug_log("TAIL_EDIT", f"begin_edit OPEN ti={int(ti)} field={field} row={int(row)} disp_r={display_row} data_i={int(row)} len_field={len(vals)} current={repr(current)}", ti=int(ti))
+        self._tail_debug_log("TAIL_ENTRY", f"begin_edit SOURCE ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} source_before_create={repr(current_raw)} source_norm={repr(current)} len_field={len(vals)}", ti=int(ti))
         e = tk.Entry(self.canvas, validate="key", validatecommand=(self.register(_validate_int_0_300_key), "%P"))
+        self._tail_debug_log("TAIL_ENTRY", f"begin_edit CREATED ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} entry_text_after_create={repr(e.get())}", ti=int(ti))
         e.insert(0, current)
+        self._tail_debug_log("TAIL_ENTRY", f"begin_edit INSERTED ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} entry_text_after_insert={repr(e.get())}", ti=int(ti))
         try:
             e.configure(bg="white")
         except Exception:
             pass
+        self._tail_debug_log("TAIL_ENTRY", f"begin_edit BEFORE_SELECT ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} entry_text={repr(e.get())}", ti=int(ti))
         e.select_range(0, tk.END)
+        self._tail_debug_log("TAIL_SELECT", f"begin_edit SELECT_NOW ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} text_len={len(e.get())} selection_called=True", ti=int(ti))
         e.place(x=vx0 + 1, y=vy0 + 1, width=(bx1 - bx0) - 2, height=(by1 - by0) - 2)
         e.focus_set()
         try:
             # На некоторых темах/платформах выделение теряется из-за клика,
             # поэтому закрепляем поведение «видно + выделено целиком» после фокуса.
-            e.after_idle(lambda: (e.focus_set(), e.icursor(tk.END), e.select_range(0, tk.END)))
-            self._tail_debug_log("TAIL_EDIT", f"begin_edit SELECT ti={int(ti)} field={field} row={int(row)} disp_r={display_row} selected=True", ti=int(ti))
+            def _tail_select_after_idle():
+                e.focus_set()
+                e.icursor(tk.END)
+                e.select_range(0, tk.END)
+                self._tail_debug_log("TAIL_SELECT", f"begin_edit SELECT_IDLE ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} text_len={len(e.get())} final_entry_text={repr(e.get())}", ti=int(ti))
+            e.after_idle(_tail_select_after_idle)
         except Exception:
-            self._tail_debug_log("TAIL_EDIT", f"begin_edit SELECT ti={int(ti)} field={field} row={int(row)} disp_r={display_row} selected=False", ti=int(ti))
+            self._tail_debug_log("TAIL_SELECT", f"begin_edit SELECT_IDLE ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} selection_called=False", ti=int(ti))
             pass
 
         def commit_and_next():
@@ -6992,7 +7012,8 @@ class GeoCanvasEditor(tk.Tk):
 
             # Enter: вниз. Если дошли до конца — добавляем новую строку и продолжаем ввод.
             next_row = row + 1
-            if next_row < len(t.qc):
+            field_vals = (getattr(t, "qc", []) or []) if field == "qc" else (getattr(t, "fs", []) or [])
+            if next_row < len(field_vals):
                 self._begin_edit(ti, next_row, field, (display_row or row) + 1)
             else:
                 # добавляем новую строку в хвост и начинаем редактирование
