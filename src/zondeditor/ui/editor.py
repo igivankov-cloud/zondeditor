@@ -4508,7 +4508,7 @@ class GeoCanvasEditor(tk.Tk):
         data_top, data_bot = self._test_effective_data_depth_range(t)
         data_top = float(data_top)
         data_bot = float(data_bot)
-        inactive_fill = "#eeeeee"
+        inactive_fill = "white"
 
         ty_top = depth_to_y(data_top)
         ty_bot = depth_to_y(data_bot)
@@ -5893,6 +5893,15 @@ class GeoCanvasEditor(tk.Tk):
         else:
             arr = (getattr(t, "incl", []) or [])
         real = 0 <= int(data_i) < len(arr)
+        if real and bool(getattr(self, "compact_1m", False)):
+            try:
+                cell_raw = arr[int(data_i)]
+            except Exception:
+                cell_raw = ""
+            # В свернутом режиме кликабельна только реально существующая ячейка
+            # в текущей колонке (не пустая именно в этом поле).
+            if str(cell_raw).strip() == "":
+                real = False
         if self._is_tail_display_row(int(display_row)):
             try:
                 mp = (getattr(self, "_grid_row_maps", {}) or {}).get(int(ti), {}) or {}
