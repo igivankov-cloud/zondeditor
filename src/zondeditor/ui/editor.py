@@ -7183,6 +7183,19 @@ class GeoCanvasEditor(tk.Tk):
                     self.schedule_graph_redraw()
                     return
 
+                # Важная семантика: implicit focusout/blur с пустым raw значения НЕ равен
+                # явному намерению очистить крайнюю строку.
+                explicit_clear = (end_reason == "return") and (val_text.strip() == "")
+                if val_text.strip() == "" and old_text.strip() != "" and not explicit_clear:
+                    self._tail_debug_log(
+                        "TAIL_EDIT",
+                        f"end_edit IMPLICIT_EMPTY_NOOP ti={int(ti)} field={field} row={int(row)} reason={end_reason} old={repr(old_text)} raw={repr(val_text)}",
+                        ti=int(ti),
+                    )
+                    self._redraw()
+                    self.schedule_graph_redraw()
+                    return
+
                 # Undo: фиксируем снимок ДО изменения данных/раскраски
                 if commit:
                     try:
@@ -7196,6 +7209,11 @@ class GeoCanvasEditor(tk.Tk):
                 # edge-delete when clearing first/last filled row
                 if newv.strip() == "":
                     if row == 0 or row == last_filled_before:
+                        if end_reason != "return":
+                            self._tail_debug_log("TAIL_EDIT", f"end_edit SKIP_DELETE_EDGE ti={int(ti)} field={field} row={int(row)} last_filled={int(last_filled_before)} reason={end_reason} old={repr(old_text)} raw={repr(val_text)}", ti=int(ti))
+                            self._redraw()
+                            self.schedule_graph_redraw()
+                            return
                         self._tail_debug_log("TAIL_TRIM", f"end_edit DELETE_EDGE ti={int(ti)} field={field} row={int(row)} last_filled={int(last_filled_before)} old={repr(old_text)} new={repr(newv)}", ti=int(ti))
                         # удалить строку данных и глубину
                         fl = self.flags.get(t.tid) or TestFlags(False, set(), set(), set(), set())
