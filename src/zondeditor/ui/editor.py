@@ -1351,6 +1351,29 @@ class GeoCanvasEditor(tk.Tk):
         self._sync_layers_panel()
         self.schedule_graph_redraw()
 
+    def _rename_ige_from_ribbon(self, old_id: str, new_label: str):
+        old_key = str(old_id or "").strip()
+        new_key = str(new_label or "").strip() or old_key or "ИГЭ-1"
+        if not old_key:
+            return
+        if new_key == old_key:
+            return
+        if new_key in (self.ige_registry or {}):
+            self._set_status("ИГЭ с таким именем уже существует")
+            return
+        if old_key not in (self.ige_registry or {}):
+            return
+        self._push_undo()
+        ent = self.ige_registry.pop(old_key)
+        self.ige_registry[new_key] = ent
+        for t in (self.tests or []):
+            for lyr in self._ensure_test_layers(t):
+                if str(getattr(lyr, "ige_id", "") or "").strip() == old_key:
+                    lyr.ige_id = new_key
+                    self._apply_ige_to_layer(lyr)
+        self._sync_layers_panel()
+        self.schedule_graph_redraw()
+
     def _change_layer_field_from_ribbon(self, ige_id: str, field_name: str, value):
         target = str(ige_id or "").strip()
         field = str(field_name or "").strip()
@@ -1625,6 +1648,7 @@ class GeoCanvasEditor(tk.Tk):
                 "add_ige": self._add_unassigned_ige_from_ribbon,
                 "delete_ige": self._delete_layer_by_ige,
                 "change_ige_field": self._change_layer_field_from_ribbon,
+                "rename_ige": self._rename_ige_from_ribbon,
                 "set_layer_soil": self._set_layer_soil_from_ribbon,
                 "calc_cpt": self.calculate_cpt_params,
                 "edit_ige_cpt": self._edit_selected_ige_cpt_params,
