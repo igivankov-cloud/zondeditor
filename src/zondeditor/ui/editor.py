@@ -1692,18 +1692,24 @@ class GeoCanvasEditor(tk.Tk):
         self.canvas.pack(side="left", fill="both", expand=True)
 
         def _apply_header_offset_from_body():
+            """Синхронизирует X-позицию шапки строго по текущему xview body canvas.
+
+            Важно: без инкрементальных move("all", dx), чтобы не накапливать
+            погрешность/сдвиг при последовательных wheel-scroll событиях.
+            """
             try:
-                target = float(self.canvas.canvasx(0))
+                frac = float(self.canvas.xview()[0])
             except Exception:
-                target = 0.0
-            prev = float(getattr(self, "_header_offset_px", 0.0) or 0.0)
-            dx = target - prev
-            if abs(dx) > 1e-6:
-                try:
-                    self.hcanvas.move("all", -dx, 0)
-                except Exception:
-                    pass
-            self._header_offset_px = target
+                frac = 0.0
+            frac = 0.0 if frac < 0.0 else (1.0 if frac > 1.0 else frac)
+            try:
+                self.hcanvas.xview_moveto(frac)
+            except Exception:
+                pass
+            try:
+                self._header_offset_px = float(self.canvas.canvasx(0))
+            except Exception:
+                self._header_offset_px = 0.0
 
         self._apply_header_offset_from_body = _apply_header_offset_from_body
 
@@ -4110,9 +4116,9 @@ class GeoCanvasEditor(tk.Tk):
                 self.vbar.state(["!disabled"])
             except Exception:
                 pass
-        # шапка: viewport фиксированный, контент двигаем вручную через _apply_header_offset_from_body
+        # Шапка: отдельный canvas, X синхронизируем с body через xview_moveto.
         try:
-            self.hcanvas.configure(scrollregion=(0, 0, max(1, vw), header_h))
+            self.hcanvas.configure(scrollregion=(0, 0, w_total, header_h))
             self.hcanvas.configure(height=header_h)
             self.hcanvas.configure(width=self.canvas.winfo_width())
         except Exception:
@@ -4130,7 +4136,7 @@ class GeoCanvasEditor(tk.Tk):
                 new_frac = 0.0
             if new_frac > 1.0:
                 new_frac = 1.0
-            # двигаем body, затем позицию шапки обновляем пиксельно из body
+            # двигаем body, затем синхронизируем шапку от фактического xview body
             self.canvas.xview_moveto(new_frac)
             try:
                 self._sync_header_x_from_body(defer=False)
@@ -6118,8 +6124,7 @@ class GeoCanvasEditor(tk.Tk):
     def _header_bbox(self, col: int):
         col_w = self._table_col_width()
         x0_world = self._column_x0(col)
-        x_off = float(getattr(self, "_header_offset_px", 0.0) or 0.0)
-        x0 = x0_world - x_off
+        x0 = x0_world
         y0 = self.pad_y
         x1 = x0 + col_w
         y1 = y0 + self.hdr_h
@@ -8325,7 +8330,11 @@ class GeoCanvasEditor(tk.Tk):
         try:
             dlg.update_idletasks()
             x0, y0, x1, y1 = self._header_bbox(max(0, int(ti)))
-            sx = self.hcanvas.winfo_rootx() + int(x0) + 10
+            try:
+                x_view = float(self.hcanvas.canvasx(0))
+            except Exception:
+                x_view = 0.0
+            sx = self.hcanvas.winfo_rootx() + int(x0 - x_view) + 10
             sy = self.hcanvas.winfo_rooty() + int(y0) + 10
             dlg.geometry(f"+{sx}+{sy}")
         except Exception:
