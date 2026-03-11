@@ -37,6 +37,7 @@ class RibbonView(ttk.Frame):
         self._ige_cards: dict[str, ttk.Frame] = {}
         self._ige_rows_cache: dict[str, dict] = {}
         self._ige_soil_values: list[str] = []
+        self._add_ige_btn = None
 
         try:
             style = ttk.Style(self)
@@ -415,8 +416,8 @@ class RibbonView(ttk.Frame):
         body.pack(fill="both", expand=True, pady=(3, 0))
         body.columnconfigure(0, weight=1)
         soil_var = tk.StringVar(value=str(row.get("soil", "") or ""))
-        cb_soil = ttk.Combobox(body, state="readonly", width=14, values=list(soil_values or []), textvariable=soil_var)
-        cb_soil.grid(row=0, column=0, sticky="w")
+        cb_soil = ttk.Combobox(body, state="readonly", width=18, values=list(soil_values or []), textvariable=soil_var)
+        cb_soil.grid(row=0, column=0, sticky="ew")
         self._set_combo_placeholder(cb_soil, soil_var, "супесь")
         cb_soil.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, sv=soil_var: self.commands.get("edit_ige", lambda *_: None)(ig, sv.get(), ""))
 
@@ -553,38 +554,45 @@ class RibbonView(ttk.Frame):
             card = self._ige_cards.get(rid)
             if card is None:
                 continue
+            children = list(self._ige_columns_frame.winfo_children())
+            try:
+                idx = children.index(card)
+            except Exception:
+                idx = -1
+            next_sibling = None
+            if idx >= 0 and idx + 1 < len(children):
+                next_sibling = children[idx + 1]
             try:
                 card.destroy()
             except Exception:
                 continue
             self._build_ige_column(self._ige_columns_frame, cur, soil_values, can_delete)
-            # reposition card to original index
-            idx = ids.index(rid)
             new_card = self._ige_columns_frame.winfo_children()[-1]
             new_card.pack_forget()
             _, gap, _ = self._ige_card_metrics()
-            new_card.pack(side="left", fill="y", padx=(0, max(2, gap)), before=self._ige_columns_frame.winfo_children()[idx])
+            if next_sibling is not None and str(next_sibling) != str(getattr(self, '_add_ige_btn', None)):
+                new_card.pack(side="left", fill="y", padx=(0, max(2, gap)), before=next_sibling)
+            else:
+                new_card.pack(side="left", fill="y", padx=(0, max(2, gap)))
             self._ige_cards[rid] = new_card
             self._ige_rows_cache[rid] = cur
 
     def set_layers(self, rows: list[dict], soil_values: list[str], *, can_add: bool = True, can_delete: bool = True):
         self._layer_rows = list(rows or [])
         self._ige_soil_values = list(soil_values or [])
-        # remove trailing add button before incremental refresh
-        kids = list(self._ige_columns_frame.winfo_children())
-        if kids:
-            last = kids[-1]
-            if str(last.winfo_class()) == "TButton":
-                try:
-                    last.destroy()
-                except Exception:
-                    pass
+        try:
+            if self._add_ige_btn is not None:
+                self._add_ige_btn.destroy()
+        except Exception:
+            pass
+        self._add_ige_btn = None
+
         self._render_ige_cards(self._layer_rows, self._ige_soil_values, bool(can_delete))
-        btn_add = ttk.Button(self._ige_columns_frame, text="+ ИГЭ", style="RibbonCompact.TButton", command=self.commands.get("add_ige"))
+        self._add_ige_btn = ttk.Button(self._ige_columns_frame, text="+ ИГЭ", style="RibbonCompact.TButton", command=self.commands.get("add_ige"))
         if not can_add:
-            btn_add.configure(state="disabled")
+            self._add_ige_btn.configure(state="disabled")
         _, gap, _ = self._ige_card_metrics()
-        btn_add.pack(side="left", pady=(2, 0), padx=(0, max(2, gap)))
+        self._add_ige_btn.pack(side="left", pady=(2, 0), padx=(0, max(2, gap)))
         self._sync_ige_canvas()
 
     def focus_ige_row(self, ige_id: str):
