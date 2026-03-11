@@ -60,6 +60,8 @@ from src.zondeditor.domain.layers import (
     move_layer_boundary,
     normalize_layers,
     validate_layers,
+    MIN_LAYERS_PER_TEST,
+    MAX_LAYERS_PER_TEST,
 )
 
 from src.zondeditor.ui.consts import *
@@ -220,6 +222,12 @@ class GeoCanvasEditor(tk.Tk):
         self._header_offset_px = 0.0
         self._xsync_after_id = None
         self._rebuild_redraw_after_id = None
+        self._header_stabilize_after_id = None
+        self._header_sync_pending = False
+        self._header_sync_mode = str(os.getenv("ZOND_HEADER_SYNC_MODE", "legacy") or "legacy").strip().lower()
+        self._header_sync_debug = str(os.getenv("ZOND_DEBUG_HEADER_SYNC", "") or "").strip().lower() in {"1", "true", "yes", "on"}
+        self._header_sync_wheel_seq = 0
+        self._header_sync_source_counts: dict[str, int] = {}
         self._active_test_idx: int | None = None
         self.graph_qc_max_mpa: float = 30.0
         self.graph_fs_max_kpa: float = 500.0
@@ -1011,9 +1019,88 @@ class GeoCanvasEditor(tk.Tk):
             pass
         self.schedule_graph_redraw()
 
+    def _cell_input_max(self) -> int:
+        return 1000 if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" else 300
+
+    def _validate_cell_int_key(self, p: str) -> bool:
+        if p is None:
+            return True
+        txt = str(p)
+        if txt == "":
+            return True
+        if not txt.isdigit():
+            return False
+        try:
+            v = int(txt)
+        except Exception:
+            return False
+        return 0 <= v <= int(self._cell_input_max())
+
+    def _sanitize_cell_int(self, s: str) -> str:
+        if s is None:
+            return ""
+        txt = str(s).strip()
+        if txt == "":
+            return ""
+        if not txt.isdigit():
+            m = _re__cell.search(r"(\d+)", txt)
+            if not m:
+                return ""
+            txt = m.group(1)
+        try:
+            v = int(txt)
+        except Exception:
+            return ""
+        if v < 0:
+            v = 0
+        vmax = int(self._cell_input_max())
+        if v > vmax:
+            v = vmax
+        return str(v)
+
     def _ige_id_to_num(self, ige_id: str) -> int:
         m = re.search(r"(\d+)", str(ige_id or ""))
         return max(1, int(m.group(1))) if m else 1
+
+    def _ige_default_label(self, ordinal: int) -> str:
+        return f"ИГЭ-{max(1, int(ordinal or 1))}"
+
+    def _ensure_ige_identity(self, ige_id: str, ent: dict[str, object]) -> dict[str, object]:
+        key = str(ige_id or "").strip() or "ИГЭ-1"
+        ord_raw = ent.get("ordinal", None)
+        try:
+            ord_num = int(ord_raw)
+        except Exception:
+            ord_num = self._ige_id_to_num(key)
+        if ord_num < 1:
+            ord_num = 1
+        ent["ordinal"] = int(ord_num)
+        lbl = str(ent.get("label", "") or "").strip()
+        if not lbl:
+            lbl = self._ige_default_label(ord_num)
+        ent["label"] = lbl
+        return ent
+
+    def _ige_sort_key(self, ige_id: str) -> tuple[int, str]:
+        ent = self._ensure_ige_entry(str(ige_id or ""))
+        try:
+            ord_num = int(ent.get("ordinal", self._ige_id_to_num(ige_id)) or self._ige_id_to_num(ige_id))
+        except Exception:
+            ord_num = self._ige_id_to_num(ige_id)
+        return max(1, ord_num), str(ige_id or "")
+
+    def _next_free_ige_ordinal(self) -> int:
+        used: set[int] = set()
+        for ige_id in (self.ige_registry or {}).keys():
+            ent = self._ensure_ige_entry(str(ige_id or ""))
+            try:
+                used.add(max(1, int(ent.get("ordinal", self._ige_id_to_num(ige_id)))))
+            except Exception:
+                used.add(self._ige_id_to_num(ige_id))
+        n = 1
+        while n in used:
+            n += 1
+        return n
 
     def _layer_ige_id(self, lyr: Layer) -> str:
         ige_id = str(getattr(lyr, "ige_id", "") or "").strip()
@@ -1042,6 +1129,7 @@ class GeoCanvasEditor(tk.Tk):
             ent["lab_phys"] = {}
         if "cpt_result" not in ent:
             ent["cpt_result"] = None
+        self._ensure_ige_identity(key, ent)
         self._ensure_ige_cpt_fields(ent)
         return ent
 
@@ -1054,6 +1142,12 @@ class GeoCanvasEditor(tk.Tk):
         ent.setdefault("consistency", "")
         ent.setdefault("note", "")
         ent.setdefault("source_flags", {"CPT": True, "LAB": False, "Stamp": False})
+        ent.setdefault("sand_kind", "")
+        ent.setdefault("sand_water_saturation", "")
+        ent.setdefault("density_state", "")
+        ent.setdefault("sand_is_alluvial", False)
+        ent.setdefault("sandy_loam_kind", "")
+        ent.setdefault("notes", "")
         return ent
 
     def _auto_recalculate_cpt(self):
@@ -1182,16 +1276,14 @@ class GeoCanvasEditor(tk.Tk):
         self.wait_window(dlg)
 
     def _next_free_ige_id(self) -> str:
-        used: set[int] = set()
-        for ige_id in (self.ige_registry or {}).keys():
-            used.add(self._ige_id_to_num(str(ige_id)))
-        for t in (self.tests or []):
-            for lyr in (getattr(t, "layers", []) or []):
-                used.add(self._ige_id_to_num(str(getattr(lyr, "ige_id", "") or "")))
-        n = 1
-        while n in used:
-            n += 1
-        return f"ИГЭ-{n}"
+        n = self._next_free_ige_ordinal()
+        candidate = self._ige_default_label(n)
+        if candidate not in (self.ige_registry or {}):
+            return candidate
+        i = 1
+        while f"ige-{n}-{i}" in (self.ige_registry or {}):
+            i += 1
+        return f"ige-{n}-{i}"
 
     def _find_unassigned_ige_id(self) -> str | None:
         candidates: list[str] = []
@@ -1201,7 +1293,7 @@ class GeoCanvasEditor(tk.Tk):
                 candidates.append(str(ige_id))
         if not candidates:
             return None
-        return sorted(candidates, key=self._ige_id_to_num)[0]
+        return sorted(candidates, key=self._ige_sort_key)[0]
 
     def _ensure_default_iges(self):
         if self.ige_registry:
@@ -1217,14 +1309,18 @@ class GeoCanvasEditor(tk.Tk):
         if has_layer_ige:
             return
         self.ige_registry = {
-            "ИГЭ-1": {"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {}))},
-            "ИГЭ-2": {"soil_type": SoilType.SAND.value, "calc_mode": calc_mode_for_soil(SoilType.SAND).value, "style": dict(SOIL_STYLE.get(SoilType.SAND, {}))},
+            "ИГЭ-1": {"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {})), "label": "ИГЭ-1", "ordinal": 1},
+            "ИГЭ-2": {"soil_type": SoilType.SAND.value, "calc_mode": calc_mode_for_soil(SoilType.SAND).value, "style": dict(SOIL_STYLE.get(SoilType.SAND, {})), "label": "ИГЭ-2", "ordinal": 2},
         }
 
     def _add_unassigned_ige_from_ribbon(self):
+        if len(self.ige_registry or {}) >= MAX_LAYERS_PER_TEST:
+            self._set_status("Достигнут лимит 12 ИГЭ")
+            return
         self._push_undo()
+        new_ord = self._next_free_ige_ordinal()
         new_ige_id = self._next_free_ige_id()
-        self.ige_registry[new_ige_id] = {"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}}
+        self.ige_registry[new_ige_id] = self._ensure_ige_cpt_fields({"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {})), "label": self._ige_default_label(new_ord), "ordinal": int(new_ord)})
         self._sync_layers_panel()
         self.schedule_graph_redraw()
         if getattr(self, "ribbon_view", None):
@@ -1275,39 +1371,129 @@ class GeoCanvasEditor(tk.Tk):
             return 0
         return None
 
+    def _can_add_layer(self, ti: int) -> bool:
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return False
+        layers = self._ensure_test_layers(self.tests[int(ti)])
+        return len(layers) < MAX_LAYERS_PER_TEST
+
+    def _can_delete_layer(self, ti: int) -> bool:
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return False
+        layers = self._ensure_test_layers(self.tests[int(ti)])
+        return len(layers) > MIN_LAYERS_PER_TEST
+
+    def _add_layer_from_ribbon(self):
+        ti = self._active_layers_test_index()
+        if ti is None:
+            return
+        if not self._can_add_layer(int(ti)):
+            self._set_status("Достигнут лимит 12 слоёв")
+            return
+        if not self._can_insert_layer_from_bottom(int(ti)):
+            self._set_status("Недостаточно мощности для добавления слоя")
+            return
+        self._push_undo()
+        self._insert_layer_from_bottom(int(ti))
+
+    def _delete_layer_by_ige(self, ige_id: str):
+        target = str(ige_id or "").strip()
+        keys = sorted((self.ige_registry or {}).keys(), key=self._ige_sort_key)
+        if target not in keys:
+            return
+        if len(keys) <= MIN_LAYERS_PER_TEST:
+            self._set_status("Нельзя удалить единственный ИГЭ")
+            return
+        fallback = next((k for k in keys if k != target), keys[0])
+        self._push_undo()
+        self.ige_registry.pop(target, None)
+        for t in (self.tests or []):
+            for lyr in self._ensure_test_layers(t):
+                if str(getattr(lyr, "ige_id", "") or "").strip() == target:
+                    lyr.ige_id = fallback
+                    self._apply_ige_to_layer(lyr)
+        self._sync_layers_panel()
+        self.schedule_graph_redraw()
+
+    def _set_layer_soil_from_ribbon(self, ige_id: str, soil_raw: str):
+        ige = str(ige_id or "").strip()
+        if not ige:
+            return
+        soil_text = str(soil_raw or "").strip()
+        try:
+            soil = SoilType(soil_text)
+        except Exception:
+            return
+        self._push_undo()
+        ent = self._ensure_ige_entry(ige)
+        ent.update({"soil_type": soil.value, "calc_mode": calc_mode_for_soil(soil).value, "style": dict(SOIL_STYLE.get(soil, {}))})
+        if soil != SoilType.SAND:
+            ent["sand_is_alluvial"] = False
+        for t in (self.tests or []):
+            for lyr in self._ensure_test_layers(t):
+                if str(getattr(lyr, "ige_id", "") or "").strip() == ige:
+                    self._apply_ige_to_layer(lyr)
+        self._sync_layers_panel()
+        self.schedule_graph_redraw()
+
+    def _rename_ige_from_ribbon(self, old_id: str, new_label: str):
+        old_key = str(old_id or "").strip()
+        if not old_key or old_key not in (self.ige_registry or {}):
+            return
+        lbl = str(new_label or "").strip()
+        ent = self._ensure_ige_entry(old_key)
+        current_lbl = str(ent.get("label", old_key) or old_key).strip()
+        if not lbl:
+            try:
+                lbl = self._ige_default_label(int(ent.get("ordinal", self._ige_id_to_num(old_key)) or self._ige_id_to_num(old_key)))
+            except Exception:
+                lbl = old_key
+        if lbl == current_lbl:
+            return
+        self._push_undo()
+        ent["label"] = str(lbl)
+        self._sync_layers_panel()
+        self.schedule_graph_redraw()
+
+    def _change_layer_field_from_ribbon(self, ige_id: str, field_name: str, value):
+        target = str(ige_id or "").strip()
+        field = str(field_name or "").strip()
+        if not target or not field:
+            return
+        ent = self._ensure_ige_entry(target)
+        self._push_undo()
+        ent[field] = value
+        self._sync_layers_panel()
+
     def _sync_layers_panel(self):
         self._ensure_default_iges()
         if not getattr(self, "ribbon_view", None):
             return
-        ti = self._active_layers_test_index()
-        if ti is None or ti < 0 or ti >= len(self.tests):
-            self.ribbon_view.set_layers([], [x.value for x in SoilType])
-            return
-        self._calc_layer_params_for_test(int(ti))
-        layers = self._ensure_test_layers(self.tests[ti])
-        ige_ids = {self._layer_ige_id(lyr) for lyr in layers}
-        ige_ids.update(str(x) for x in (self.ige_registry or {}).keys())
+        keys = sorted((self.ige_registry or {}).keys(), key=self._ige_sort_key)
         rows = []
-        for ige_id in sorted(ige_ids, key=self._ige_id_to_num):
-            ent = self._ensure_ige_entry(ige_id)
-            cpt = dict(ent.get("cpt_result") or {})
+        for ige_id in keys:
+            ent = self._ensure_ige_cpt_fields(self._ensure_ige_entry(ige_id))
             rows.append(
                 {
-                    "ige": ige_id,
+                    "ige_id": str(ige_id),
+                    "label": str(ent.get("label", ige_id) or ige_id),
+                    "visual_order": int(ent.get("ordinal", self._ige_id_to_num(ige_id)) or self._ige_id_to_num(ige_id)),
                     "soil": str(ent.get("soil_type") or ""),
-                    "source": str(cpt.get("source") or "-"),
-                    "phi": ("-" if cpt.get("phi_norm") is None else f"{float(cpt.get('phi_norm')):.1f}"),
-                    "e": ("-" if cpt.get("E_norm") is None else f"{float(cpt.get('E_norm')):.1f}"),
-                    "status": str(cpt.get("status_text") or "-")
+                    "sand_kind": str(ent.get("sand_kind") or ""),
+                    "sand_water_saturation": str(ent.get("sand_water_saturation") or ""),
+                    "density_state": str(ent.get("density_state") or ""),
+                    "sand_is_alluvial": bool(ent.get("sand_is_alluvial", False)),
+                    "sandy_loam_kind": str(ent.get("sandy_loam_kind") or ""),
+                    "consistency": str(ent.get("consistency") or ""),
+                    "IL": ent.get("IL", ""),
+                    "notes": str(ent.get("notes") or ""),
                 }
             )
-        self.ribbon_view.set_layers(rows, [x.value for x in SoilType])
+        self.ribbon_view.set_layers(rows, [x.value for x in SoilType], can_add=(len(keys) < MAX_LAYERS_PER_TEST), can_delete=(len(keys) > MIN_LAYERS_PER_TEST))
         if rows:
-            current_ige = str(rows[0].get("ige") or "ИГЭ-1")
-            ent = self._ensure_ige_entry(current_ige)
-            self.ribbon_view.layer_ige_var.set(current_ige)
-            self.ribbon_view.layer_soil_var.set(str(ent.get("soil_type") or ""))
-            self.ribbon_view.layer_mode_var.set(str(ent.get("calc_mode") or ""))
+            self.ribbon_view.layer_ige_var.set(str(rows[0].get("ige_id") or "ИГЭ-1"))
+            self.ribbon_view.layer_soil_var.set(str(rows[0].get("soil") or ""))
+            self.ribbon_view.layer_mode_var.set("")
 
     def _recalc_layers_for_test(self, ti: int, *, push_undo: bool = True) -> bool:
         if ti is None or ti < 0 or ti >= len(self.tests):
@@ -1542,6 +1728,10 @@ class GeoCanvasEditor(tk.Tk):
                 "edit_ige": self._edit_ige_from_ribbon,
                 "select_ige": self._select_ige_for_ribbon,
                 "add_ige": self._add_unassigned_ige_from_ribbon,
+                "delete_ige": self._delete_layer_by_ige,
+                "change_ige_field": self._change_layer_field_from_ribbon,
+                "rename_ige": self._rename_ige_from_ribbon,
+                "set_layer_soil": self._set_layer_soil_from_ribbon,
                 "calc_cpt": self.calculate_cpt_params,
                 "edit_ige_cpt": self._edit_selected_ige_cpt_params,
                 "apply_calc": lambda: self._redraw(),
@@ -1583,18 +1773,40 @@ class GeoCanvasEditor(tk.Tk):
         self.canvas.pack(side="left", fill="both", expand=True)
 
         def _apply_header_offset_from_body():
+            """Синхронизирует X шапки с body из одного источника истины (body canvas)."""
             try:
-                target = float(self.canvas.canvasx(0))
+                body_left = float(self.canvas.canvasx(0))
             except Exception:
-                target = 0.0
-            prev = float(getattr(self, "_header_offset_px", 0.0) or 0.0)
-            dx = target - prev
-            if abs(dx) > 1e-6:
+                body_left = 0.0
+
+            mode = str(getattr(self, "_header_sync_mode", "legacy") or "legacy").strip().lower()
+            if mode == "xview":
                 try:
-                    self.hcanvas.move("all", -dx, 0)
+                    w_total = float(getattr(self, "_scroll_w", 0.0) or 0.0)
+                except Exception:
+                    w_total = 0.0
+                if w_total <= 1.0:
+                    try:
+                        w_total = float(self._content_size()[0])
+                    except Exception:
+                        w_total = 1.0
+                frac = 0.0 if w_total <= 1.0 else (body_left / w_total)
+                frac = 0.0 if frac < 0.0 else (1.0 if frac > 1.0 else frac)
+                try:
+                    self.hcanvas.xview_moveto(frac)
                 except Exception:
                     pass
-            self._header_offset_px = target
+            else:
+                prev = float(getattr(self, "_header_offset_px", 0.0) or 0.0)
+                dx = body_left - prev
+                if abs(dx) > 1e-6:
+                    try:
+                        self.hcanvas.move("all", -dx, 0)
+                    except Exception:
+                        pass
+
+            self._header_offset_px = body_left
+            self._debug_header_sync("apply_header_offset", mode=mode)
 
         self._apply_header_offset_from_body = _apply_header_offset_from_body
 
@@ -1636,8 +1848,10 @@ class GeoCanvasEditor(tk.Tk):
                 self.canvas.xview(*args)
             except Exception:
                 return
+            self._debug_header_sync("xview_proxy")
             self._sync_header_x_from_body(defer=False)
             self._sync_header_x_from_body(defer=True)
+            self._schedule_header_stabilize(source="xview_proxy")
 
         def _on_xscroll_command(first, last):
             # first/last: доли [0..1] видимой области
@@ -1646,8 +1860,10 @@ class GeoCanvasEditor(tk.Tk):
                     self.hscroll.set(first, last)
             except Exception:
                 pass
+            self._debug_header_sync("xscroll_command")
             self._sync_header_x_from_body(defer=False)
             self._sync_header_x_from_body(defer=True)
+            self._schedule_header_stabilize(source="xscroll_command")
 
         # назначаем xscrollcommand сразу, а сам hscroll свяжем позже, когда создадим в footer
         self.canvas.configure(xscrollcommand=_on_xscroll_command)
@@ -3999,9 +4215,9 @@ class GeoCanvasEditor(tk.Tk):
                 self.vbar.state(["!disabled"])
             except Exception:
                 pass
-        # шапка: viewport фиксированный, контент двигаем вручную через _apply_header_offset_from_body
+        # Шапка: отдельный canvas, X синхронизируем с body через xview_moveto.
         try:
-            self.hcanvas.configure(scrollregion=(0, 0, max(1, vw), header_h))
+            self.hcanvas.configure(scrollregion=(0, 0, w_total, header_h))
             self.hcanvas.configure(height=header_h)
             self.hcanvas.configure(width=self.canvas.winfo_width())
         except Exception:
@@ -4019,7 +4235,7 @@ class GeoCanvasEditor(tk.Tk):
                 new_frac = 0.0
             if new_frac > 1.0:
                 new_frac = 1.0
-            # двигаем body, затем позицию шапки обновляем пиксельно из body
+            # двигаем body, затем синхронизируем шапку от фактического xview body
             self.canvas.xview_moveto(new_frac)
             try:
                 self._sync_header_x_from_body(defer=False)
@@ -4266,6 +4482,7 @@ class GeoCanvasEditor(tk.Tk):
             t.layers = layers
         for lyr in layers:
             self._apply_ige_to_layer(lyr)
+        self._renumber_layers(t)
         return layers
 
     def _sync_layers_to_test_depth_range(self, ti: int, *, depth_shift: float = 0.0):
@@ -5458,6 +5675,9 @@ class GeoCanvasEditor(tk.Tk):
         t = self.tests[int(ti)]
         layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
         li = int(layer_index)
+        if len(layers) >= MAX_LAYERS_PER_TEST:
+            self._set_status("Достигнут лимит 12 слоёв")
+            return
         if not (0 <= li < len(layers)):
             return
         base = layers[li]
@@ -5489,7 +5709,14 @@ class GeoCanvasEditor(tk.Tk):
         new_ige_id = self._find_unassigned_ige_id() or self._next_free_ige_id()
         soil = SoilType.SANDY_LOAM
         layers.insert(ins_idx, Layer(top_m=ins_top, bot_m=ins_bot, ige_id=new_ige_id, soil_type=soil, calc_mode=calc_mode_for_soil(soil), style=dict(SOIL_STYLE.get(soil, {})), ige_num=self._ige_id_to_num(new_ige_id)))
+        try:
+            layers[ins_idx].params = dict(getattr(layers[ins_idx], "params", {}) or {})
+            layers[ins_idx].params.setdefault("ige_label", str(new_ige_id))
+            layers[ins_idx].params.setdefault("layer_id", f"layer-{ins_idx+1}")
+        except Exception:
+            pass
         t.layers = normalize_layers(layers)
+        self._renumber_layers(t)
         self.ige_registry[new_ige_id] = {"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}}
         try:
             self._apply_ige_to_layer(t.layers[int(ins_idx)])
@@ -5507,6 +5734,10 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
     def _can_insert_layer_from_top(self, ti: int) -> bool:
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return False
+        if len(self._ensure_test_layers(self.tests[int(ti)])) >= MAX_LAYERS_PER_TEST:
+            return False
         return self._can_split_layer_index(int(ti), 0)
 
     def _can_insert_layer_from_bottom(self, ti: int) -> bool:
@@ -5515,6 +5746,8 @@ class GeoCanvasEditor(tk.Tk):
         t = self.tests[int(ti)]
         layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
         if not layers:
+            return False
+        if len(layers) >= MAX_LAYERS_PER_TEST:
             return False
         return self._can_split_layer_index(int(ti), len(layers) - 1)
 
@@ -5529,6 +5762,7 @@ class GeoCanvasEditor(tk.Tk):
         removed = layers.pop(0)
         layers[0].top_m = float(removed.top_m)
         t.layers = normalize_layers(layers)
+        self._renumber_layers(t)
         self._calc_layer_params_for_test(int(ti))
         self._sync_layers_panel()
         self._redraw()
@@ -5546,6 +5780,7 @@ class GeoCanvasEditor(tk.Tk):
         removed = layers.pop()
         layers[-1].bot_m = float(removed.bot_m)
         t.layers = normalize_layers(layers)
+        self._renumber_layers(t)
         self._calc_layer_params_for_test(int(ti))
         self._sync_layers_panel()
         self._redraw()
@@ -5571,11 +5806,27 @@ class GeoCanvasEditor(tk.Tk):
         # Внутренний слой поглощается нижележащим соседним слоем.
         layers[li].top_m = float(removed.top_m)
         t.layers = normalize_layers(layers)
+        self._renumber_layers(t)
         self._calc_layer_params_for_test(int(ti))
         self._sync_layers_panel()
         self._redraw()
         self._redraw_graphs_now()
         self.schedule_graph_redraw()
+
+    def _renumber_layers(self, t):
+        for idx, lyr in enumerate(getattr(t, "layers", []) or [], start=1):
+            lyr.ige_num = idx
+            if not str(getattr(lyr, "ige_id", "") or "").strip():
+                lyr.ige_id = f"ИГЭ-{idx}"
+            p = dict(getattr(lyr, "params", {}) or {})
+            p["ige_num"] = idx
+            p["visual_order"] = idx
+            p["layer_id"] = str(p.get("layer_id") or f"layer-{idx}")
+            p["ige_label"] = str(p.get("ige_label") or getattr(lyr, "ige_id", "") or f"ИГЭ-{idx}")
+            p["top_depth"] = float(getattr(lyr, "top_m", 0.0))
+            p["bottom_depth"] = float(getattr(lyr, "bot_m", 0.0))
+            p["soil_type"] = str(getattr(lyr, "soil_type", SoilType.SANDY_LOAM).value)
+            lyr.params = p
 
     def _on_layer_drag_motion(self, event):
         drag = getattr(self, "_layer_drag", None)
@@ -5972,8 +6223,7 @@ class GeoCanvasEditor(tk.Tk):
     def _header_bbox(self, col: int):
         col_w = self._table_col_width()
         x0_world = self._column_x0(col)
-        x_off = float(getattr(self, "_header_offset_px", 0.0) or 0.0)
-        x0 = x0_world - x_off
+        x0 = x0_world
         y0 = self.pad_y
         x1 = x0 + col_w
         y1 = y0 + self.hdr_h
@@ -7001,7 +7251,7 @@ class GeoCanvasEditor(tk.Tk):
         current_raw = vals[row] if 0 <= row < len(vals) else ""
         current = "" if current_raw is None else str(current_raw)
         self._tail_debug_log("TAIL_ENTRY", f"begin_edit SOURCE ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} source_before_create={repr(current_raw)} source_norm={repr(current)} len_field={len(vals)}", ti=int(ti))
-        e = tk.Entry(self.canvas, validate="key", validatecommand=(self.register(_validate_int_0_300_key), "%P"))
+        e = tk.Entry(self.canvas, validate="key", validatecommand=(self.register(self._validate_cell_int_key), "%P"))
         self._tail_debug_log("TAIL_ENTRY", f"begin_edit CREATED ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} entry_text_after_create={repr(e.get())}", ti=int(ti))
         e.insert(0, current)
         self._tail_debug_log("TAIL_ENTRY", f"begin_edit INSERTED ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} entry_text_after_insert={repr(e.get())}", ti=int(ti))
@@ -7264,8 +7514,8 @@ class GeoCanvasEditor(tk.Tk):
                     self.schedule_graph_redraw()
                     return
 
-                old_norm = _sanitize_int_0_300(old_text)
-                newv = _sanitize_int_0_300(val_text)
+                old_norm = self._sanitize_cell_int(old_text)
+                newv = self._sanitize_cell_int(val_text)
 
                 # 2) Нормализованные значения совпали: тоже no-op.
                 if old_norm.strip() == newv.strip():
@@ -7463,9 +7713,84 @@ class GeoCanvasEditor(tk.Tk):
         self._redraw()
         self.schedule_graph_redraw()
 
+    def _debug_header_sync(self, stage: str, **extra):
+        if not bool(getattr(self, "_header_sync_debug", False)):
+            return
+        try:
+            body_xv = tuple(self.canvas.xview())
+        except Exception:
+            body_xv = (0.0, 0.0)
+        try:
+            hdr_xv = tuple(self.hcanvas.xview())
+        except Exception:
+            hdr_xv = (0.0, 0.0)
+        try:
+            viewport_w = int(self.canvas.winfo_width() or 0)
+        except Exception:
+            viewport_w = 0
+        try:
+            content_w = float(getattr(self, "_scroll_w", 0.0) or 0.0)
+        except Exception:
+            content_w = 0.0
+        try:
+            first_world_x = float(self._column_x0(0)) if getattr(self, "display_cols", []) else float(self.pad_x)
+        except Exception:
+            first_world_x = 0.0
+        try:
+            body_left = float(self.canvas.canvasx(0))
+        except Exception:
+            body_left = 0.0
+        try:
+            header_left = float(getattr(self, "_header_offset_px", 0.0) or 0.0)
+        except Exception:
+            header_left = 0.0
+        state = str(self.state()) if hasattr(self, "state") else ""
+        incl = bool(getattr(self, "show_inclinometer", True))
+        mode = str(getattr(self, "_header_sync_mode", "legacy") or "legacy")
+        body_first_screen_x = first_world_x - body_left
+        header_first_screen_x = first_world_x - header_left
+        drift = header_first_screen_x - body_first_screen_x
+        cnt = int(self._header_sync_source_counts.get(str(stage), 0) + 1)
+        self._header_sync_source_counts[str(stage)] = cnt
+        extras = " ".join(f"{k}={v}" for k, v in extra.items())
+        print(
+            f"[HDRSYNC] wheel={self._header_sync_wheel_seq} src={stage} cnt={cnt} mode={mode} "
+            f"state={state} incl={int(incl)} body_xv={body_xv} hdr_xv={hdr_xv} vw={viewport_w} cw={content_w:.1f} "
+            f"body_left={body_left:.2f} hdr_left={header_left:.2f} body_first={body_first_screen_x:.2f} "
+            f"hdr_first={header_first_screen_x:.2f} drift={drift:.2f} pending={int(bool(getattr(self, '_header_sync_pending', False)))} {extras}"
+        )
+
+    def _begin_scroll_debug_cycle(self, source: str):
+        self._header_sync_wheel_seq = int(getattr(self, "_header_sync_wheel_seq", 0) or 0) + 1
+        self._header_sync_source_counts = {}
+        self._debug_header_sync("wheel_begin", source=source)
+
+    def _schedule_header_stabilize(self, source: str = ""):
+        # дедупликация: один sync на одну итерацию idle-loop, без каскадного redraw/move
+        if bool(getattr(self, "_header_sync_pending", False)):
+            self._debug_header_sync("schedule_skip", source=source)
+            return
+        self._header_sync_pending = True
+        self._debug_header_sync("schedule_set", source=source)
+
+        def _run():
+            self._header_stabilize_after_id = None
+            self._header_sync_pending = False
+            try:
+                self._sync_header_x_from_body(defer=False)
+                self._debug_header_sync("schedule_run", source=source)
+            except Exception:
+                pass
+
+        try:
+            self._header_stabilize_after_id = self.after_idle(_run)
+        except Exception:
+            self._header_sync_pending = False
+
     # ---------------- scrolling ----------------
     def _on_mousewheel(self, event):
         # скролл закрывает активную ячейку
+        self._begin_scroll_debug_cycle("mousewheel_y")
         self._end_edit(commit=True)
         delta = int(-1 * (event.delta / 120)) if event.delta else 0
         if delta != 0:
@@ -7475,6 +7800,7 @@ class GeoCanvasEditor(tk.Tk):
 
     def _on_mousewheel_linux(self, direction):
         # скролл закрывает активную ячейку
+        self._begin_scroll_debug_cycle("mousewheel_y_linux")
         self._end_edit(commit=True)
         self.canvas.yview_scroll(direction, "units")
         self._sync_header_body_after_scroll()
@@ -7513,9 +7839,11 @@ class GeoCanvasEditor(tk.Tk):
                     pass
         finally:
             self._ysync_lock = False
+        self._schedule_header_stabilize(source="yscroll_sync")
 
     def _on_mousewheel_x(self, event):
         """Горизонтальная прокрутка колесом шагом 1 колонка (когда курсор над шапкой или горизонтальным скроллом)."""
+        self._begin_scroll_debug_cycle("mousewheel_x")
         self._end_edit(commit=True)
         try:
             delta = int(-1 * (event.delta / 120)) if getattr(event, "delta", 0) else 0
@@ -7528,6 +7856,7 @@ class GeoCanvasEditor(tk.Tk):
 
     def _on_mousewheel_linux_x(self, direction):
         """Linux: Button-4/5 для горизонтальной прокрутки шагом 1 колонка."""
+        self._begin_scroll_debug_cycle("mousewheel_x_linux")
         self._end_edit(commit=True)
         try:
             direction = int(direction)
@@ -8157,7 +8486,11 @@ class GeoCanvasEditor(tk.Tk):
         try:
             dlg.update_idletasks()
             x0, y0, x1, y1 = self._header_bbox(max(0, int(ti)))
-            sx = self.hcanvas.winfo_rootx() + int(x0) + 10
+            try:
+                x_view = float(self.hcanvas.canvasx(0))
+            except Exception:
+                x_view = 0.0
+            sx = self.hcanvas.winfo_rootx() + int(x0 - x_view) + 10
             sy = self.hcanvas.winfo_rooty() + int(y0) + 10
             dlg.geometry(f"+{sx}+{sy}")
         except Exception:
