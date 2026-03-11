@@ -434,13 +434,14 @@ class RibbonView(ttk.Frame):
         hdr = ttk.Frame(card)
         hdr.pack(fill="x")
         hdr.columnconfigure(0, weight=1)
+        hdr.rowconfigure(0, minsize=24)
         lbl_txt = str(row.get("label", ige_id) or ige_id)
         lbl_btn = ttk.Button(hdr, text=lbl_txt, style="IGEHdr.TButton", command=lambda ig=ige_id, txt=lbl_txt: self._edit_ige_label(ig, txt))
         lbl_btn.grid(row=0, column=0, sticky="ew")
         btn_note = ttk.Button(hdr, text="📄", width=2, style="IGEHdr.TButton", command=lambda ig=ige_id, txt=str(row.get("notes", "") or ""): self._open_ige_notes(ig, txt))
-        btn_note.grid(row=0, column=1, sticky="e", padx=(0, 1))
+        btn_note.grid(row=0, column=1, sticky="ns", padx=(0, 1), pady=0)
         btn_del = ttk.Button(hdr, text=ICON_TRASH, width=2, style="IGEHdr.TButton", command=lambda ig=ige_id: self.commands.get("delete_ige", lambda *_: None)(ig))
-        btn_del.grid(row=0, column=2, sticky="e")
+        btn_del.grid(row=0, column=2, sticky="ns", pady=0)
         if not can_delete:
             btn_del.configure(state="disabled")
 
@@ -574,19 +575,14 @@ class RibbonView(ttk.Frame):
         incoming_ids = [str(r.get("ige_id", "") or "") for r in rows]
         row_by_id = {str(r.get("ige_id", "") or ""): dict(r) for r in rows}
 
-        # Stable visual order: changes only on add/remove.
+        # Stable visual order for field edits; for add/remove use incoming canonical order.
         if not self._ige_order:
             self._ige_order = list(incoming_ids)
         else:
             incoming_set = set(incoming_ids)
             current_set = set(self._ige_order)
             if incoming_set != current_set:
-                # remove gone ids
-                self._ige_order = [x for x in self._ige_order if x in incoming_set]
-                # append truly new ids to the right
-                for x in incoming_ids:
-                    if x not in self._ige_order:
-                        self._ige_order.append(x)
+                self._ige_order = list(incoming_ids)
 
         # Canonical rows in stable order
         ordered_rows: list[dict] = []
@@ -621,11 +617,11 @@ class RibbonView(ttk.Frame):
         self._add_ige_btn = None
 
         self._render_ige_cards(self._layer_rows, self._ige_soil_values, bool(can_delete))
-        self._add_ige_btn = ttk.Button(self._ige_columns_frame, text="+ ИГЭ", style="RibbonCompact.TButton", command=self.commands.get("add_ige"))
+        self._add_ige_btn = ttk.Button(self._ige_columns_frame, text="+ ИГЭ", width=6, style="RibbonCompact.TButton", command=self.commands.get("add_ige"))
         if not can_add:
             self._add_ige_btn.configure(state="disabled")
         _, gap, _ = self._ige_card_metrics()
-        self._add_ige_btn.pack(side="left", pady=(2, 0), padx=(0, max(2, gap)))
+        self._add_ige_btn.pack(side="left", fill="y", pady=0, padx=(0, max(2, gap)))
         self._sync_ige_canvas()
 
     def focus_ige_row(self, ige_id: str):

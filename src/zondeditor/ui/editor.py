@@ -1019,9 +1019,88 @@ class GeoCanvasEditor(tk.Tk):
             pass
         self.schedule_graph_redraw()
 
+    def _cell_input_max(self) -> int:
+        return 1000 if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" else 300
+
+    def _validate_cell_int_key(self, p: str) -> bool:
+        if p is None:
+            return True
+        txt = str(p)
+        if txt == "":
+            return True
+        if not txt.isdigit():
+            return False
+        try:
+            v = int(txt)
+        except Exception:
+            return False
+        return 0 <= v <= int(self._cell_input_max())
+
+    def _sanitize_cell_int(self, s: str) -> str:
+        if s is None:
+            return ""
+        txt = str(s).strip()
+        if txt == "":
+            return ""
+        if not txt.isdigit():
+            m = _re__cell.search(r"(\d+)", txt)
+            if not m:
+                return ""
+            txt = m.group(1)
+        try:
+            v = int(txt)
+        except Exception:
+            return ""
+        if v < 0:
+            v = 0
+        vmax = int(self._cell_input_max())
+        if v > vmax:
+            v = vmax
+        return str(v)
+
     def _ige_id_to_num(self, ige_id: str) -> int:
         m = re.search(r"(\d+)", str(ige_id or ""))
         return max(1, int(m.group(1))) if m else 1
+
+    def _ige_default_label(self, ordinal: int) -> str:
+        return f"ИГЭ-{max(1, int(ordinal or 1))}"
+
+    def _ensure_ige_identity(self, ige_id: str, ent: dict[str, object]) -> dict[str, object]:
+        key = str(ige_id or "").strip() or "ИГЭ-1"
+        ord_raw = ent.get("ordinal", None)
+        try:
+            ord_num = int(ord_raw)
+        except Exception:
+            ord_num = self._ige_id_to_num(key)
+        if ord_num < 1:
+            ord_num = 1
+        ent["ordinal"] = int(ord_num)
+        lbl = str(ent.get("label", "") or "").strip()
+        if not lbl:
+            lbl = self._ige_default_label(ord_num)
+        ent["label"] = lbl
+        return ent
+
+    def _ige_sort_key(self, ige_id: str) -> tuple[int, str]:
+        ent = self._ensure_ige_entry(str(ige_id or ""))
+        try:
+            ord_num = int(ent.get("ordinal", self._ige_id_to_num(ige_id)) or self._ige_id_to_num(ige_id))
+        except Exception:
+            ord_num = self._ige_id_to_num(ige_id)
+        return max(1, ord_num), str(ige_id or "")
+
+    def _next_free_ige_ordinal(self) -> int:
+        used: set[int] = set()
+        for ige_id in (self.ige_registry or {}).keys():
+            ent = self._ensure_ige_entry(str(ige_id or ""))
+            try:
+                used.add(max(1, int(ent.get("ordinal", self._ige_id_to_num(ige_id)))))
+            except Exception:
+                used.add(self._ige_id_to_num(ige_id))
+        n = 1
+        while n in used:
+            n += 1
+        return n
 
     def _layer_ige_id(self, lyr: Layer) -> str:
         ige_id = str(getattr(lyr, "ige_id", "") or "").strip()
@@ -1050,6 +1129,7 @@ class GeoCanvasEditor(tk.Tk):
             ent["lab_phys"] = {}
         if "cpt_result" not in ent:
             ent["cpt_result"] = None
+        self._ensure_ige_identity(key, ent)
         self._ensure_ige_cpt_fields(ent)
         return ent
 
@@ -1196,16 +1276,14 @@ class GeoCanvasEditor(tk.Tk):
         self.wait_window(dlg)
 
     def _next_free_ige_id(self) -> str:
-        used: set[int] = set()
-        for ige_id in (self.ige_registry or {}).keys():
-            used.add(self._ige_id_to_num(str(ige_id)))
-        for t in (self.tests or []):
-            for lyr in (getattr(t, "layers", []) or []):
-                used.add(self._ige_id_to_num(str(getattr(lyr, "ige_id", "") or "")))
-        n = 1
-        while n in used:
-            n += 1
-        return f"ИГЭ-{n}"
+        n = self._next_free_ige_ordinal()
+        candidate = self._ige_default_label(n)
+        if candidate not in (self.ige_registry or {}):
+            return candidate
+        i = 1
+        while f"ige-{n}-{i}" in (self.ige_registry or {}):
+            i += 1
+        return f"ige-{n}-{i}"
 
     def _find_unassigned_ige_id(self) -> str | None:
         candidates: list[str] = []
@@ -1215,7 +1293,7 @@ class GeoCanvasEditor(tk.Tk):
                 candidates.append(str(ige_id))
         if not candidates:
             return None
-        return sorted(candidates, key=self._ige_id_to_num)[0]
+        return sorted(candidates, key=self._ige_sort_key)[0]
 
     def _ensure_default_iges(self):
         if self.ige_registry:
@@ -1231,8 +1309,8 @@ class GeoCanvasEditor(tk.Tk):
         if has_layer_ige:
             return
         self.ige_registry = {
-            "ИГЭ-1": {"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {}))},
-            "ИГЭ-2": {"soil_type": SoilType.SAND.value, "calc_mode": calc_mode_for_soil(SoilType.SAND).value, "style": dict(SOIL_STYLE.get(SoilType.SAND, {}))},
+            "ИГЭ-1": {"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {})), "label": "ИГЭ-1", "ordinal": 1},
+            "ИГЭ-2": {"soil_type": SoilType.SAND.value, "calc_mode": calc_mode_for_soil(SoilType.SAND).value, "style": dict(SOIL_STYLE.get(SoilType.SAND, {})), "label": "ИГЭ-2", "ordinal": 2},
         }
 
     def _add_unassigned_ige_from_ribbon(self):
@@ -1240,8 +1318,9 @@ class GeoCanvasEditor(tk.Tk):
             self._set_status("Достигнут лимит 12 ИГЭ")
             return
         self._push_undo()
+        new_ord = self._next_free_ige_ordinal()
         new_ige_id = self._next_free_ige_id()
-        self.ige_registry[new_ige_id] = self._ensure_ige_cpt_fields({"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {}))})
+        self.ige_registry[new_ige_id] = self._ensure_ige_cpt_fields({"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {})), "label": self._ige_default_label(new_ord), "ordinal": int(new_ord)})
         self._sync_layers_panel()
         self.schedule_graph_redraw()
         if getattr(self, "ribbon_view", None):
@@ -1319,7 +1398,7 @@ class GeoCanvasEditor(tk.Tk):
 
     def _delete_layer_by_ige(self, ige_id: str):
         target = str(ige_id or "").strip()
-        keys = sorted((self.ige_registry or {}).keys(), key=self._ige_id_to_num)
+        keys = sorted((self.ige_registry or {}).keys(), key=self._ige_sort_key)
         if target not in keys:
             return
         if len(keys) <= MIN_LAYERS_PER_TEST:
@@ -1359,24 +1438,20 @@ class GeoCanvasEditor(tk.Tk):
 
     def _rename_ige_from_ribbon(self, old_id: str, new_label: str):
         old_key = str(old_id or "").strip()
-        new_key = str(new_label or "").strip() or old_key or "ИГЭ-1"
-        if not old_key:
+        if not old_key or old_key not in (self.ige_registry or {}):
             return
-        if new_key == old_key:
-            return
-        if new_key in (self.ige_registry or {}):
-            self._set_status("ИГЭ с таким именем уже существует")
-            return
-        if old_key not in (self.ige_registry or {}):
+        lbl = str(new_label or "").strip()
+        ent = self._ensure_ige_entry(old_key)
+        current_lbl = str(ent.get("label", old_key) or old_key).strip()
+        if not lbl:
+            try:
+                lbl = self._ige_default_label(int(ent.get("ordinal", self._ige_id_to_num(old_key)) or self._ige_id_to_num(old_key)))
+            except Exception:
+                lbl = old_key
+        if lbl == current_lbl:
             return
         self._push_undo()
-        ent = self.ige_registry.pop(old_key)
-        self.ige_registry[new_key] = ent
-        for t in (self.tests or []):
-            for lyr in self._ensure_test_layers(t):
-                if str(getattr(lyr, "ige_id", "") or "").strip() == old_key:
-                    lyr.ige_id = new_key
-                    self._apply_ige_to_layer(lyr)
+        ent["label"] = str(lbl)
         self._sync_layers_panel()
         self.schedule_graph_redraw()
 
@@ -1394,14 +1469,15 @@ class GeoCanvasEditor(tk.Tk):
         self._ensure_default_iges()
         if not getattr(self, "ribbon_view", None):
             return
-        keys = sorted((self.ige_registry or {}).keys(), key=self._ige_id_to_num)
+        keys = sorted((self.ige_registry or {}).keys(), key=self._ige_sort_key)
         rows = []
         for ige_id in keys:
             ent = self._ensure_ige_cpt_fields(self._ensure_ige_entry(ige_id))
             rows.append(
                 {
                     "ige_id": str(ige_id),
-                    "label": str(ige_id),
+                    "label": str(ent.get("label", ige_id) or ige_id),
+                    "visual_order": int(ent.get("ordinal", self._ige_id_to_num(ige_id)) or self._ige_id_to_num(ige_id)),
                     "soil": str(ent.get("soil_type") or ""),
                     "sand_kind": str(ent.get("sand_kind") or ""),
                     "sand_water_saturation": str(ent.get("sand_water_saturation") or ""),
@@ -7175,7 +7251,7 @@ class GeoCanvasEditor(tk.Tk):
         current_raw = vals[row] if 0 <= row < len(vals) else ""
         current = "" if current_raw is None else str(current_raw)
         self._tail_debug_log("TAIL_ENTRY", f"begin_edit SOURCE ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} source_before_create={repr(current_raw)} source_norm={repr(current)} len_field={len(vals)}", ti=int(ti))
-        e = tk.Entry(self.canvas, validate="key", validatecommand=(self.register(_validate_int_0_300_key), "%P"))
+        e = tk.Entry(self.canvas, validate="key", validatecommand=(self.register(self._validate_cell_int_key), "%P"))
         self._tail_debug_log("TAIL_ENTRY", f"begin_edit CREATED ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} entry_text_after_create={repr(e.get())}", ti=int(ti))
         e.insert(0, current)
         self._tail_debug_log("TAIL_ENTRY", f"begin_edit INSERTED ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} entry_text_after_insert={repr(e.get())}", ti=int(ti))
@@ -7438,8 +7514,8 @@ class GeoCanvasEditor(tk.Tk):
                     self.schedule_graph_redraw()
                     return
 
-                old_norm = _sanitize_int_0_300(old_text)
-                newv = _sanitize_int_0_300(val_text)
+                old_norm = self._sanitize_cell_int(old_text)
+                newv = self._sanitize_cell_int(val_text)
 
                 # 2) Нормализованные значения совпали: тоже no-op.
                 if old_norm.strip() == newv.strip():
