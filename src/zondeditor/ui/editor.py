@@ -7637,7 +7637,7 @@ class GeoCanvasEditor(tk.Tk):
         self._redraw()
         self.schedule_graph_redraw()
 
-    def _debug_header_sync(self, source: str, **extra):
+    def _debug_header_sync(self, stage: str, **extra):
         if not bool(getattr(self, "_header_sync_debug", False)):
             return
         try:
@@ -7674,11 +7674,11 @@ class GeoCanvasEditor(tk.Tk):
         body_first_screen_x = first_world_x - body_left
         header_first_screen_x = first_world_x - header_left
         drift = header_first_screen_x - body_first_screen_x
-        cnt = int(self._header_sync_source_counts.get(str(source), 0) + 1)
-        self._header_sync_source_counts[str(source)] = cnt
+        cnt = int(self._header_sync_source_counts.get(str(stage), 0) + 1)
+        self._header_sync_source_counts[str(stage)] = cnt
         extras = " ".join(f"{k}={v}" for k, v in extra.items())
         print(
-            f"[HDRSYNC] wheel={self._header_sync_wheel_seq} src={source} cnt={cnt} mode={mode} "
+            f"[HDRSYNC] wheel={self._header_sync_wheel_seq} src={stage} cnt={cnt} mode={mode} "
             f"state={state} incl={int(incl)} body_xv={body_xv} hdr_xv={hdr_xv} vw={viewport_w} cw={content_w:.1f} "
             f"body_left={body_left:.2f} hdr_left={header_left:.2f} body_first={body_first_screen_x:.2f} "
             f"hdr_first={header_first_screen_x:.2f} drift={drift:.2f} pending={int(bool(getattr(self, '_header_sync_pending', False)))} {extras}"
