@@ -1,0 +1,72 @@
+{
+  "cases": [
+    {
+      "case_id": "sand_ok",
+      "method": "SP446_CPT_SAND",
+      "stats": {"n_points": 20, "qc_avg_mpa": 6.0, "v_qc": 0.20, "avg_depth_m": 2.5},
+      "context": {},
+      "expected": {
+        "status": "ok",
+        "result_status": "ok",
+        "warnings_contains": ["упрощенная ветка"],
+        "errors_contains": [],
+        "outputs": {"E_MPa": 18.0, "phi_deg": 32.0, "c_kPa": null},
+        "tolerance": {"E_MPa": 0.01, "phi_deg": 0.01}
+      }
+    },
+    {
+      "case_id": "clay_ok",
+      "method": "SP446_CPT_CLAY",
+      "stats": {"n_points": 24, "qc_avg_mpa": 4.0, "v_qc": 0.25, "avg_depth_m": 4.0},
+      "context": {"consistency_or_il_present": true},
+      "expected": {
+        "status": "ok",
+        "result_status": "ok",
+        "warnings_contains": ["упрощенная ветка"],
+        "errors_contains": [],
+        "outputs": {"E_MPa": 9.6, "phi_deg": 21.2, "c_kPa": 10.5},
+        "tolerance": {"E_MPa": 0.01, "phi_deg": 0.01, "c_kPa": 0.01}
+      }
+    },
+    {
+      "case_id": "sand_boundary_high_qc",
+      "method": "SP446_CPT_SAND",
+      "stats": {"n_points": 15, "qc_avg_mpa": 16.0, "v_qc": 0.20, "avg_depth_m": 6.0},
+      "context": {},
+      "expected": {
+        "status": "ok",
+        "result_status": "ok",
+        "warnings_contains": ["выше рекомендуемого диапазона"],
+        "errors_contains": [],
+        "outputs": {"E_MPa": 36.0, "phi_deg": 38.0, "c_kPa": null},
+        "tolerance": {"E_MPa": 0.01, "phi_deg": 0.01}
+      }
+    },
+    {
+      "case_id": "clay_missing_context",
+      "method": "SP446_CPT_CLAY",
+      "stats": {"n_points": 18, "qc_avg_mpa": 3.0, "v_qc": 0.20, "avg_depth_m": 5.0},
+      "context": {"consistency_or_il_present": false},
+      "expected": {
+        "status": "invalid_input",
+        "result_status": "invalid_input",
+        "warnings_contains": ["упрощенная ветка"],
+        "errors_contains": ["требуется IL или консистенция"],
+        "outputs": {"E_MPa": null, "phi_deg": null, "c_kPa": null}
+      }
+    },
+    {
+      "case_id": "sp22_not_implemented",
+      "method": "SP22_TABLE_A",
+      "stats": {"n_points": 22, "qc_avg_mpa": 5.0, "v_qc": 0.20, "avg_depth_m": 3.0},
+      "context": {},
+      "expected": {
+        "status": "not_implemented",
+        "result_status": "not_implemented",
+        "warnings_contains": ["не реализован"],
+        "errors_contains": [],
+        "outputs": {"E_MPa": null, "phi_deg": null, "c_kPa": null}
+      }
+    }
+  ]
+}

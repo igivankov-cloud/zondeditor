@@ -1,34 +1,29 @@
-# Расчётный контур — этап 2
+# Расчётный контур — этап 3
 
-## Реестр и справочники
-- `data/normative_profiles.json` — профили нормативной базы с документами и изменениями.
-- `data/soil_catalog.json` — типы грунтов, семейства, subtype и validation profile.
-- `data/applicability_rules.json` — матрица применимости методов к грунтам и статусам.
-- `data/method_catalog.json` — описание методов (`applicable_soils`, `required_fields`, `optional_fields`, `blocking_conditions`, `warning_conditions`, `output_params`, `implemented`).
+## Что добавлено на этапе 3
+- Эталонные reference-cases для инженерной сверки (`fixtures/reference_calc_cases.json`).
+- Автотест сравнения program vs expected с допусками (`tests/test_calc_reference_cases.py`).
+- Первый export-ready payload в `protocol_builder`: `sections.export_ready_params` по `E_MPa`, `phi_deg`, `c_kPa`.
+- Увязка с данными слоёв: `contributing_layers`, `required_fields`, `missing_fields`, причины отказа.
 
-## Модуль расчётов
-`src/zondeditor/calculations/`:
-- `normative_profiles.py`
-- `soil_catalog.py`
-- `applicability.py`
-- `validation.py`
-- `sample_builder.py`
-- `statistics.py`
-- `calc_methods.py`
-- `protocol_builder.py`
-- `models.py`
+## Подтверждённые расчётные ветки
+- `SP446_CPT_SAND`: работает, добавлены warning на пограничных qc/V.
+- `SP446_CPT_CLAY`: работает, добавлены warning на пограничных qc/V и обязательность `IL|consistency`.
 
-## Статусы и ограничения
-- Статусы: `CALCULATED`, `PRELIMINARY`, `LAB_ONLY`, `NOT_APPLICABLE`, `NOT_IMPLEMENTED`.
-- Если данных недостаточно, расчёт не выполняется: `result.status=invalid_input`, с `missing_fields`.
-- Для неготовых методов: `result.status=not_implemented`, без фиктивных параметров.
+## Консервативная политика
+Для веток SP446 пока используется инженерная упрощённая формула (явный warning в результате).
+Если часть логики нормативно не подтверждена, расчёт не «догадывается»:
+- `not_implemented` для неготовых методов;
+- `invalid_input` при нехватке обязательных полей.
 
-## Трассировка
-В `protocol_builder` добавлена `sections.calculation_trace`, где фиксируются:
-- профиль,
-- метод,
-- использованные зондирования,
-- диапазон глубин,
-- число точек,
-- исключённые точки и причины,
-- warnings/errors/missing_fields.
+## Структура протокола
+По каждому ИГЭ фиксируются:
+- тип/статус/метод/профиль;
+- использованные зондирования;
+- глубинный интервал;
+- число точек;
+- исключённые точки и причины;
+- статистика;
+- итоговые параметры E/phi/c;
+- warnings/errors/missing_fields/required_fields;
+- contributing_layers (по каким слоям считалось).

@@ -69,6 +69,8 @@ class IGECalcSample:
     used_sounding_ids: list[str] = field(default_factory=list)
     depth_interval: tuple[float, float] | None = None
     excluded_points: list[dict[str, Any]] = field(default_factory=list)
+    contributing_layers: list[dict[str, Any]] = field(default_factory=list)
+    required_fields: list[str] = field(default_factory=list)
 
 
 @dataclass

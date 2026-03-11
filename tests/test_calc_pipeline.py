@@ -73,6 +73,12 @@ def test_method_not_applicable_and_protocol_trace_payload():
     assert trace[0]["status"] == "NOT_APPLICABLE"
     assert "used_soundings" in trace[0]
     assert "excluded_points" in trace[0]
+    assert "required_fields" in trace[0]
+    assert "contributing_layers" in trace[0]
+
+    export_payload = protocol["sections"]["export_ready_params"]
+    assert len(export_payload) == 1
+    assert {"E_MPa", "phi_deg", "c_kPa"}.issubset(set(export_payload[0].keys()))
 
 
 def test_fill_rule_limited_without_manual_confirmation():

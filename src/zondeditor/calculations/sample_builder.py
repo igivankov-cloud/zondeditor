@@ -5,7 +5,7 @@ from typing import Any
 from src.zondeditor.domain.cpt_ru_sp446 import parse_depth_float
 
 from .applicability import resolve_applicability
-from .calc_methods import run_method
+from .calc_methods import load_method_catalog, run_method
 from .models import IGECalcPoint, IGECalcResult, IGECalcSample, IGECalcStats, IGEModel
 from .soil_catalog import load_soil_catalog, soil_code_by_name
 from .statistics import calc_stats
@@ -53,8 +53,29 @@ def _build_ige_model(ige_id: str, ent: dict[str, Any], profile_id: str) -> IGEMo
     )
 
 
+def _missing_by_required_fields(required_fields: list[str], *, stats: IGECalcStats, ige: IGEModel) -> list[str]:
+    missing: list[str] = []
+    for rf in required_fields or []:
+        if rf == "qc_mpa" and stats.qc_avg_mpa is None:
+            missing.append(rf)
+        elif rf == "avg_depth_m" and stats.avg_depth_m is None:
+            missing.append(rf)
+        elif rf == "n_points" and int(stats.n_points or 0) <= 0:
+            missing.append(rf)
+        elif rf == "consistency_or_IL":
+            il = ige.input_fields.get("IL")
+            cons = str(ige.input_fields.get("consistency") or "").strip()
+            if il in (None, "") and not cons:
+                missing.append(rf)
+        elif rf in {"e", "Sr"} and ige.input_fields.get(rf) in (None, ""):
+            missing.append(rf)
+    return missing
+
+
 def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any]], profile_id: str, allow_fill_by_material: bool) -> list[IGECalcSample]:
     out: list[IGECalcSample] = []
+    method_catalog = load_method_catalog()
+
     for ige_key in sorted((ige_registry or {}).keys()):
         ent = dict(ige_registry.get(ige_key) or {})
         ige = _build_ige_model(ige_key, ent, profile_id)
@@ -63,18 +84,20 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
         points: list[IGECalcPoint] = []
         excluded_points: list[dict[str, Any]] = []
         used_sounding_ids: list[str] = []
+        layer_refs: list[dict[str, Any]] = []
 
         for test in tests or []:
             if not bool(getattr(test, "export_on", True)):
                 continue
             tid = str(getattr(test, "tid", ""))
             touched = False
-            for lyr in (getattr(test, "layers", []) or []):
+            for idx, lyr in enumerate((getattr(test, "layers", []) or []), start=1):
                 lid = str(getattr(lyr, "ige_id", "") or "").strip()
                 if lid != ige_key:
                     continue
                 top = float(getattr(lyr, "top_m", 0.0) or 0.0)
                 bot = float(getattr(lyr, "bot_m", 0.0) or 0.0)
+                layer_refs.append({"sounding_id": f"test_{tid}", "layer_index": idx, "top_m": top, "bot_m": bot, "ige_id": lid})
                 seg = f"seg_{tid}_{ige_key}_{top:.2f}_{bot:.2f}"
                 for dep, qc_mpa, fs_kpa in _iter_points(test):
                     if not (top <= dep <= bot):
@@ -88,25 +111,41 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
                 used_sounding_ids.append(f"test_{tid}")
 
         stats: IGECalcStats = calc_stats(points)
-        missing_fields: list[str] = []
-        errors: list[str] = []
         warnings = [w for w in [app.warning] if w]
+        errors: list[str] = []
+
+        method_item = method_catalog.get(app.method)
+        required_fields = list(method_item.required_fields if method_item else [])
+
+        validation = validate_inputs(ige=ige, stats=stats)
+        missing_fields = sorted(set(validation.missing_fields + _missing_by_required_fields(required_fields, stats=stats, ige=ige)))
 
         if app.status in {"NOT_APPLICABLE", "LAB_ONLY"}:
             result = IGECalcResult(status="not_applicable", not_implemented=False)
+        elif method_item is not None and not method_item.implemented:
+            app.status = "NOT_IMPLEMENTED"
+            result = IGECalcResult(status="not_implemented", not_implemented=True)
+            warnings.append(f"Метод {app.method} помечен как not implemented")
+        elif missing_fields:
+            errors = ["Недостаточно исходных данных для расчёта"]
+            result = IGECalcResult(status="invalid_input", not_implemented=False)
         else:
-            validation = validate_inputs(ige=ige, stats=stats)
-            if not validation.ok:
-                missing_fields = list(validation.missing_fields)
-                errors = ["Недостаточно исходных данных для расчёта"] + list(validation.errors)
-                result = IGECalcResult(status="invalid_input", not_implemented=False)
-            else:
-                method_run = run_method(app.method, stats)
-                result = method_run.result
-                if method_run.status == "not_implemented":
-                    if app.status in {"CALCULATED", "PRELIMINARY"}:
-                        app.status = "NOT_IMPLEMENTED"
-                warnings.extend(method_run.warnings)
+            method_run = run_method(
+                app.method,
+                stats,
+                context={
+                    "consistency_or_il_present": bool((ige.input_fields.get("IL") not in (None, "")) or str(ige.input_fields.get("consistency") or "").strip()),
+                    "soil_code": ige.soil_code,
+                    "subtype": ige.subtype,
+                },
+            )
+            result = method_run.result
+            warnings.extend(method_run.warnings)
+            errors.extend(method_run.errors)
+            if method_run.status == "not_implemented" and app.status in {"CALCULATED", "PRELIMINARY"}:
+                app.status = "NOT_IMPLEMENTED"
+            if method_run.status == "invalid_input":
+                app.status = "INVALID_INPUT"
 
         depths = [p.depth_m for p in points]
         depth_interval = (min(depths), max(depths)) if depths else None
@@ -128,6 +167,8 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
             used_sounding_ids=used_sounding_ids,
             depth_interval=depth_interval,
             excluded_points=excluded_points,
+            contributing_layers=layer_refs,
+            required_fields=required_fields,
         )
         out.append(sample)
 
