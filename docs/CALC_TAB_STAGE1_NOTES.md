@@ -1,21 +1,23 @@
-# Расчётный контур — этап 1
+# Расчётный контур — этап 1 (исправленный)
 
-## Что взято из GeoExplorer как UX/структура
-- Разделение на режимы расчёта (актуальный/совместимость/legacy).
-- Табличное представление результатов по ИГЭ со статусами применимости.
-- Явный вывод предупреждений и отказов в расчёте.
+## Реестр и справочники
+- `data/normative_profiles.json`
+- `data/soil_catalog.json`
+- `data/applicability_rules.json`
+- `data/method_catalog.json`
 
-## Что вынесено в режим совместимости
-- Профиль `GEOEXPLORER_SP446` с отдельным `calc_mode=COMPAT_GEOEXPLORER`.
-- Legacy-профиль `LEGACY_SP11_105` для сравнения и регресса.
+## Модуль расчётов
+`src/zondeditor/calculations/`:
+- `normative_profiles.py`
+- `soil_catalog.py`
+- `applicability.py`
+- `sample_builder.py`
+- `statistics.py`
+- `calc_methods.py`
+- `protocol_builder.py`
+- `models.py` (IGEModel, IGECalcPoint, IGECalcStats, IGECalcResult, IGECalcSample, CalculationTabState)
 
-## Что считается только по актуальному профилю
-- Профиль `DEFAULT_CURRENT` содержит актуальный набор СП/ГОСТ с полями редакции/изменений.
-- Для него по умолчанию используется `RU_AUTO_CPT_V1` матрица применимости.
-
-## Реализованный workflow расчёта
-1. Выбор нормативного профиля и опций в вкладке «Расчёт».
-2. Сбор агрегированных выборок qc/fs/depth по ИГЭ из интервалов всех зондировок.
-3. Расчёт статистики (`n`, `qc_avg`, `qc_min`, `qc_max`, `V_qc`, `avg_depth`).
-4. Проверка применимости метода (статусы `CALCULATED/PRELIMINARY/LAB_ONLY/NOT_APPLICABLE`).
-5. Формирование строк расчётной таблицы и структуры протокола.
+## Геоэксплорер
+- Используется как источник UX/структуры workflow.
+- Актуальная формульная база закреплена через профиль `DEFAULT_CURRENT`.
+- `GEOEXPLORER_SP446` и `LEGACY_SP11_105` оставлены как режимы совместимости/сравнения.

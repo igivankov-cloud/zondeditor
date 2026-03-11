@@ -1,0 +1,9 @@
+{
+  "methods": [
+    {"method_id": "SP446_CPT_SAND", "name": "СП 446 / CPT / пески", "family": "sand_like", "requires": ["qc_mpa", "avg_depth_m"], "outputs": ["E_MPa", "phi_deg"], "supports_c_kPa": false},
+    {"method_id": "SP446_CPT_CLAY", "name": "СП 446 / CPT / глинистые", "family": "clay_like", "requires": ["qc_mpa", "avg_depth_m"], "outputs": ["E_MPa", "phi_deg", "c_kPa"], "supports_c_kPa": true},
+    {"method_id": "SP22_TABLE_A", "name": "СП 22 / Приложение А", "family": "fallback", "requires": ["e", "IL", "Sr"], "outputs": ["E_MPa", "phi_deg", "c_kPa"], "supports_c_kPa": true},
+    {"method_id": "LAB_ONLY", "name": "Лаборатория / прямые методы", "family": "manual", "requires": [], "outputs": [], "supports_c_kPa": false},
+    {"method_id": "MANUAL", "name": "Ручной ввод", "family": "manual", "requires": [], "outputs": ["E_MPa", "phi_deg", "c_kPa"], "supports_c_kPa": true}
+  ]
+}

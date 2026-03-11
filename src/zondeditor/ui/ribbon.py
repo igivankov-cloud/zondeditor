@@ -40,7 +40,7 @@ class RibbonView(ttk.Frame):
         self._add_ige_btn = None
         self._ige_order: list[str] = []
         self.calc_profile_var = tk.StringVar(value="DEFAULT_CURRENT")
-        self.calc_mode_var = tk.StringVar(value="AUTO_CPT_V1")
+        self.calc_mode_var = tk.StringVar(value="AUTO")
         self.calc_sandy_loam_profile_var = tk.BooleanVar(value=True)
         self.calc_fill_manual_var = tk.BooleanVar(value=False)
         self.calc_make_protocol_var = tk.BooleanVar(value=True)
@@ -280,7 +280,7 @@ class RibbonView(ttk.Frame):
         self.calc_profile_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("calc_profile_changed", lambda *_: None)(self.calc_profile_var.get()))
 
         ttk.Label(params, text="Режим:").grid(row=0, column=2, sticky="w")
-        self.calc_mode_combo = ttk.Combobox(params, state="readonly", textvariable=self.calc_mode_var, values=["AUTO_CPT_V1", "COMPAT_GEOEXPLORER", "LEGACY_COMPARE"], width=20)
+        self.calc_mode_combo = ttk.Combobox(params, state="readonly", textvariable=self.calc_mode_var, values=["AUTO", "COMPAT", "LEGACY"], width=20)
         self.calc_mode_combo.grid(row=0, column=3, sticky="w", padx=(6, 0))
         self.calc_mode_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("calc_mode_changed", lambda *_: None)(self.calc_mode_var.get()))
 

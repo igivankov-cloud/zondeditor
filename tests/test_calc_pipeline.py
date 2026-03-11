@@ -1,5 +1,5 @@
-from src.zondeditor.domain.calc_applicability import CalcStatus, evaluate_method_applicability
-from src.zondeditor.domain.calc_pipeline import build_calc_rows
+from src.zondeditor.calculations.applicability import resolve_applicability
+from src.zondeditor.calculations.sample_builder import build_ige_samples
 from src.zondeditor.domain.layers import Layer, SoilType, calc_mode_for_soil
 from src.zondeditor.domain.models import TestData
 
@@ -14,9 +14,9 @@ def _mk_test(tid, layers):
 
 
 def test_applicability_fill_requires_manual_confirmation():
-    res = evaluate_method_applicability(soil_type="насыпной", fill_subtype="песчаный", profile_method="SP446_APP_J", allow_fill_by_material=False)
-    assert res.status == CalcStatus.LAB_ONLY
-    assert res.requires_manual_confirmation is True
+    res = resolve_applicability(profile_id="DEFAULT_CURRENT", soil_code="fill", subtype="песчаный", allow_fill_by_material=False)
+    assert res.status == "LAB_ONLY"
+    assert res.manual_confirmation_required is True
 
 
 def test_pipeline_collects_rows_and_not_applicable():
@@ -26,11 +26,11 @@ def test_pipeline_collects_rows_and_not_applicable():
     ]
     tests = [_mk_test(1, layers)]
     registry = {
-        "ИГЭ-1": {"soil_type": "песок"},
-        "ИГЭ-6": {"soil_type": "торф"},
+        "ИГЭ-1": {"soil_type": "песок", "soil_code": "sand"},
+        "ИГЭ-6": {"soil_type": "торф", "soil_code": "peat"},
     }
-    rows, _samples = build_calc_rows(tests=tests, ige_registry=registry, method="SP446_APP_J")
-    by = {r["ige_id"]: r for r in rows}
-    assert by["ИГЭ-1"]["status"] == "CALCULATED"
-    assert by["ИГЭ-1"]["n_points"] > 0
-    assert by["ИГЭ-6"]["status"] == "NOT_APPLICABLE"
+    samples = build_ige_samples(tests=tests, ige_registry=registry, profile_id="DEFAULT_CURRENT", allow_fill_by_material=False)
+    by = {s.ige_id: s for s in samples}
+    assert by["ИГЭ-1"].status == "CALCULATED"
+    assert by["ИГЭ-1"].stats.n_points > 0
+    assert by["ИГЭ-6"].status == "NOT_APPLICABLE"

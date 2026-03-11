@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
+
+from ._data_loader import load_data_file
 
 
 @dataclass
@@ -17,27 +17,19 @@ class NormativeProfile:
     applicability_rules_profile: str
 
 
-def _profiles_path() -> Path:
-    return Path(__file__).with_name("normative_profiles.json")
-
-
 def load_normative_profiles() -> dict[str, NormativeProfile]:
-    raw = json.loads(_profiles_path().read_text(encoding="utf-8"))
+    raw = load_data_file("normative_profiles.json")
     out: dict[str, NormativeProfile] = {}
     for item in list(raw.get("profiles") or []):
-        prof = NormativeProfile(
+        p = NormativeProfile(
             profile_id=str(item.get("profile_id") or ""),
             profile_name=str(item.get("profile_name") or ""),
             documents=list(item.get("documents") or []),
-            calc_mode=str(item.get("calc_mode") or ""),
+            calc_mode=str(item.get("calc_mode") or "AUTO"),
             comments=str(item.get("comments") or ""),
             enabled_methods=[str(x) for x in (item.get("enabled_methods") or [])],
-            applicability_rules_profile=str(item.get("applicability_rules_profile") or "RU_AUTO_CPT_V1"),
+            applicability_rules_profile=str(item.get("applicability_rules_profile") or "DEFAULT_CURRENT"),
         )
-        if prof.profile_id:
-            out[prof.profile_id] = prof
+        if p.profile_id:
+            out[p.profile_id] = p
     return out
-
-
-def list_normative_profiles() -> list[NormativeProfile]:
-    return list(load_normative_profiles().values())
