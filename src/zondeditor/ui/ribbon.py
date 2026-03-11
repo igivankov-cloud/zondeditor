@@ -38,6 +38,7 @@ class RibbonView(ttk.Frame):
         self._ige_rows_cache: dict[str, dict] = {}
         self._ige_soil_values: list[str] = []
         self._add_ige_btn = None
+        self._ige_order: list[str] = []
 
         try:
             style = ttk.Style(self)
@@ -530,56 +531,48 @@ class RibbonView(ttk.Frame):
         )
 
     def _render_ige_cards(self, rows: list[dict], soil_values: list[str], can_delete: bool):
-        ids = [str(r.get("ige_id", "") or "") for r in rows]
-        existing = list(self._ige_cards.keys())
-        if ids != existing:
-            for ch in self._ige_columns_frame.winfo_children():
-                ch.destroy()
-            self._ige_cards = {}
-            self._ige_rows_cache = {}
-            for row in rows:
-                row = dict(row)
-                row["_can_delete"] = bool(can_delete)
-                self._build_ige_column(self._ige_columns_frame, row, soil_values, can_delete)
-                self._ige_cards[str(row.get("ige_id", "") or "")] = self._ige_columns_frame.winfo_children()[-1]
-                self._ige_rows_cache[str(row.get("ige_id", "") or "")] = row
-            return
+        incoming_ids = [str(r.get("ige_id", "") or "") for r in rows]
+        row_by_id = {str(r.get("ige_id", "") or ""): dict(r) for r in rows}
 
-        for row in rows:
+        # Stable visual order: changes only on add/remove.
+        if not self._ige_order:
+            self._ige_order = list(incoming_ids)
+        else:
+            incoming_set = set(incoming_ids)
+            current_set = set(self._ige_order)
+            if incoming_set != current_set:
+                # remove gone ids
+                self._ige_order = [x for x in self._ige_order if x in incoming_set]
+                # append truly new ids to the right
+                for x in incoming_ids:
+                    if x not in self._ige_order:
+                        self._ige_order.append(x)
+
+        # Canonical rows in stable order
+        ordered_rows: list[dict] = []
+        for rid in self._ige_order:
+            row = dict(row_by_id.get(rid) or {})
+            if not row:
+                continue
+            row["_can_delete"] = bool(can_delete)
+            ordered_rows.append(row)
+
+        # Rebuild all cards in canonical order (deterministic, no jumping).
+        for ch in self._ige_columns_frame.winfo_children():
+            ch.destroy()
+        self._ige_cards = {}
+        self._ige_rows_cache = {}
+        for row in ordered_rows:
             rid = str(row.get("ige_id", "") or "")
-            cur = dict(row)
-            cur["_can_delete"] = bool(can_delete)
-            if self._rows_signature(cur) == self._rows_signature(self._ige_rows_cache.get(rid, {})):
-                continue
-            card = self._ige_cards.get(rid)
-            if card is None:
-                continue
-            children = list(self._ige_columns_frame.winfo_children())
-            try:
-                idx = children.index(card)
-            except Exception:
-                idx = -1
-            next_sibling = None
-            if idx >= 0 and idx + 1 < len(children):
-                next_sibling = children[idx + 1]
-            try:
-                card.destroy()
-            except Exception:
-                continue
-            self._build_ige_column(self._ige_columns_frame, cur, soil_values, can_delete)
-            new_card = self._ige_columns_frame.winfo_children()[-1]
-            new_card.pack_forget()
-            _, gap, _ = self._ige_card_metrics()
-            if next_sibling is not None and str(next_sibling) != str(getattr(self, '_add_ige_btn', None)):
-                new_card.pack(side="left", fill="y", padx=(0, max(2, gap)), before=next_sibling)
-            else:
-                new_card.pack(side="left", fill="y", padx=(0, max(2, gap)))
-            self._ige_cards[rid] = new_card
-            self._ige_rows_cache[rid] = cur
+            self._build_ige_column(self._ige_columns_frame, row, soil_values, can_delete)
+            self._ige_cards[rid] = self._ige_columns_frame.winfo_children()[-1]
+            self._ige_rows_cache[rid] = row
 
     def set_layers(self, rows: list[dict], soil_values: list[str], *, can_add: bool = True, can_delete: bool = True):
         self._layer_rows = list(rows or [])
         self._ige_soil_values = list(soil_values or [])
+        if not self._layer_rows:
+            self._ige_order = []
         try:
             if self._add_ige_btn is not None:
                 self._add_ige_btn.destroy()
