@@ -1,9 +1,71 @@
 {
   "methods": [
-    {"method_id": "SP446_CPT_SAND", "name": "СП 446 / CPT / пески", "family": "sand_like", "requires": ["qc_mpa", "avg_depth_m"], "outputs": ["E_MPa", "phi_deg"], "supports_c_kPa": false},
-    {"method_id": "SP446_CPT_CLAY", "name": "СП 446 / CPT / глинистые", "family": "clay_like", "requires": ["qc_mpa", "avg_depth_m"], "outputs": ["E_MPa", "phi_deg", "c_kPa"], "supports_c_kPa": true},
-    {"method_id": "SP22_TABLE_A", "name": "СП 22 / Приложение А", "family": "fallback", "requires": ["e", "IL", "Sr"], "outputs": ["E_MPa", "phi_deg", "c_kPa"], "supports_c_kPa": true},
-    {"method_id": "LAB_ONLY", "name": "Лаборатория / прямые методы", "family": "manual", "requires": [], "outputs": [], "supports_c_kPa": false},
-    {"method_id": "MANUAL", "name": "Ручной ввод", "family": "manual", "requires": [], "outputs": ["E_MPa", "phi_deg", "c_kPa"], "supports_c_kPa": true}
+    {
+      "method_id": "SP446_CPT_SAND",
+      "name": "СП 446 / CPT / пески",
+      "family": "sand_like",
+      "applicable_soils": ["sand", "sand_gravelly"],
+      "required_fields": ["qc_mpa", "avg_depth_m", "n_points"],
+      "optional_fields": ["fs_kpa", "is_alluvial", "subtype"],
+      "blocking_conditions": ["n_points <= 0", "qc_mpa is null"],
+      "warning_conditions": ["v_qc > 0.35", "sand_gravelly profile fallback"],
+      "output_params": ["E_MPa", "phi_deg"],
+      "supports_c_kPa": false,
+      "implemented": true
+    },
+    {
+      "method_id": "SP446_CPT_CLAY",
+      "name": "СП 446 / CPT / глинистые",
+      "family": "clay_like",
+      "applicable_soils": ["sandy_loam", "loam", "clay"],
+      "required_fields": ["qc_mpa", "avg_depth_m", "n_points", "consistency_or_IL"],
+      "optional_fields": ["fs_kpa", "IL", "consistency"],
+      "blocking_conditions": ["n_points <= 0", "consistency_or_IL missing"],
+      "warning_conditions": ["v_qc > 0.40"],
+      "output_params": ["E_MPa", "phi_deg", "c_kPa"],
+      "supports_c_kPa": true,
+      "implemented": true
+    },
+    {
+      "method_id": "SP22_TABLE_A",
+      "name": "СП 22 / Приложение А",
+      "family": "fallback",
+      "applicable_soils": ["sandy_loam", "loam", "clay"],
+      "required_fields": ["e", "IL", "Sr"],
+      "optional_fields": ["w", "wL", "wP"],
+      "blocking_conditions": ["any required field missing"],
+      "warning_conditions": ["lab-only data inconsistency"],
+      "output_params": ["E_MPa", "phi_deg", "c_kPa"],
+      "supports_c_kPa": true,
+      "implemented": false,
+      "implementation_note": "Формульный контур будет добавлен на следующем этапе"
+    },
+    {
+      "method_id": "LAB_ONLY",
+      "name": "Лаборатория / прямые методы",
+      "family": "manual",
+      "applicable_soils": ["fill", "gravel_soil", "peat", "argillite", "sandstone"],
+      "required_fields": [],
+      "optional_fields": [],
+      "blocking_conditions": [],
+      "warning_conditions": ["manual confirmation required"],
+      "output_params": [],
+      "supports_c_kPa": false,
+      "implemented": true
+    },
+    {
+      "method_id": "MANUAL",
+      "name": "Ручной ввод",
+      "family": "manual",
+      "applicable_soils": ["sand", "sand_gravelly", "sandy_loam", "loam", "clay", "fill", "gravel_soil", "peat", "argillite", "sandstone"],
+      "required_fields": [],
+      "optional_fields": ["E_MPa", "phi_deg", "c_kPa"],
+      "blocking_conditions": [],
+      "warning_conditions": ["manual data must be verified"],
+      "output_params": ["E_MPa", "phi_deg", "c_kPa"],
+      "supports_c_kPa": true,
+      "implemented": false,
+      "implementation_note": "UI ручного ввода пока не подключен"
+    }
   ]
 }

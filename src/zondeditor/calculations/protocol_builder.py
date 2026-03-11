@@ -12,16 +12,32 @@ def build_protocol(*, project_name: str, profile_id: str, samples: list[IGECalcS
     profiles = load_normative_profiles()
     prof = profiles.get(profile_id)
     soil_catalog = load_soil_catalog()
+
     not_applicable = []
     warnings: list[str] = []
     ige_results = []
+    calc_trace = []
+
     for s in samples or []:
         soil_name = ""
-        # best effort via method family not available directly here
+        for sc in soil_catalog.values():
+            if sc.soil_code and sc.soil_code in str(s.method).lower():
+                soil_name = sc.soil_name
+
         if s.warnings:
             warnings.extend(s.warnings)
-        if s.status in {"NOT_APPLICABLE", "LAB_ONLY"}:
-            not_applicable.append({"ige_label": s.ige_id, "soil_name": soil_name, "status": s.status, "reason": (s.warnings[0] if s.warnings else "")})
+        if s.status in {"NOT_APPLICABLE", "LAB_ONLY", "NOT_IMPLEMENTED"}:
+            not_applicable.append(
+                {
+                    "ige_label": s.ige_id,
+                    "soil_name": soil_name,
+                    "status": s.status,
+                    "reason": (s.warnings[0] if s.warnings else ""),
+                    "missing_fields": list(s.missing_fields or []),
+                    "errors": list(s.errors or []),
+                }
+            )
+
         ige_results.append(
             {
                 "ige_label": s.ige_id,
@@ -39,6 +55,24 @@ def build_protocol(*, project_name: str, profile_id: str, samples: list[IGECalcS
                 "warning": (s.warnings[0] if s.warnings else None),
             }
         )
+
+        calc_trace.append(
+            {
+                "ige_id": s.ige_id,
+                "profile_id": profile_id,
+                "method": s.method,
+                "status": s.status,
+                "used_soundings": list(s.used_sounding_ids or []),
+                "depth_interval": s.depth_interval,
+                "n_points": s.stats.n_points,
+                "excluded_points": list(s.excluded_points or []),
+                "excluded_reasons": list(s.exclusions or []),
+                "warnings": list(s.warnings or []),
+                "errors": list(s.errors or []),
+                "missing_fields": list(s.missing_fields or []),
+            }
+        )
+
     return {
         "project_name": project_name,
         "profile_id": profile_id,
@@ -52,5 +86,6 @@ def build_protocol(*, project_name: str, profile_id: str, samples: list[IGECalcS
             "ige_results": ige_results,
             "not_applicable": not_applicable,
             "warnings": warnings,
+            "calculation_trace": calc_trace,
         },
     }

@@ -13,6 +13,7 @@ class SoilCatalogItem:
     ui_group: str
     supports_alluvial_flag: bool
     subtypes: list[str]
+    validation_profile: str
 
 
 def load_soil_catalog() -> dict[str, SoilCatalogItem]:
@@ -26,6 +27,7 @@ def load_soil_catalog() -> dict[str, SoilCatalogItem]:
             ui_group=str(item.get("ui_group") or "other"),
             supports_alluvial_flag=bool(item.get("supports_alluvial_flag", False)),
             subtypes=[str(x) for x in (item.get("subtypes") or [])],
+            validation_profile=str(item.get("validation_profile") or ""),
         )
         if s.soil_code:
             out[s.soil_code] = s

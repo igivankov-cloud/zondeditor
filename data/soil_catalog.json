@@ -1,14 +1,14 @@
 {
   "soil_types": [
-    {"soil_code": "sand", "soil_name": "песок", "soil_family": "sand_like", "ui_group": "sand", "supports_alluvial_flag": true, "subtypes": ["гравелистый", "крупный", "средней крупности", "мелкий", "пылеватый"]},
-    {"soil_code": "sand_gravelly", "soil_name": "песок гравелистый", "soil_family": "sand_like", "ui_group": "sand", "supports_alluvial_flag": true, "subtypes": []},
-    {"soil_code": "sandy_loam", "soil_name": "супесь", "soil_family": "clay_like", "ui_group": "clay", "supports_alluvial_flag": false, "subtypes": ["пластичная", "текучая", "твёрдая"]},
-    {"soil_code": "loam", "soil_name": "суглинок", "soil_family": "clay_like", "ui_group": "clay", "supports_alluvial_flag": false, "subtypes": ["твёрдая", "полутвёрдая", "тугопластичная", "мягкопластичная", "текучепластичная", "текучая"]},
-    {"soil_code": "clay", "soil_name": "глина", "soil_family": "clay_like", "ui_group": "clay", "supports_alluvial_flag": false, "subtypes": ["твёрдая", "полутвёрдая", "тугопластичная", "мягкопластичная", "текучепластичная", "текучая"]},
-    {"soil_code": "fill", "soil_name": "насыпной", "soil_family": "technogenic", "ui_group": "fill", "supports_alluvial_flag": false, "subtypes": ["песчаный", "глинистый", "более 10% строительного материала"]},
-    {"soil_code": "gravel_soil", "soil_name": "гравийный грунт", "soil_family": "coarse", "ui_group": "other", "supports_alluvial_flag": false, "subtypes": []},
-    {"soil_code": "peat", "soil_name": "торф", "soil_family": "organic", "ui_group": "other", "supports_alluvial_flag": false, "subtypes": []},
-    {"soil_code": "argillite", "soil_name": "аргиллит", "soil_family": "rock", "ui_group": "other", "supports_alluvial_flag": false, "subtypes": []},
-    {"soil_code": "sandstone", "soil_name": "песчаник", "soil_family": "rock", "ui_group": "other", "supports_alluvial_flag": false, "subtypes": []}
+    {"soil_code": "sand", "soil_name": "песок", "soil_family": "sand_like", "ui_group": "sand", "supports_alluvial_flag": true, "subtypes": ["гравелистый", "крупный", "средней крупности", "мелкий", "пылеватый"], "validation_profile": "SAND_STRICT"},
+    {"soil_code": "sand_gravelly", "soil_name": "песок гравелистый", "soil_family": "sand_like", "ui_group": "sand", "supports_alluvial_flag": true, "subtypes": [], "validation_profile": "SAND_STRICT"},
+    {"soil_code": "sandy_loam", "soil_name": "супесь", "soil_family": "clay_like", "ui_group": "clay", "supports_alluvial_flag": false, "subtypes": ["пластичная", "текучая", "твёрдая"], "validation_profile": "CLAY_STRICT"},
+    {"soil_code": "loam", "soil_name": "суглинок", "soil_family": "clay_like", "ui_group": "clay", "supports_alluvial_flag": false, "subtypes": ["твёрдая", "полутвёрдая", "тугопластичная", "мягкопластичная", "текучепластичная", "текучая"], "validation_profile": "CLAY_STRICT"},
+    {"soil_code": "clay", "soil_name": "глина", "soil_family": "clay_like", "ui_group": "clay", "supports_alluvial_flag": false, "subtypes": ["твёрдая", "полутвёрдая", "тугопластичная", "мягкопластичная", "текучепластичная", "текучая"], "validation_profile": "CLAY_STRICT"},
+    {"soil_code": "fill", "soil_name": "насыпной", "soil_family": "technogenic", "ui_group": "fill", "supports_alluvial_flag": false, "subtypes": ["песчаный", "глинистый", "более 10% строительного материала"], "validation_profile": "FILL_STRICT"},
+    {"soil_code": "gravel_soil", "soil_name": "гравийный грунт", "soil_family": "coarse", "ui_group": "other", "supports_alluvial_flag": false, "subtypes": [], "validation_profile": "COARSE"},
+    {"soil_code": "peat", "soil_name": "торф", "soil_family": "organic", "ui_group": "other", "supports_alluvial_flag": false, "subtypes": [], "validation_profile": "ORGANIC"},
+    {"soil_code": "argillite", "soil_name": "аргиллит", "soil_family": "rock", "ui_group": "other", "supports_alluvial_flag": false, "subtypes": [], "validation_profile": "ROCK"},
+    {"soil_code": "sandstone", "soil_name": "песчаник", "soil_family": "rock", "ui_group": "other", "supports_alluvial_flag": false, "subtypes": [], "validation_profile": "ROCK"}
   ]
 }

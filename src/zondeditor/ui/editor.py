@@ -1436,6 +1436,25 @@ class GeoCanvasEditor(tk.Tk):
                 "c": smp.result.c_kPa,
             })
         self.calc_rows = rows
+        try:
+            self.calc_tab_state.last_run_at = _dt.datetime.now().replace(microsecond=0).isoformat()
+            self.calc_tab_state.last_trace = [
+                {
+                    "ige_id": smp.ige_id,
+                    "method": smp.method,
+                    "status": smp.status,
+                    "used_soundings": list(smp.used_sounding_ids or []),
+                    "depth_interval": smp.depth_interval,
+                    "n_points": smp.stats.n_points,
+                    "excluded_count": smp.excluded_count,
+                    "warnings": list(smp.warnings or []),
+                    "errors": list(smp.errors or []),
+                    "missing_fields": list(smp.missing_fields or []),
+                }
+                for smp in list(samples or [])
+            ]
+        except Exception:
+            pass
         self._sync_calc_table()
 
     def _run_calc_pipeline(self):
@@ -1486,7 +1505,8 @@ class GeoCanvasEditor(tk.Tk):
         lines = []
         for smp in list(self.calc_samples or []):
             if smp.excluded_count:
-                lines.append(f"{smp.ige_id}: исключено {smp.excluded_count}")
+                reasons = ", ".join(list(smp.exclusions or []))
+                lines.append(f"{smp.ige_id}: исключено {smp.excluded_count}" + (f" ({reasons})" if reasons else ""))
         messagebox.showinfo("Исключённые точки", "\n".join(lines) if lines else "Нет исключённых точек")
 
     def _make_calc_protocol(self):

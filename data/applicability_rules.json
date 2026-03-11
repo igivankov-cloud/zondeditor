@@ -9,6 +9,11 @@
     {"profile_id": "DEFAULT_CURRENT", "soil_code": "gravel_soil", "method": "LAB_ONLY", "status": "NOT_APPLICABLE", "manual_confirmation_required": false, "warning": "Крупнообломочный/гравийный грунт вне первого auto-CPT контура"},
     {"profile_id": "DEFAULT_CURRENT", "soil_code": "peat", "method": "LAB_ONLY", "status": "NOT_APPLICABLE", "manual_confirmation_required": false, "warning": "Торф вне первого auto-CPT контура"},
     {"profile_id": "DEFAULT_CURRENT", "soil_code": "argillite", "method": "LAB_ONLY", "status": "NOT_APPLICABLE", "manual_confirmation_required": false, "warning": "Скальный/полускальный грунт вне первого auto-CPT контура"},
-    {"profile_id": "DEFAULT_CURRENT", "soil_code": "sandstone", "method": "LAB_ONLY", "status": "NOT_APPLICABLE", "manual_confirmation_required": false, "warning": "Скальный/полускальный грунт вне первого auto-CPT контура"}
+    {"profile_id": "DEFAULT_CURRENT", "soil_code": "sandstone", "method": "LAB_ONLY", "status": "NOT_APPLICABLE", "manual_confirmation_required": false, "warning": "Скальный/полускальный грунт вне первого auto-CPT контура"},
+
+    {"profile_id": "GEOEXPLORER_SP446", "soil_code": "sand", "method": "SP446_CPT_SAND", "status": "CALCULATED", "manual_confirmation_required": false, "warning": "compat mode"},
+    {"profile_id": "GEOEXPLORER_SP446", "soil_code": "sandy_loam", "method": "SP446_CPT_CLAY", "status": "CALCULATED", "manual_confirmation_required": false, "warning": "compat mode"},
+    {"profile_id": "LEGACY_SP11_105", "soil_code": "sand", "method": "SP22_TABLE_A", "status": "PRELIMINARY", "manual_confirmation_required": true, "warning": "Legacy режим требует ручной проверки"},
+    {"profile_id": "LEGACY_SP11_105", "soil_code": "loam", "method": "SP22_TABLE_A", "status": "PRELIMINARY", "manual_confirmation_required": true, "warning": "Legacy режим требует ручной проверки"}
   ]
 }

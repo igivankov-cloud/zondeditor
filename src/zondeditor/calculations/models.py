@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -19,6 +20,7 @@ class IGEModel:
     calc_warning: str | None = None
     override_enabled: bool = False
     override_reason: str = ""
+    input_fields: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -46,6 +48,8 @@ class IGECalcResult:
     E_MPa: float | None = None
     phi_deg: float | None = None
     c_kPa: float | None = None
+    status: str = "ok"  # ok|not_implemented|invalid_input|not_applicable
+    not_implemented: bool = False
 
 
 @dataclass
@@ -60,6 +64,11 @@ class IGECalcSample:
     warnings: list[str]
     excluded_count: int = 0
     exclusions: list[str] = field(default_factory=list)
+    missing_fields: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    used_sounding_ids: list[str] = field(default_factory=list)
+    depth_interval: tuple[float, float] | None = None
+    excluded_points: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -71,3 +80,4 @@ class CalculationTabState:
     show_excluded_points: bool = False
     last_run_at: str | None = None
     selected_ige_id: str | None = None
+    last_trace: list[dict[str, Any]] = field(default_factory=list)

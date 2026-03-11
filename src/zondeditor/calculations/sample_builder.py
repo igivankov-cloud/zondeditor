@@ -9,6 +9,7 @@ from .calc_methods import run_method
 from .models import IGECalcPoint, IGECalcResult, IGECalcSample, IGECalcStats, IGEModel
 from .soil_catalog import load_soil_catalog, soil_code_by_name
 from .statistics import calc_stats
+from .validation import validate_inputs
 
 
 def _iter_points(test: Any):
@@ -43,6 +44,12 @@ def _build_ige_model(ige_id: str, ent: dict[str, Any], profile_id: str) -> IGEMo
         is_alluvial=bool(ent.get("is_alluvial", ent.get("sand_is_alluvial", False))),
         notes=str(ent.get("manual_notes") or ent.get("notes") or ""),
         calc_profile_id=profile_id,
+        input_fields={
+            "IL": ent.get("IL"),
+            "consistency": ent.get("consistency"),
+            "e": ent.get("e"),
+            "Sr": ent.get("Sr"),
+        },
     )
 
 
@@ -52,13 +59,16 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
         ent = dict(ige_registry.get(ige_key) or {})
         ige = _build_ige_model(ige_key, ent, profile_id)
         app = resolve_applicability(profile_id=profile_id, soil_code=ige.soil_code, subtype=ige.subtype, allow_fill_by_material=allow_fill_by_material)
+
         points: list[IGECalcPoint] = []
-        excluded_count = 0
-        exclusions: list[str] = []
+        excluded_points: list[dict[str, Any]] = []
+        used_sounding_ids: list[str] = []
+
         for test in tests or []:
             if not bool(getattr(test, "export_on", True)):
                 continue
             tid = str(getattr(test, "tid", ""))
+            touched = False
             for lyr in (getattr(test, "layers", []) or []):
                 lid = str(getattr(lyr, "ige_id", "") or "").strip()
                 if lid != ige_key:
@@ -67,17 +77,59 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
                 bot = float(getattr(lyr, "bot_m", 0.0) or 0.0)
                 seg = f"seg_{tid}_{ige_key}_{top:.2f}_{bot:.2f}"
                 for dep, qc_mpa, fs_kpa in _iter_points(test):
-                    if top <= dep <= bot:
-                        if dep < 1.0:
-                            excluded_count += 1
-                            if "Глубина менее 1 м" not in exclusions:
-                                exclusions.append("Глубина менее 1 м")
-                            continue
-                        points.append(IGECalcPoint(sounding_id=f"test_{tid}", depth_m=dep, qc_mpa=qc_mpa, fs_kpa=fs_kpa, segment_id=seg))
+                    if not (top <= dep <= bot):
+                        continue
+                    touched = True
+                    if dep < 1.0:
+                        excluded_points.append({"sounding_id": f"test_{tid}", "depth_m": dep, "reason": "Глубина менее 1 м", "segment_id": seg})
+                        continue
+                    points.append(IGECalcPoint(sounding_id=f"test_{tid}", depth_m=dep, qc_mpa=qc_mpa, fs_kpa=fs_kpa, segment_id=seg))
+            if touched and f"test_{tid}" not in used_sounding_ids:
+                used_sounding_ids.append(f"test_{tid}")
+
         stats: IGECalcStats = calc_stats(points)
-        result: IGECalcResult = run_method(app.method, stats) if app.status in {"CALCULATED", "PRELIMINARY"} else IGECalcResult()
+        missing_fields: list[str] = []
+        errors: list[str] = []
         warnings = [w for w in [app.warning] if w]
-        out.append(IGECalcSample(ige_id=ige.ige_id, profile_id=profile_id, method=app.method, status=app.status, points=points, stats=stats, result=result, warnings=warnings, excluded_count=excluded_count, exclusions=exclusions))
+
+        if app.status in {"NOT_APPLICABLE", "LAB_ONLY"}:
+            result = IGECalcResult(status="not_applicable", not_implemented=False)
+        else:
+            validation = validate_inputs(ige=ige, stats=stats)
+            if not validation.ok:
+                missing_fields = list(validation.missing_fields)
+                errors = ["Недостаточно исходных данных для расчёта"] + list(validation.errors)
+                result = IGECalcResult(status="invalid_input", not_implemented=False)
+            else:
+                method_run = run_method(app.method, stats)
+                result = method_run.result
+                if method_run.status == "not_implemented":
+                    if app.status in {"CALCULATED", "PRELIMINARY"}:
+                        app.status = "NOT_IMPLEMENTED"
+                warnings.extend(method_run.warnings)
+
+        depths = [p.depth_m for p in points]
+        depth_interval = (min(depths), max(depths)) if depths else None
+        exclusions = sorted({str(x.get("reason") or "") for x in excluded_points if str(x.get("reason") or "")})
+
+        sample = IGECalcSample(
+            ige_id=ige.ige_id,
+            profile_id=profile_id,
+            method=app.method,
+            status=app.status,
+            points=points,
+            stats=stats,
+            result=result,
+            warnings=warnings,
+            excluded_count=len(excluded_points),
+            exclusions=exclusions,
+            missing_fields=missing_fields,
+            errors=errors,
+            used_sounding_ids=used_sounding_ids,
+            depth_interval=depth_interval,
+            excluded_points=excluded_points,
+        )
+        out.append(sample)
 
         ent.update(
             {
@@ -89,7 +141,7 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
                 "calc_method": app.method,
                 "calc_status": app.status,
                 "manual_confirmation_required": bool(app.manual_confirmation_required),
-                "calc_warning": app.warning or "",
+                "calc_warning": "; ".join(warnings),
                 "override_enabled": bool(app.status == "PRELIMINARY"),
             }
         )

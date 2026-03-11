@@ -36,9 +36,13 @@ def resolve_applicability(*, profile_id: str, soil_code: str, subtype: str | Non
     rules = _load_rules()
     pid = str(profile_id or "DEFAULT_CURRENT")
     scode = str(soil_code or "")
+
     base = next((r for r in rules if r.profile_id == pid and r.soil_code == scode), None)
     if base is None:
+        base = next((r for r in rules if r.profile_id == "DEFAULT_CURRENT" and r.soil_code == scode), None)
+    if base is None:
         return ApplicabilityRule(profile_id=pid, soil_code=scode, method="LAB_ONLY", status="NOT_APPLICABLE", manual_confirmation_required=False, warning="Правило применимости не найдено")
+
     if scode == "fill":
         sub = str(subtype or "").strip().lower()
         if "10%" in sub or "строит" in sub:
