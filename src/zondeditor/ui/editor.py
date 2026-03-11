@@ -1692,24 +1692,40 @@ class GeoCanvasEditor(tk.Tk):
         self.canvas.pack(side="left", fill="both", expand=True)
 
         def _apply_header_offset_from_body():
-            """Синхронизирует X-позицию шапки строго по текущему xview body canvas.
-
-            Важно: без инкрементальных move("all", dx), чтобы не накапливать
-            погрешность/сдвиг при последовательных wheel-scroll событиях.
-            """
+            """Синхронизирует X шапки по фактической позиции body после layout."""
             try:
-                frac = float(self.canvas.xview()[0])
+                self.update_idletasks()
             except Exception:
-                frac = 0.0
+                pass
+
+            try:
+                body_left = float(self.canvas.canvasx(0))
+            except Exception:
+                body_left = 0.0
+
+            try:
+                w_total = float(getattr(self, "_scroll_w", 0.0) or 0.0)
+            except Exception:
+                w_total = 0.0
+            if w_total <= 1.0:
+                try:
+                    w_total = float(self._content_size()[0])
+                except Exception:
+                    w_total = 1.0
+
+            try:
+                self.hcanvas.configure(width=self.canvas.winfo_width())
+            except Exception:
+                pass
+
+            frac = 0.0 if w_total <= 1.0 else (body_left / w_total)
             frac = 0.0 if frac < 0.0 else (1.0 if frac > 1.0 else frac)
             try:
                 self.hcanvas.xview_moveto(frac)
             except Exception:
                 pass
-            try:
-                self._header_offset_px = float(self.canvas.canvasx(0))
-            except Exception:
-                self._header_offset_px = 0.0
+
+            self._header_offset_px = body_left
 
         self._apply_header_offset_from_body = _apply_header_offset_from_body
 
