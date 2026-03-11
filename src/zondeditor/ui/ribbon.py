@@ -259,6 +259,10 @@ class RibbonView(ttk.Frame):
         self._ige_window_id = self._ige_canvas.create_window((0, 0), window=self._ige_columns_frame, anchor="nw")
         self._ige_columns_frame.bind("<Configure>", lambda _e: self._sync_ige_canvas())
         self._ige_canvas.bind("<Configure>", lambda _e: self._sync_ige_canvas())
+        self._ige_canvas.bind("<Enter>", lambda _e: self._ige_canvas.focus_set())
+        self._ige_canvas.bind("<MouseWheel>", self._on_ige_wheel_x)
+        self._ige_canvas.bind("<Button-4>", lambda _e: self._on_ige_wheel_x_linux(-1))
+        self._ige_canvas.bind("<Button-5>", lambda _e: self._on_ige_wheel_x_linux(1))
 
     def _build_calc_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
@@ -278,6 +282,33 @@ class RibbonView(ttk.Frame):
             cnv.itemconfigure(self._ige_window_id, width=width)
         except Exception:
             pass
+
+    def _on_ige_wheel_x(self, event):
+        try:
+            delta = int(getattr(event, "delta", 0))
+        except Exception:
+            delta = 0
+        if delta == 0:
+            return "break"
+        step = -2 if delta > 0 else 2
+        try:
+            self._ige_canvas.xview_scroll(step, "units")
+        except Exception:
+            pass
+        return "break"
+
+    def _on_ige_wheel_x_linux(self, direction: int):
+        try:
+            d = int(direction)
+        except Exception:
+            d = 0
+        if d == 0:
+            return "break"
+        try:
+            self._ige_canvas.xview_scroll(d * 2, "units")
+        except Exception:
+            pass
+        return "break"
 
     def _ige_card_metrics(self) -> tuple[int, int, int]:
         root = self.winfo_toplevel()
@@ -426,6 +457,15 @@ class RibbonView(ttk.Frame):
         dyn.grid(row=1, column=0, sticky="ew", pady=(3, 0))
         dyn.columnconfigure(0, weight=1)
         self._build_dynamic_ige_fields(dyn, ige_id, row)
+
+        # wheel over any card/control scrolls IGE ribbon horizontally
+        for w in (card, hdr, body, dyn, lbl_btn, btn_note, btn_del, cb_soil):
+            try:
+                w.bind("<MouseWheel>", self._on_ige_wheel_x, add="+")
+                w.bind("<Button-4>", lambda _e: self._on_ige_wheel_x_linux(-1), add="+")
+                w.bind("<Button-5>", lambda _e: self._on_ige_wheel_x_linux(1), add="+")
+            except Exception:
+                pass
 
     def _change_ige_field(self, ige_id: str, field_name: str, value):
         cmd = self.commands.get("change_ige_field")

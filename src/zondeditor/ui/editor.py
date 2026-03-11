@@ -222,6 +222,7 @@ class GeoCanvasEditor(tk.Tk):
         self._header_offset_px = 0.0
         self._xsync_after_id = None
         self._rebuild_redraw_after_id = None
+        self._header_stabilize_after_id = None
         self._active_test_idx: int | None = None
         self.graph_qc_max_mpa: float = 30.0
         self.graph_fs_max_kpa: float = 500.0
@@ -1746,6 +1747,7 @@ class GeoCanvasEditor(tk.Tk):
                 return
             self._sync_header_x_from_body(defer=False)
             self._sync_header_x_from_body(defer=True)
+            self._schedule_header_stabilize()
 
         def _on_xscroll_command(first, last):
             # first/last: доли [0..1] видимой области
@@ -1756,6 +1758,7 @@ class GeoCanvasEditor(tk.Tk):
                 pass
             self._sync_header_x_from_body(defer=False)
             self._sync_header_x_from_body(defer=True)
+            self._schedule_header_stabilize()
 
         # назначаем xscrollcommand сразу, а сам hscroll свяжем позже, когда создадим в footer
         self.canvas.configure(xscrollcommand=_on_xscroll_command)
@@ -7606,6 +7609,27 @@ class GeoCanvasEditor(tk.Tk):
         self._redraw()
         self.schedule_graph_redraw()
 
+    def _schedule_header_stabilize(self):
+        prev = getattr(self, "_header_stabilize_after_id", None)
+        if prev is not None:
+            try:
+                self.after_cancel(prev)
+            except Exception:
+                pass
+
+        def _run():
+            self._header_stabilize_after_id = None
+            try:
+                self._redraw()
+                self._sync_header_x_from_body(defer=False)
+            except Exception:
+                pass
+
+        try:
+            self._header_stabilize_after_id = self.after(80, _run)
+        except Exception:
+            pass
+
     # ---------------- scrolling ----------------
     def _on_mousewheel(self, event):
         # скролл закрывает активную ячейку
@@ -7656,6 +7680,7 @@ class GeoCanvasEditor(tk.Tk):
                     pass
         finally:
             self._ysync_lock = False
+        self._schedule_header_stabilize()
 
     def _on_mousewheel_x(self, event):
         """Горизонтальная прокрутка колесом шагом 1 колонка (когда курсор над шапкой или горизонтальным скроллом)."""
