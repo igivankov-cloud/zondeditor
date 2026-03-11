@@ -228,8 +228,6 @@ class GeoCanvasEditor(tk.Tk):
         self._header_sync_debug = str(os.getenv("ZOND_DEBUG_HEADER_SYNC", "") or "").strip().lower() in {"1", "true", "yes", "on"}
         self._header_sync_wheel_seq = 0
         self._header_sync_source_counts: dict[str, int] = {}
-        self._mode_change_stabilize_after_id = None
-        self._last_root_geometry_sig: tuple[int, int, str] | None = None
         self._active_test_idx: int | None = None
         self.graph_qc_max_mpa: float = 30.0
         self.graph_fs_max_kpa: float = 500.0
@@ -863,7 +861,6 @@ class GeoCanvasEditor(tk.Tk):
         self._build_grid()
         self._redraw()
         self.schedule_graph_redraw()
-        self._schedule_mode_change_stabilize("toggle_show_graphs")
 
     def _toggle_show_graphs_from_ui(self):
         self._toggle_show_graphs(bool(getattr(self, "_show_graphs_var", None).get() if getattr(self, "_show_graphs_var", None) is not None else False))
@@ -880,7 +877,6 @@ class GeoCanvasEditor(tk.Tk):
         self._build_grid()
         self._redraw()
         self.schedule_graph_redraw()
-        self._schedule_mode_change_stabilize("toggle_show_geology")
 
     def _sync_view_ribbon_state(self):
         try:
@@ -915,7 +911,6 @@ class GeoCanvasEditor(tk.Tk):
         self._build_grid()
         self._redraw()
         self.schedule_graph_redraw()
-        self._schedule_mode_change_stabilize("toggle_show_inclinometer")
 
     def _set_display_sort_mode(self, mode: str | None):
         mode_norm = str(mode or "date").strip().lower()
@@ -931,7 +926,6 @@ class GeoCanvasEditor(tk.Tk):
         self._build_grid()
         self._redraw()
         self.schedule_graph_redraw()
-        self._schedule_mode_change_stabilize("set_display_sort")
 
     def _schedule_rebuild_redraw(self):
         prev = getattr(self, "_rebuild_redraw_after_id", None)
@@ -947,61 +941,6 @@ class GeoCanvasEditor(tk.Tk):
         self._build_grid()
         self._redraw()
         self.schedule_graph_redraw()
-        self._schedule_mode_change_stabilize("rebuild_redraw")
-
-    def _schedule_mode_change_stabilize(self, reason: str = ""):
-        prev = getattr(self, "_mode_change_stabilize_after_id", None)
-        if prev is not None:
-            try:
-                self.after_cancel(prev)
-            except Exception:
-                pass
-
-        def _run():
-            self._mode_change_stabilize_after_id = None
-            try:
-                self._update_scrollregion()
-            except Exception:
-                pass
-            try:
-                self._sync_header_x_from_body(defer=False)
-            except Exception:
-                pass
-            try:
-                if bool(getattr(self, "_inline_edit_active", False)):
-                    self._reposition_boundary_depth_editor()
-            except Exception:
-                pass
-            self._debug_header_sync("mode_settle", reason=reason)
-
-        try:
-            self._mode_change_stabilize_after_id = self.after_idle(_run)
-        except Exception:
-            self._mode_change_stabilize_after_id = None
-
-    def _on_canvas_configure(self, _event=None):
-        self._update_scrollregion()
-        self._schedule_mode_change_stabilize("canvas_configure")
-
-    def _on_hcanvas_configure(self, _event=None):
-        try:
-            self.hcanvas.configure(width=self.canvas.winfo_width())
-        except Exception:
-            pass
-        self._update_scrollregion()
-        self._schedule_mode_change_stabilize("hcanvas_configure")
-
-    def _on_root_configure(self, _event=None):
-        try:
-            sig = (int(self.winfo_width()), int(self.winfo_height()), str(self.state()))
-        except Exception:
-            sig = None
-        if not sig:
-            return
-        if sig == getattr(self, "_last_root_geometry_sig", None):
-            return
-        self._last_root_geometry_sig = sig
-        self._schedule_mode_change_stabilize("root_configure")
 
     def _toggle_compact_1m(self, value: bool | None = None, *, push_undo: bool = True):
         if value is None:
@@ -1867,9 +1806,8 @@ class GeoCanvasEditor(tk.Tk):
             self._sync_header_body_after_scroll()
         self.vbar.config(command=_yview_proxy)
         # configure/redraw
-        self.canvas.bind("<Configure>", self._on_canvas_configure)
-        self.hcanvas.bind("<Configure>", self._on_hcanvas_configure)
-        self.bind("<Configure>", self._on_root_configure, add="+")
+        self.canvas.bind("<Configure>", lambda _e: self._update_scrollregion())
+        self.hcanvas.bind("<Configure>", lambda _e: (self.hcanvas.configure(width=self.canvas.winfo_width()), self._update_scrollregion()))
 
         # scrolling and events: таблица
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)
