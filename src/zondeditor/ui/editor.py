@@ -223,6 +223,11 @@ class GeoCanvasEditor(tk.Tk):
         self._xsync_after_id = None
         self._rebuild_redraw_after_id = None
         self._header_stabilize_after_id = None
+        self._header_sync_pending = False
+        self._header_sync_mode = str(os.getenv("ZOND_HEADER_SYNC_MODE", "legacy") or "legacy").strip().lower()
+        self._header_sync_debug = str(os.getenv("ZOND_DEBUG_HEADER_SYNC", "") or "").strip().lower() in {"1", "true", "yes", "on"}
+        self._header_sync_wheel_seq = 0
+        self._header_sync_source_counts: dict[str, int] = {}
         self._active_test_idx: int | None = None
         self.graph_qc_max_mpa: float = 30.0
         self.graph_fs_max_kpa: float = 500.0
@@ -1692,40 +1697,40 @@ class GeoCanvasEditor(tk.Tk):
         self.canvas.pack(side="left", fill="both", expand=True)
 
         def _apply_header_offset_from_body():
-            """Синхронизирует X шапки по фактической позиции body после layout."""
-            try:
-                self.update_idletasks()
-            except Exception:
-                pass
-
+            """Синхронизирует X шапки с body из одного источника истины (body canvas)."""
             try:
                 body_left = float(self.canvas.canvasx(0))
             except Exception:
                 body_left = 0.0
 
-            try:
-                w_total = float(getattr(self, "_scroll_w", 0.0) or 0.0)
-            except Exception:
-                w_total = 0.0
-            if w_total <= 1.0:
+            mode = str(getattr(self, "_header_sync_mode", "legacy") or "legacy").strip().lower()
+            if mode == "xview":
                 try:
-                    w_total = float(self._content_size()[0])
+                    w_total = float(getattr(self, "_scroll_w", 0.0) or 0.0)
                 except Exception:
-                    w_total = 1.0
-
-            try:
-                self.hcanvas.configure(width=self.canvas.winfo_width())
-            except Exception:
-                pass
-
-            frac = 0.0 if w_total <= 1.0 else (body_left / w_total)
-            frac = 0.0 if frac < 0.0 else (1.0 if frac > 1.0 else frac)
-            try:
-                self.hcanvas.xview_moveto(frac)
-            except Exception:
-                pass
+                    w_total = 0.0
+                if w_total <= 1.0:
+                    try:
+                        w_total = float(self._content_size()[0])
+                    except Exception:
+                        w_total = 1.0
+                frac = 0.0 if w_total <= 1.0 else (body_left / w_total)
+                frac = 0.0 if frac < 0.0 else (1.0 if frac > 1.0 else frac)
+                try:
+                    self.hcanvas.xview_moveto(frac)
+                except Exception:
+                    pass
+            else:
+                prev = float(getattr(self, "_header_offset_px", 0.0) or 0.0)
+                dx = body_left - prev
+                if abs(dx) > 1e-6:
+                    try:
+                        self.hcanvas.move("all", -dx, 0)
+                    except Exception:
+                        pass
 
             self._header_offset_px = body_left
+            self._debug_header_sync("apply_header_offset", mode=mode)
 
         self._apply_header_offset_from_body = _apply_header_offset_from_body
 
@@ -1767,9 +1772,10 @@ class GeoCanvasEditor(tk.Tk):
                 self.canvas.xview(*args)
             except Exception:
                 return
+            self._debug_header_sync("xview_proxy")
             self._sync_header_x_from_body(defer=False)
             self._sync_header_x_from_body(defer=True)
-            self._schedule_header_stabilize()
+            self._schedule_header_stabilize(source="xview_proxy")
 
         def _on_xscroll_command(first, last):
             # first/last: доли [0..1] видимой области
@@ -1778,9 +1784,10 @@ class GeoCanvasEditor(tk.Tk):
                     self.hscroll.set(first, last)
             except Exception:
                 pass
+            self._debug_header_sync("xscroll_command")
             self._sync_header_x_from_body(defer=False)
             self._sync_header_x_from_body(defer=True)
-            self._schedule_header_stabilize()
+            self._schedule_header_stabilize(source="xscroll_command")
 
         # назначаем xscrollcommand сразу, а сам hscroll свяжем позже, когда создадим в footer
         self.canvas.configure(xscrollcommand=_on_xscroll_command)
@@ -7630,30 +7637,84 @@ class GeoCanvasEditor(tk.Tk):
         self._redraw()
         self.schedule_graph_redraw()
 
-    def _schedule_header_stabilize(self):
-        prev = getattr(self, "_header_stabilize_after_id", None)
-        if prev is not None:
-            try:
-                self.after_cancel(prev)
-            except Exception:
-                pass
+    def _debug_header_sync(self, source: str, **extra):
+        if not bool(getattr(self, "_header_sync_debug", False)):
+            return
+        try:
+            body_xv = tuple(self.canvas.xview())
+        except Exception:
+            body_xv = (0.0, 0.0)
+        try:
+            hdr_xv = tuple(self.hcanvas.xview())
+        except Exception:
+            hdr_xv = (0.0, 0.0)
+        try:
+            viewport_w = int(self.canvas.winfo_width() or 0)
+        except Exception:
+            viewport_w = 0
+        try:
+            content_w = float(getattr(self, "_scroll_w", 0.0) or 0.0)
+        except Exception:
+            content_w = 0.0
+        try:
+            first_world_x = float(self._column_x0(0)) if getattr(self, "display_cols", []) else float(self.pad_x)
+        except Exception:
+            first_world_x = 0.0
+        try:
+            body_left = float(self.canvas.canvasx(0))
+        except Exception:
+            body_left = 0.0
+        try:
+            header_left = float(getattr(self, "_header_offset_px", 0.0) or 0.0)
+        except Exception:
+            header_left = 0.0
+        state = str(self.state()) if hasattr(self, "state") else ""
+        incl = bool(getattr(self, "show_inclinometer", True))
+        mode = str(getattr(self, "_header_sync_mode", "legacy") or "legacy")
+        body_first_screen_x = first_world_x - body_left
+        header_first_screen_x = first_world_x - header_left
+        drift = header_first_screen_x - body_first_screen_x
+        cnt = int(self._header_sync_source_counts.get(str(source), 0) + 1)
+        self._header_sync_source_counts[str(source)] = cnt
+        extras = " ".join(f"{k}={v}" for k, v in extra.items())
+        print(
+            f"[HDRSYNC] wheel={self._header_sync_wheel_seq} src={source} cnt={cnt} mode={mode} "
+            f"state={state} incl={int(incl)} body_xv={body_xv} hdr_xv={hdr_xv} vw={viewport_w} cw={content_w:.1f} "
+            f"body_left={body_left:.2f} hdr_left={header_left:.2f} body_first={body_first_screen_x:.2f} "
+            f"hdr_first={header_first_screen_x:.2f} drift={drift:.2f} pending={int(bool(getattr(self, '_header_sync_pending', False)))} {extras}"
+        )
+
+    def _begin_scroll_debug_cycle(self, source: str):
+        self._header_sync_wheel_seq = int(getattr(self, "_header_sync_wheel_seq", 0) or 0) + 1
+        self._header_sync_source_counts = {}
+        self._debug_header_sync("wheel_begin", source=source)
+
+    def _schedule_header_stabilize(self, source: str = ""):
+        # дедупликация: один sync на одну итерацию idle-loop, без каскадного redraw/move
+        if bool(getattr(self, "_header_sync_pending", False)):
+            self._debug_header_sync("schedule_skip", source=source)
+            return
+        self._header_sync_pending = True
+        self._debug_header_sync("schedule_set", source=source)
 
         def _run():
             self._header_stabilize_after_id = None
+            self._header_sync_pending = False
             try:
-                self._redraw()
                 self._sync_header_x_from_body(defer=False)
+                self._debug_header_sync("schedule_run", source=source)
             except Exception:
                 pass
 
         try:
-            self._header_stabilize_after_id = self.after(80, _run)
+            self._header_stabilize_after_id = self.after_idle(_run)
         except Exception:
-            pass
+            self._header_sync_pending = False
 
     # ---------------- scrolling ----------------
     def _on_mousewheel(self, event):
         # скролл закрывает активную ячейку
+        self._begin_scroll_debug_cycle("mousewheel_y")
         self._end_edit(commit=True)
         delta = int(-1 * (event.delta / 120)) if event.delta else 0
         if delta != 0:
@@ -7663,6 +7724,7 @@ class GeoCanvasEditor(tk.Tk):
 
     def _on_mousewheel_linux(self, direction):
         # скролл закрывает активную ячейку
+        self._begin_scroll_debug_cycle("mousewheel_y_linux")
         self._end_edit(commit=True)
         self.canvas.yview_scroll(direction, "units")
         self._sync_header_body_after_scroll()
@@ -7701,10 +7763,11 @@ class GeoCanvasEditor(tk.Tk):
                     pass
         finally:
             self._ysync_lock = False
-        self._schedule_header_stabilize()
+        self._schedule_header_stabilize(source="yscroll_sync")
 
     def _on_mousewheel_x(self, event):
         """Горизонтальная прокрутка колесом шагом 1 колонка (когда курсор над шапкой или горизонтальным скроллом)."""
+        self._begin_scroll_debug_cycle("mousewheel_x")
         self._end_edit(commit=True)
         try:
             delta = int(-1 * (event.delta / 120)) if getattr(event, "delta", 0) else 0
@@ -7717,6 +7780,7 @@ class GeoCanvasEditor(tk.Tk):
 
     def _on_mousewheel_linux_x(self, direction):
         """Linux: Button-4/5 для горизонтальной прокрутки шагом 1 колонка."""
+        self._begin_scroll_debug_cycle("mousewheel_x_linux")
         self._end_edit(commit=True)
         try:
             direction = int(direction)
