@@ -41,6 +41,7 @@ class RibbonView(ttk.Frame):
         try:
             style = ttk.Style(self)
             style.configure("RibbonCompact.TButton", padding=(4, 1))
+            style.configure("IGEHdr.TButton", padding=(3, 1))
         except Exception:
             pass
 
@@ -276,6 +277,18 @@ class RibbonView(ttk.Frame):
         except Exception:
             pass
 
+    def _ige_card_metrics(self) -> tuple[int, int, int]:
+        root = self.winfo_toplevel()
+        try:
+            w_depth = int(getattr(root, "w_depth", 64) or 64)
+            w_val = int(getattr(root, "w_val", 56) or 56)
+            gap = int(getattr(root, "col_gap", 12) or 12)
+        except Exception:
+            w_depth, w_val, gap = 64, 56, 12
+        card_w = max(140, int(w_depth + (2 * w_val)))
+        border_w = 1
+        return card_w, gap, border_w
+
     def _open_ige_notes(self, ige_id: str, current_text: str):
         root = self.winfo_toplevel()
         dlg = tk.Toplevel(root)
@@ -376,10 +389,11 @@ class RibbonView(ttk.Frame):
 
     def _build_ige_column(self, parent, row: dict, soil_values: list[str], can_delete: bool):
         ige_id = str(row.get("ige_id", "") or "")
-        card = ttk.Frame(parent, padding=(4, 3), relief="solid", borderwidth=1)
-        card.pack(side="left", fill="y", padx=(0, 4))
+        card_w, gap, border_w = self._ige_card_metrics()
+        card = ttk.Frame(parent, padding=(4, 3), relief="solid", borderwidth=border_w)
+        card.pack(side="left", fill="y", padx=(0, max(2, gap)))
         try:
-            card.configure(width=190, height=176)
+            card.configure(width=card_w, height=176)
             card.pack_propagate(False)
         except Exception:
             pass
@@ -388,11 +402,11 @@ class RibbonView(ttk.Frame):
         hdr.pack(fill="x")
         hdr.columnconfigure(0, weight=1)
         lbl_txt = str(row.get("label", ige_id) or ige_id)
-        lbl_btn = ttk.Button(hdr, text=lbl_txt, style="RibbonCompact.TButton", command=lambda ig=ige_id, txt=lbl_txt: self._edit_ige_label(ig, txt))
-        lbl_btn.grid(row=0, column=0, sticky="w")
-        btn_note = ttk.Button(hdr, text="📄", width=2, command=lambda ig=ige_id, txt=str(row.get("notes", "") or ""): self._open_ige_notes(ig, txt))
+        lbl_btn = ttk.Button(hdr, text=lbl_txt, style="IGEHdr.TButton", command=lambda ig=ige_id, txt=lbl_txt: self._edit_ige_label(ig, txt))
+        lbl_btn.grid(row=0, column=0, sticky="ew")
+        btn_note = ttk.Button(hdr, text="📄", width=2, style="IGEHdr.TButton", command=lambda ig=ige_id, txt=str(row.get("notes", "") or ""): self._open_ige_notes(ig, txt))
         btn_note.grid(row=0, column=1, sticky="e", padx=(0, 1))
-        btn_del = ttk.Button(hdr, text=ICON_TRASH, width=2, command=lambda ig=ige_id: self.commands.get("delete_ige", lambda *_: None)(ig))
+        btn_del = ttk.Button(hdr, text=ICON_TRASH, width=2, style="IGEHdr.TButton", command=lambda ig=ige_id: self.commands.get("delete_ige", lambda *_: None)(ig))
         btn_del.grid(row=0, column=2, sticky="e")
         if not can_delete:
             btn_del.configure(state="disabled")
@@ -401,13 +415,14 @@ class RibbonView(ttk.Frame):
         body.pack(fill="both", expand=True, pady=(3, 0))
         body.columnconfigure(0, weight=1)
         soil_var = tk.StringVar(value=str(row.get("soil", "") or ""))
-        cb_soil = ttk.Combobox(body, state="readonly", width=18, values=list(soil_values or []), textvariable=soil_var)
-        cb_soil.grid(row=0, column=0, sticky="ew")
+        cb_soil = ttk.Combobox(body, state="readonly", width=14, values=list(soil_values or []), textvariable=soil_var)
+        cb_soil.grid(row=0, column=0, sticky="w")
         self._set_combo_placeholder(cb_soil, soil_var, "супесь")
         cb_soil.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, sv=soil_var: self.commands.get("edit_ige", lambda *_: None)(ig, sv.get(), ""))
 
         dyn = ttk.Frame(body)
         dyn.grid(row=1, column=0, sticky="ew", pady=(3, 0))
+        dyn.columnconfigure(0, weight=1)
         self._build_dynamic_ige_fields(dyn, ige_id, row)
 
     def _change_ige_field(self, ige_id: str, field_name: str, value):
@@ -547,7 +562,8 @@ class RibbonView(ttk.Frame):
             idx = ids.index(rid)
             new_card = self._ige_columns_frame.winfo_children()[-1]
             new_card.pack_forget()
-            new_card.pack(side="left", fill="y", padx=(0, 4), before=self._ige_columns_frame.winfo_children()[idx])
+            _, gap, _ = self._ige_card_metrics()
+            new_card.pack(side="left", fill="y", padx=(0, max(2, gap)), before=self._ige_columns_frame.winfo_children()[idx])
             self._ige_cards[rid] = new_card
             self._ige_rows_cache[rid] = cur
 
@@ -567,7 +583,8 @@ class RibbonView(ttk.Frame):
         btn_add = ttk.Button(self._ige_columns_frame, text="+ ИГЭ", style="RibbonCompact.TButton", command=self.commands.get("add_ige"))
         if not can_add:
             btn_add.configure(state="disabled")
-        btn_add.pack(side="left", fill="y", padx=(2, 0))
+        _, gap, _ = self._ige_card_metrics()
+        btn_add.pack(side="left", pady=(2, 0), padx=(0, max(2, gap)))
         self._sync_ige_canvas()
 
     def focus_ige_row(self, ige_id: str):
