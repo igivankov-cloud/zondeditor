@@ -1,4 +1,5 @@
 from src.zondeditor.calculations.ige_training import (
+    build_prebuild_context,
     diff_layer_models,
     evaluate_training_case_eligibility,
     filter_valid_training_examples,
@@ -92,3 +93,24 @@ def test_filter_valid_training_examples_uses_only_completed_approved_active_and_
     assert pack["rejected"] == 4
     assert pack["valid_examples"][0]["example_id"] == "ok"
     assert pack["reason_counts"]["inactive_example_version"] == 1
+
+
+def test_prebuild_context_hash_changes_on_region_or_method_change():
+    c1 = build_prebuild_context(method="Базовый", region="Общий", custom_profile={"x": 1}, used_test_ids=["a", "b"], interpretation_revision=1)
+    c2 = build_prebuild_context(method="Базовый", region="ХМАО", custom_profile={"x": 1}, used_test_ids=["a", "b"], interpretation_revision=1)
+    c3 = build_prebuild_context(method="Пользовательский", region="Общий", custom_profile={"x": 1}, used_test_ids=["a", "b"], interpretation_revision=1)
+    assert c1["hash"] != c2["hash"]
+    assert c1["hash"] != c3["hash"]
+
+
+def test_training_case_not_eligible_when_context_changed_after_prebuild():
+    r = evaluate_training_case_eligibility(
+        interpretation_status="completed",
+        approved_for_training=True,
+        has_prebuild_snapshot=True,
+        test_meta=[{"test_id": "t1", "is_real_field_data": True, "export_on": True}],
+        context_matches_prebuild=False,
+        training_block_reason="context_changed_after_prebuild",
+    )
+    assert r.eligible is False
+    assert any("Контекст интерпретации изменён" in x for x in r.reasons)

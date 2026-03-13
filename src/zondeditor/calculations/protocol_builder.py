@@ -160,6 +160,13 @@ def build_debug_protocol_text(*, project_name: str, profile_id: str, samples: li
     if training_info:
         lines.append("Блок адаптации/обучения:")
         lines.append(f"- Метод интерпретации: {training_info.get('method', '—')}")
+        lines.append(f"- Регион интерпретации: {training_info.get('region', '—')}")
+        lines.append(f"- Хеш текущего контекста: {training_info.get('current_context_hash', '—')}")
+        lines.append(f"- Хеш prebuild-контекста: {training_info.get('prebuild_context_hash', '—')}")
+        lines.append(f"- Контекст совпадает с prebuild: {'да' if training_info.get('context_matches') else 'нет'}")
+        lines.append(f"- Training eligible: {'да' if training_info.get('training_eligible', True) else 'нет'}")
+        if training_info.get("training_block_reason"):
+            lines.append(f"- Причина блокировки training: {training_info.get('training_block_reason')}")
         lines.append(f"- Использован обученный профиль: {'да' if training_info.get('used_trained_profile') else 'нет'}")
         lines.append(f"- Состояние профиля: {training_info.get('profile_state', '—')}")
         lines.append(f"- Примеров у профиля: {int(training_info.get('examples_count', 0) or 0)}")

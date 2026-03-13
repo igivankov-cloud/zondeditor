@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
+import json
 from statistics import median
 from typing import Any
 
@@ -124,6 +126,26 @@ class TrainingEligibilityResult:
     used_test_ids: list[str]
 
 
+def build_prebuild_context(
+    *,
+    method: str,
+    region: str,
+    custom_profile: dict[str, Any],
+    used_test_ids: list[str],
+    interpretation_revision: int | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "method": str(method or ""),
+        "region": str(region or ""),
+        "custom_profile": dict(custom_profile or {}),
+        "used_test_ids": sorted(str(x) for x in (used_test_ids or [])),
+        "interpretation_revision": (None if interpretation_revision is None else int(interpretation_revision)),
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    payload["hash"] = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+    return payload
+
+
 def _test_id(meta: dict[str, Any]) -> str:
     return str(meta.get("test_id") or "")
 
@@ -134,6 +156,8 @@ def evaluate_training_case_eligibility(
     approved_for_training: bool,
     has_prebuild_snapshot: bool,
     test_meta: list[dict[str, Any]],
+    context_matches_prebuild: bool = True,
+    training_block_reason: str = "",
 ) -> TrainingEligibilityResult:
     reasons: list[str] = []
     used_ids: list[str] = []
@@ -143,6 +167,10 @@ def evaluate_training_case_eligibility(
         reasons.append("интерпретация не завершена (требуется статус 'Завершено')")
     if not bool(approved_for_training):
         reasons.append("выключена галка «Использовать для обучения»")
+    if not bool(context_matches_prebuild):
+        reasons.append("Контекст интерпретации изменён после автоформирования")
+    if str(training_block_reason or "").strip():
+        reasons.append(f"блокировка обучения: {str(training_block_reason).strip()}")
 
     if not test_meta:
         reasons.append("нет участвующих опытов для интерпретации")

@@ -31,6 +31,7 @@ class RibbonView(ttk.Frame):
         self.layer_mode_var = tk.StringVar(value="")
         self.layer_ige_var = tk.StringVar(value="ИГЭ-1")
         self.prebuild_method_var = tk.StringVar(value="Базовый")
+        self.interpretation_region_var = tk.StringVar(value="Общий")
         self.interpretation_status_var = tk.StringVar(value="Черновик")
         self.approved_for_training_var = tk.BooleanVar(value=False)
         self._buttons: dict[str, ttk.Button] = {}
@@ -290,6 +291,16 @@ class RibbonView(ttk.Frame):
         method_combo = ttk.Combobox(auto_row, state="readonly", width=18, textvariable=self.prebuild_method_var, values=["Базовый", "Robertson basic", "Пользовательский"])
         method_combo.pack(side="left", padx=(4, 6))
         method_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("prebuild_method_changed", lambda *_: None)(self.prebuild_method_var.get()))
+        ttk.Label(auto_row, text="Регион:").pack(side="left")
+        region_combo = ttk.Combobox(
+            auto_row,
+            state="readonly",
+            width=20,
+            textvariable=self.interpretation_region_var,
+            values=["Общий", "Пермский край", "Свердловская область", "Тюменская область", "ХМАО", "ЯНАО", "Пользовательский"],
+        )
+        region_combo.pack(side="left", padx=(4, 6))
+        region_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("interpretation_region_changed", lambda *_: None)(self.interpretation_region_var.get()))
         ttk.Button(
             auto_row,
             text="Сформировать по данным qc / fs / Rf (предварительно)",

@@ -83,6 +83,7 @@ from src.zondeditor.calculations.protocol_builder import build_protocol, build_d
 from src.zondeditor.calculations.rf_utils import calc_rf_pct, robust_rf_scale_max
 from src.zondeditor.calculations.ige_prebuild import build_preliminary_layers, build_preliminary_layers_with_profile
 from src.zondeditor.calculations.ige_training import (
+    build_prebuild_context,
     evaluate_training_case_eligibility,
     filter_valid_training_examples,
     diff_layer_models,
@@ -275,6 +276,21 @@ class GeoCanvasEditor(tk.Tk):
         self.calc_protocol = None
         self.normative_profiles = load_normative_profiles()
         self.prebuild_method = "Базовый"
+        self.interpretation_region_options = [
+            "Общий",
+            "Пермский край",
+            "Свердловская область",
+            "Тюменская область",
+            "ХМАО",
+            "ЯНАО",
+            "Пользовательский",
+        ]
+        self.preferred_home_region = self._load_home_region()
+        self.interpretation_region = str(self.preferred_home_region or "Общий")
+        self.prebuild_context_hash = ""
+        self.prebuild_context: dict[str, object] = {}
+        self.training_eligible = True
+        self.training_block_reason = ""
         self.interpretation_status = "draft"
         self.approved_for_training = False
         self.interpretation_revision = 0
@@ -361,6 +377,31 @@ class GeoCanvasEditor(tk.Tk):
 
         tk_mod.Tk = _guarded_tk
         tk_mod._zondeditor_tk_guard = True
+
+    def _prefs_path(self) -> Path:
+        return Path.home() / ".zondeditor_prefs.json"
+
+    def _load_home_region(self) -> str:
+        try:
+            p = self._prefs_path()
+            if not p.exists():
+                return "Общий"
+            data = json.loads(p.read_text(encoding="utf-8"))
+            region = str(data.get("preferred_home_region") or "Общий")
+            return region if region else "Общий"
+        except Exception:
+            return "Общий"
+
+    def _save_home_region(self, region: str):
+        try:
+            p = self._prefs_path()
+            payload = {}
+            if p.exists():
+                payload = json.loads(p.read_text(encoding="utf-8"))
+            payload["preferred_home_region"] = str(region or "Общий")
+            p.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
     # ---------------- history ----------------
 
@@ -614,6 +655,12 @@ class GeoCanvasEditor(tk.Tk):
             "cpt_calc_settings": copy.deepcopy(dict(getattr(self, "cpt_calc_settings", {}) or {})),
             "calc_tab_state": copy.deepcopy(getattr(self, "calc_tab_state", CalculationTabState()).__dict__),
             "prebuild_method": str(getattr(self, "prebuild_method", "Базовый") or "Базовый"),
+            "interpretation_region": str(getattr(self, "interpretation_region", "Общий") or "Общий"),
+            "preferred_home_region": str(getattr(self, "preferred_home_region", "Общий") or "Общий"),
+            "prebuild_context_hash": str(getattr(self, "prebuild_context_hash", "") or ""),
+            "prebuild_context": copy.deepcopy(dict(getattr(self, "prebuild_context", {}) or {})),
+            "training_eligible": bool(getattr(self, "training_eligible", True)),
+            "training_block_reason": str(getattr(self, "training_block_reason", "") or ""),
             "prebuild_custom_profile": copy.deepcopy(dict(getattr(self, "prebuild_custom_profile", {}) or {})),
             "training_examples": copy.deepcopy(list(getattr(self, "training_examples", []) or [])),
             "last_profile_update_summary": copy.deepcopy(dict(getattr(self, "_last_profile_update_summary", {}) or {})),
@@ -739,6 +786,12 @@ class GeoCanvasEditor(tk.Tk):
         _safe_cts = {k: v for k, v in cts.items() if k in _base_cts}
         self.calc_tab_state = CalculationTabState(**{**_base_cts, **_safe_cts})
         self.prebuild_method = str(snap.get("prebuild_method") or getattr(self, "prebuild_method", "Базовый") or "Базовый")
+        self.interpretation_region = str(snap.get("interpretation_region") or getattr(self, "interpretation_region", "Общий") or "Общий")
+        self.preferred_home_region = str(snap.get("preferred_home_region") or getattr(self, "preferred_home_region", "Общий") or "Общий")
+        self.prebuild_context_hash = str(snap.get("prebuild_context_hash") or getattr(self, "prebuild_context_hash", "") or "")
+        self.prebuild_context = dict(snap.get("prebuild_context") or getattr(self, "prebuild_context", {}) or {})
+        self.training_eligible = bool(snap.get("training_eligible", getattr(self, "training_eligible", True)))
+        self.training_block_reason = str(snap.get("training_block_reason") or getattr(self, "training_block_reason", "") or "")
         self.interpretation_status = str(snap.get("interpretation_status") or getattr(self, "interpretation_status", "draft") or "draft")
         self.approved_for_training = bool(snap.get("approved_for_training", getattr(self, "approved_for_training", False)))
         self.interpretation_revision = int(snap.get("interpretation_revision", getattr(self, "interpretation_revision", 0)) or 0)
@@ -755,6 +808,7 @@ class GeoCanvasEditor(tk.Tk):
         try:
             if getattr(self, "ribbon_view", None):
                 self.ribbon_view.prebuild_method_var.set(str(self.prebuild_method))
+                self.ribbon_view.interpretation_region_var.set(str(self.interpretation_region))
                 self.ribbon_view.interpretation_status_var.set(self._interpretation_status_ui_label())
                 self.ribbon_view.approved_for_training_var.set(bool(self.approved_for_training))
         except Exception:
@@ -1662,6 +1716,12 @@ class GeoCanvasEditor(tk.Tk):
                 "excluded_soundings_global": list(getattr(self, "_last_excluded_tests", []) or []),
                 "training_info": {
                     "method": str(getattr(self, "prebuild_method", "Базовый") or "Базовый"),
+                    "region": str(getattr(self, "interpretation_region", "Общий") or "Общий"),
+                    "current_context_hash": str((self._current_prebuild_context() or {}).get("hash") or ""),
+                    "prebuild_context_hash": str(getattr(self, "prebuild_context_hash", "") or ""),
+                    "context_matches": bool(self._is_context_match()),
+                    "training_eligible": bool(getattr(self, "training_eligible", True)),
+                    "training_block_reason": str(getattr(self, "training_block_reason", "") or ""),
                     "used_trained_profile": str(getattr(self, "prebuild_method", "")) == "Пользовательский",
                     "profile_state": str((getattr(self, "prebuild_custom_profile", {}) or {}).get("training_confidence", "low")),
                     "examples_count": int(len(getattr(self, "training_examples", []) or [])),
@@ -1753,13 +1813,14 @@ class GeoCanvasEditor(tk.Tk):
             pass
         return out
 
-    def _prebuild_iges_from_cpt_preliminary(self):
+    def _prebuild_iges_from_cpt_preliminary(self, *, push_undo: bool = True):
         enabled_tests, excluded_tests = self._iter_processing_tests()
         if not enabled_tests:
             messagebox.showinfo("ИГЭ", "Нет корректных включённых опытов для предварительного формирования ИГЭ.")
             return
 
-        self._push_undo()
+        if bool(push_undo):
+            self._push_undo()
         self.ige_registry = {}
         changed = False
         ige_counter = 0
@@ -1879,14 +1940,119 @@ class GeoCanvasEditor(tk.Tk):
         self._last_prebuild_snapshot = {
             "created_at": now_iso(),
             "method": str(getattr(self, "prebuild_method", "Базовый") or "Базовый"),
+            "region": str(getattr(self, "interpretation_region", "Общий") or "Общий"),
             "custom_profile": copy.deepcopy(dict(getattr(self, "prebuild_custom_profile", {}) or {})),
             "tests": auto_snapshot_tests,
             "excluded_tests": [str(getattr(x, "orig_id", None) or f"test_{int(getattr(x, 'tid', 0))}") for x in (excluded_tests or [])],
         }
         self.interpretation_revision = int(getattr(self, "interpretation_revision", 0) or 0) + 1
+        ctx = self._current_prebuild_context()
+        self.prebuild_context = dict(ctx)
+        self.prebuild_context_hash = str(ctx.get("hash") or "")
+        self.training_eligible = True
+        self.training_block_reason = ""
 
     def _on_prebuild_method_changed(self, value: str):
-        self.prebuild_method = str(value or "Базовый")
+        self._apply_interpretation_context_change(new_method=str(value or "Базовый"), new_region=None)
+
+    def _on_interpretation_region_changed(self, value: str):
+        self._apply_interpretation_context_change(new_method=None, new_region=str(value or "Общий"))
+
+    def _current_prebuild_context(self) -> dict[str, Any]:
+        used_ids = sorted(str(x.get("test_id") or "") for x in list((getattr(self, "_last_prebuild_snapshot", {}) or {}).get("tests") or []) if str(x.get("test_id") or "").strip())
+        return build_prebuild_context(
+            method=str(getattr(self, "prebuild_method", "Базовый") or "Базовый"),
+            region=str(getattr(self, "interpretation_region", "Общий") or "Общий"),
+            custom_profile=dict(getattr(self, "prebuild_custom_profile", {}) or {}),
+            used_test_ids=used_ids,
+            interpretation_revision=int(getattr(self, "interpretation_revision", 0) or 0),
+        )
+
+    def _is_context_match(self) -> bool:
+        current = self._current_prebuild_context()
+        prev = str(getattr(self, "prebuild_context_hash", "") or "")
+        if not prev:
+            return True
+        return str(current.get("hash") or "") == prev
+
+    def _mark_training_context_mismatch(self, reason: str = "context_changed_after_prebuild"):
+        self.training_eligible = False
+        self.training_block_reason = str(reason or "context_changed_after_prebuild")
+        self._last_training_validation = {
+            "eligible": False,
+            "reasons": ["Контекст интерпретации изменён после автоформирования"],
+            "checked_at": now_iso(),
+        }
+
+    def _ask_context_change_action(self) -> str:
+        dlg = tk.Toplevel(self)
+        dlg.title("Смена контекста интерпретации")
+        dlg.transient(self)
+        dlg.grab_set()
+        ttk.Label(
+            dlg,
+            text=(
+                "Метод интерпретации или регион изменён.\n"
+                "Текущие слои были сформированы в другом контексте.\n"
+                "Вы можете переформировать слои заново или продолжить работу\n"
+                "с текущими слоями без допуска к обучению."
+            ),
+            justify="left",
+        ).pack(padx=12, pady=(12, 8), anchor="w")
+        out = {"value": "cancel"}
+        row = ttk.Frame(dlg)
+        row.pack(fill="x", padx=12, pady=(0, 12))
+        ttk.Button(row, text="Сбросить и сформировать заново", command=lambda: (out.update(value="rebuild"), dlg.destroy())).pack(side="left", padx=(0, 6))
+        ttk.Button(row, text="Продолжить без обучения", command=lambda: (out.update(value="keep_no_training"), dlg.destroy())).pack(side="left", padx=6)
+        ttk.Button(row, text="Отмена", command=lambda: (out.update(value="cancel"), dlg.destroy())).pack(side="right")
+        self.wait_window(dlg)
+        return str(out.get("value") or "cancel")
+
+    def _apply_interpretation_context_change(self, *, new_method: str | None, new_region: str | None):
+        old_method = str(getattr(self, "prebuild_method", "Базовый") or "Базовый")
+        old_region = str(getattr(self, "interpretation_region", "Общий") or "Общий")
+        tgt_method = str(new_method if new_method is not None else old_method)
+        tgt_region = str(new_region if new_region is not None else old_region)
+        if tgt_method == old_method and tgt_region == old_region:
+            return
+
+        has_prebuild = bool(getattr(self, "_last_prebuild_snapshot", None))
+        if has_prebuild:
+            action = self._ask_context_change_action()
+            if action == "cancel":
+                if getattr(self, "ribbon_view", None):
+                    self.ribbon_view.prebuild_method_var.set(old_method)
+                    self.ribbon_view.interpretation_region_var.set(old_region)
+                return
+            if action == "rebuild":
+                self._push_undo()
+                self.prebuild_method = tgt_method
+                self.interpretation_region = tgt_region
+                self.preferred_home_region = tgt_region
+                self._save_home_region(tgt_region)
+                self.training_eligible = True
+                self.training_block_reason = ""
+                self._prebuild_iges_from_cpt_preliminary(push_undo=False)
+                if getattr(self, "ribbon_view", None):
+                    self.ribbon_view.prebuild_method_var.set(self.prebuild_method)
+                    self.ribbon_view.interpretation_region_var.set(self.interpretation_region)
+                return
+            if action == "keep_no_training":
+                self._push_undo()
+                self.prebuild_method = tgt_method
+                self.interpretation_region = tgt_region
+                self.preferred_home_region = tgt_region
+                self._save_home_region(tgt_region)
+                self._mark_training_context_mismatch("context_changed_after_prebuild")
+                if getattr(self, "ribbon_view", None):
+                    self.ribbon_view.prebuild_method_var.set(self.prebuild_method)
+                    self.ribbon_view.interpretation_region_var.set(self.interpretation_region)
+                return
+
+        self.prebuild_method = tgt_method
+        self.interpretation_region = tgt_region
+        self.preferred_home_region = tgt_region
+        self._save_home_region(tgt_region)
 
     def _interpretation_status_ui_label(self) -> str:
         mapping = {"draft": "Черновик", "in_progress": "В работе", "completed": "Завершено"}
@@ -1929,11 +2095,14 @@ class GeoCanvasEditor(tk.Tk):
 
     def _evaluate_current_training_eligibility(self):
         meta = self._collect_training_test_meta()
+        context_matches = bool(self._is_context_match())
         return evaluate_training_case_eligibility(
             interpretation_status=str(getattr(self, "interpretation_status", "draft") or "draft"),
             approved_for_training=bool(getattr(self, "approved_for_training", False)),
             has_prebuild_snapshot=bool(getattr(self, "_last_prebuild_snapshot", None)),
             test_meta=meta,
+            context_matches_prebuild=context_matches and bool(getattr(self, "training_eligible", True)),
+            training_block_reason=str(getattr(self, "training_block_reason", "") or ""),
         )
 
     def _manual_layers_snapshot(self) -> dict[str, list[dict[str, object]]]:
@@ -2024,6 +2193,8 @@ class GeoCanvasEditor(tk.Tk):
             },
         }
         self._training_snapshot_hash = snapshot_hash
+        self.training_eligible = True
+        self.training_block_reason = ""
         self._last_training_validation = {
             "eligible": True,
             "reasons": [],
@@ -2489,6 +2660,7 @@ class GeoCanvasEditor(tk.Tk):
                 "set_layer_soil": self._set_layer_soil_from_ribbon,
                 "ige_prebuild_from_cpt": self._prebuild_iges_from_cpt_preliminary,
                 "prebuild_method_changed": self._on_prebuild_method_changed,
+                "interpretation_region_changed": self._on_interpretation_region_changed,
                 "interpretation_status_changed": self._on_interpretation_status_changed,
                 "approved_for_training_changed": self._on_approved_for_training_changed,
                 "save_training_example": self._save_training_example,
@@ -2532,6 +2704,8 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
                 if getattr(self.ribbon_view, "prebuild_method_var", None):
                     self.ribbon_view.prebuild_method_var.set(str(self.prebuild_method))
+                if getattr(self.ribbon_view, "interpretation_region_var", None):
+                    self.ribbon_view.interpretation_region_var.set(str(self.interpretation_region))
                 if getattr(self.ribbon_view, "interpretation_status_var", None):
                     self.ribbon_view.interpretation_status_var.set(self._interpretation_status_ui_label())
                 if getattr(self.ribbon_view, "approved_for_training_var", None):
@@ -9735,6 +9909,12 @@ class GeoCanvasEditor(tk.Tk):
         if not self._confirm_discard_if_dirty():
             return
         self._is_debug_fixture_session = False
+        self.interpretation_region = str(getattr(self, "preferred_home_region", "Общий") or "Общий")
+        try:
+            if getattr(self, "ribbon_view", None):
+                self.ribbon_view.interpretation_region_var.set(str(self.interpretation_region))
+        except Exception:
+            pass
 
         dlg = tk.Toplevel(self)
         dlg.title("Создать проект")

@@ -149,6 +149,12 @@ def test_debug_protocol_contains_training_block():
             "approved_for_training": True,
             "training_info": {
                 "method": "Пользовательский",
+                "region": "ХМАО",
+                "current_context_hash": "ctx1",
+                "prebuild_context_hash": "ctx0",
+                "context_matches": False,
+                "training_eligible": False,
+                "training_block_reason": "context_changed_after_prebuild",
                 "used_trained_profile": True,
                 "profile_state": "medium",
                 "examples_count": 3,
@@ -164,6 +170,9 @@ def test_debug_protocol_contains_training_block():
     assert "Примеров у профиля: 3" in text
     assert "Статус интерпретации: completed" in text
     assert "Допуск в обучение: да" in text
+    assert "Регион интерпретации: ХМАО" in text
+    assert "Контекст совпадает с prebuild: нет" in text
+    assert "Причина блокировки training: context_changed_after_prebuild" in text
     assert "Текущий кейс пригоден для обучения: нет" in text
     assert "Примеров валидных: 2" in text
 
