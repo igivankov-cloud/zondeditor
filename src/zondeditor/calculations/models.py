@@ -77,6 +77,7 @@ class IGECalcSample:
     n_lt_6_overridden: bool = False
     depth_interval: tuple[float, float] | None = None
     excluded_points: list[dict[str, Any]] = field(default_factory=list)
+    excluded_soundings: list[dict[str, Any]] = field(default_factory=list)
     contributing_layers: list[dict[str, Any]] = field(default_factory=list)
     required_fields: list[str] = field(default_factory=list)
 

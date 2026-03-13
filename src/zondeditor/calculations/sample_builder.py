@@ -31,6 +31,16 @@ def _iter_points(test: Any):
         yield float(d), q, f
 
 
+def _test_exclusion_reason(test: Any) -> str | None:
+    if not bool(getattr(test, "export_on", True)):
+        return "опыт отключён пользователем"
+    if bool(getattr(test, "invalid", False)):
+        return "опыт помечен как некорректный"
+    if bool(getattr(test, "locked", False)):
+        return "опыт заблокирован"
+    return None
+
+
 def _build_ige_model(ige_id: str, ent: dict[str, Any], profile_id: str) -> IGEModel:
     soil_name = str(ent.get("soil_type") or "")
     scode = str(ent.get("soil_code") or "") or soil_code_by_name(soil_name)
@@ -94,13 +104,16 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
 
         points: list[IGECalcPoint] = []
         excluded_points: list[dict[str, Any]] = []
+        excluded_soundings: list[dict[str, Any]] = []
         used_sounding_ids: list[str] = []
         layer_refs: list[dict[str, Any]] = []
 
         for test in tests or []:
-            if not bool(getattr(test, "export_on", True)):
-                continue
             tid = str(getattr(test, "tid", ""))
+            reason = _test_exclusion_reason(test)
+            if reason:
+                excluded_soundings.append({"sounding_id": f"test_{tid}", "reason": reason})
+                continue
             for idx, lyr in enumerate((getattr(test, "layers", []) or []), start=1):
                 lid = str(getattr(lyr, "ige_id", "") or "").strip()
                 if lid != ige_key:
@@ -195,6 +208,7 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
             n_lt_6_overridden=n_lt_6_overridden,
             depth_interval=depth_interval,
             excluded_points=excluded_points,
+            excluded_soundings=excluded_soundings,
             contributing_layers=layer_refs,
             required_fields=required_fields,
         )

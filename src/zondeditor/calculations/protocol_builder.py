@@ -58,6 +58,8 @@ def build_protocol(*, project_name: str, profile_id: str, samples: list[IGECalcS
             "n_lt_6_blocked": bool(getattr(s, "n_lt_6_blocked", False)),
             "n_lt_6_overridden": bool(getattr(s, "n_lt_6_overridden", False)),
             "excluded_points": list(s.excluded_points or []),
+            "excluded_soundings": list(getattr(s, "excluded_soundings", []) or []),
+            "excluded_soundings_count": len(list(getattr(s, "excluded_soundings", []) or [])),
             "excluded_reasons": list(s.exclusions or []),
             "sample_stats": {
                 "qc_avg_mpa": s.stats.qc_avg_mpa,
@@ -149,6 +151,11 @@ def build_debug_protocol_text(*, project_name: str, profile_id: str, samples: li
     lines: list[str] = []
     lines.append(f'Отладочный протокол расчёта: {project_name or "(без названия)"}')
     lines.append(f'Норматив: {profile_id}')
+    global_excluded = list(calc_options.get("excluded_soundings_global") or [])
+    if global_excluded:
+        lines.append(f'Глобально исключённых опытов: {len(global_excluded)}')
+        for ex in global_excluded:
+            lines.append(f"- {ex.get('sounding_id', '?')}: {ex.get('reason', '')}")
     lines.append('')
 
     if not samples:
@@ -171,6 +178,12 @@ def build_debug_protocol_text(*, project_name: str, profile_id: str, samples: li
         lines.append('Б. Выборка')
         lines.append(f'- Использованные опыты: {", ".join(s.used_sounding_ids or []) or "—"}')
         lines.append(f'- Число опытов (N): {int(getattr(s, "sounding_count", 0) or 0)}')
+        ex_snd = list(getattr(s, "excluded_soundings", []) or [])
+        lines.append(f'- Число исключённых опытов: {len(ex_snd)}')
+        if ex_snd:
+            lines.append('- Причины исключения опытов:')
+            for es in ex_snd:
+                lines.append(f'  * {es.get("sounding_id", "?")}: {es.get("reason", "") or "без указания причины"}')
         before = int((s.stats.n_points or 0) + (s.excluded_count or 0))
         lines.append(f'- Число точек до фильтрации: {before}')
         lines.append(f'- Число точек выборки: {int(s.stats.n_points or 0)}')
@@ -203,6 +216,7 @@ def build_debug_protocol_text(*, project_name: str, profile_id: str, samples: li
             lines.append('- Комментарий по Rf: переходное фрикционное отношение, требуется ручная проверка')
         else:
             lines.append('- Комментарий по Rf: повышенное фрикционное отношение, вероятна более глинистая реакция')
+        lines.append('- Отображение Rf: используется устойчивый масштаб, единичные выбросы не растягивают шкалу')
 
         lines.append('Г. Метод')
         lines.append(f'- Внутренний ключ: {s.method}')

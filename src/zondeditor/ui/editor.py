@@ -80,7 +80,8 @@ from src.zondeditor.calculations.models import CalculationTabState
 from src.zondeditor.calculations.normative_profiles import load_normative_profiles
 from src.zondeditor.calculations.sample_builder import build_ige_samples
 from src.zondeditor.calculations.protocol_builder import build_protocol, build_debug_protocol_text
-from src.zondeditor.calculations.rf_utils import calc_rf_pct
+from src.zondeditor.calculations.rf_utils import calc_rf_pct, robust_rf_scale_max
+from src.zondeditor.calculations.ige_prebuild import build_preliminary_layers
 
 _rebuild_geo_from_template = build_k2_geo_from_template
 
@@ -1431,9 +1432,36 @@ class GeoCanvasEditor(tk.Tk):
         elif key == "allow_fill_preliminary":
             self.calc_tab_state.allow_fill_preliminary = bool(value)
 
+    def _processing_exclusion_reason(self, ti: int, t) -> str | None:
+        if not bool(getattr(t, "export_on", True)):
+            return "опыт отключён пользователем"
+        fl = (getattr(self, "flags", {}) or {}).get(int(getattr(t, "tid", 0) or 0))
+        if bool(getattr(fl, "invalid", False)):
+            return "опыт помечен как некорректный"
+        if bool(getattr(t, "locked", False)):
+            return "опыт заблокирован"
+        return None
+
+    def _iter_processing_tests(self) -> tuple[list, list[dict[str, str]]]:
+        enabled = []
+        excluded: list[dict[str, str]] = []
+        for ti, t in enumerate(list(self.tests or [])):
+            reason = self._processing_exclusion_reason(ti, t)
+            sid = f"test_{getattr(t, 'tid', ti)}"
+            if reason:
+                excluded.append({"sounding_id": sid, "reason": reason})
+                try:
+                    setattr(t, "invalid", bool("некоррект" in reason))
+                except Exception:
+                    pass
+                continue
+            enabled.append(t)
+        return enabled, excluded
+
     def _rebuild_calc_samples(self):
+        enabled_tests, excluded_tests = self._iter_processing_tests()
         samples = build_ige_samples(
-            tests=list(self.tests or []),
+            tests=list(enabled_tests or []),
             ige_registry=self.ige_registry,
             profile_id="DEFAULT_CURRENT",
             allow_fill_by_material=bool(self.calc_tab_state.allow_fill_preliminary),
@@ -1449,7 +1477,7 @@ class GeoCanvasEditor(tk.Tk):
                 "fill_subtype": str((self.ige_registry.get(smp.ige_id, {}) or {}).get("fill_subtype", "")),
                 "method": smp.method,
                 "status": smp.status,
-                "warning": "; ".join(smp.warnings),
+                "warning": "; ".join(list(smp.warnings or []) + ([f"Исключено опытов: {len(excluded_tests)}"] if excluded_tests else [])),
                 "intervals": [],
                 "n_points": smp.stats.n_points,
                 "qc_avg": smp.stats.qc_avg_mpa,
@@ -1477,11 +1505,13 @@ class GeoCanvasEditor(tk.Tk):
                     "warnings": list(smp.warnings or []),
                     "errors": list(smp.errors or []),
                     "missing_fields": list(smp.missing_fields or []),
+                    "excluded_soundings": list(getattr(smp, "excluded_soundings", []) or []) + list(excluded_tests or []),
                 }
                 for smp in list(samples or [])
             ]
         except Exception:
             pass
+        self._last_excluded_tests = list(excluded_tests or [])
         self._sync_calc_table()
 
     def _run_calc_pipeline(self):
@@ -1555,6 +1585,7 @@ class GeoCanvasEditor(tk.Tk):
                 "allow_normative_lt6": bool(getattr(self.calc_tab_state, "allow_normative_lt6", False)),
                 "use_legacy_sandy_loam_sp446": bool(getattr(self.calc_tab_state, "use_legacy_sandy_loam_sp446", False)),
                 "allow_fill_preliminary": bool(getattr(self.calc_tab_state, "allow_fill_preliminary", False)),
+                "excluded_soundings_global": list(getattr(self, "_last_excluded_tests", []) or []),
             },
         )
         try:
@@ -1634,32 +1665,24 @@ class GeoCanvasEditor(tk.Tk):
         return out
 
     def _prebuild_iges_from_cpt_preliminary(self):
-        if not (self.tests or []):
-            messagebox.showinfo("ИГЭ", "Нет данных зондирования для предварительного формирования ИГЭ.")
+        enabled_tests, excluded_tests = self._iter_processing_tests()
+        if not enabled_tests:
+            messagebox.showinfo("ИГЭ", "Нет корректных включённых опытов для предварительного формирования ИГЭ.")
             return
-
-        def _soil_from_rf(rf_avg: float | None):
-            if rf_avg is None:
-                return SoilType.SANDY_LOAM
-            if rf_avg < 1.0:
-                return SoilType.SAND
-            if rf_avg < 2.5:
-                return SoilType.SANDY_LOAM
-            return SoilType.LOAM
 
         self._push_undo()
         self.ige_registry = {}
         changed = False
-        global_bins: dict[tuple[float, float], dict[str, object]] = {}
+        ige_counter = 0
 
-        for ti, t in enumerate(list(self.tests or [])):
+        for t in list(enabled_tests or []):
             qarr = list(getattr(t, "qc", []) or [])
             farr = list(getattr(t, "fs", []) or [])
             if not qarr and not farr:
                 continue
             self._ensure_test_rf_values(t)
 
-            samples: list[tuple[float, float, float, float]] = []
+            series: list[tuple[float, float, float, float | None]] = []
             n = max(len(qarr), len(farr))
             for i in range(n):
                 dv = self._depth_at_index(t, i)
@@ -1671,77 +1694,45 @@ class GeoCanvasEditor(tk.Tk):
                     continue
                 qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
                 rf = calc_rf_pct(float(fs_kpa), float(qc_mpa))
-                samples.append((float(dv), float(qc_mpa), float(fs_kpa), (None if rf is None else float(rf))))
+                series.append((float(dv), float(qc_mpa), float(fs_kpa), rf))
 
-            if len(samples) < 4:
-                continue
-            samples.sort(key=lambda x: x[0])
-            top = float(samples[0][0])
-            bot = float(samples[-1][0])
-            if bot <= top:
-                continue
-
-            boundaries = [top]
-            prev_q = samples[0][1]
-            prev_f = samples[0][2]
-            prev_r = samples[0][3]
-            for d, q, f, r in samples[1:]:
-                q_jump = abs(q - prev_q)
-                f_jump = abs(f - prev_f)
-                r_jump = 0.0 if (r is None or prev_r is None) else abs(float(r) - float(prev_r))
-                if q_jump >= 2.0 or f_jump >= 40.0 or r_jump >= 0.8:
-                    if (d - boundaries[-1]) >= 0.6:
-                        boundaries.append(float(d))
-                prev_q, prev_f, prev_r = q, f, r
-            if (bot - boundaries[-1]) >= 0.25:
-                boundaries.append(bot)
-            if len(boundaries) < 2:
-                boundaries = [top, bot]
-
+            auto_layers = build_preliminary_layers(series)
             layers: list[Layer] = []
-            for i in range(len(boundaries)-1):
-                lt = float(boundaries[i])
-                lb = float(boundaries[i+1])
-                if lb - lt < 0.2:
-                    continue
-                seg = [x for x in samples if lt <= x[0] <= lb]
-                if not seg:
-                    continue
-                rf_vals = [x[3] for x in seg if x[3] is not None]
-                rf_avg = (sum(rf_vals)/len(rf_vals)) if rf_vals else None
-                soil = _soil_from_rf(rf_avg)
-                key = (round(lt,2), round(lb,2), soil.value)
-                if key not in global_bins:
-                    ordn = len(global_bins) + 1
-                    ige_id = f"ИГЭ-{ordn}"
-                    global_bins[key] = {"ige_id": ige_id, "soil": soil}
-                bin_item = global_bins[key]
-                lyr = Layer(
-                    top_m=lt,
-                    bot_m=lb,
-                    ige_id=str(bin_item["ige_id"]),
-                    soil_type=bin_item["soil"],
-                    calc_mode=calc_mode_for_soil(bin_item["soil"]),
-                    style=dict(SOIL_STYLE.get(bin_item["soil"], {})),
-                    ige_num=self._ige_id_to_num(str(bin_item["ige_id"])),
+            for cand in auto_layers:
+                soil = SoilType.SANDY_LOAM
+                if cand.soil_kind == SoilType.SAND.value:
+                    soil = SoilType.SAND
+                elif cand.soil_kind == SoilType.LOAM.value:
+                    soil = SoilType.LOAM
+                elif cand.soil_kind == SoilType.SANDY_LOAM.value:
+                    soil = SoilType.SANDY_LOAM
+                ige_counter += 1
+                ige_id = f"ИГЭ-{ige_counter}"
+                layers.append(
+                    Layer(
+                        top_m=float(cand.top_m),
+                        bot_m=float(cand.bot_m),
+                        ige_id=ige_id,
+                        soil_type=soil,
+                        calc_mode=calc_mode_for_soil(soil),
+                        style=dict(SOIL_STYLE.get(soil, {})),
+                        ige_num=self._ige_id_to_num(ige_id),
+                    )
                 )
-                layers.append(lyr)
+                self.ige_registry[ige_id] = self._ensure_ige_cpt_fields(
+                    {
+                        "soil_type": soil.value,
+                        "calc_mode": calc_mode_for_soil(soil).value,
+                        "style": dict(SOIL_STYLE.get(soil, {})),
+                        "label": ige_id,
+                        "ordinal": self._ige_id_to_num(ige_id),
+                        "notes": "Предварительная интерпретация по данным qc/fs/Rf; требуется ручная проверка",
+                    }
+                )
             if layers:
                 t.layers = normalize_layers(layers)
                 self._renumber_layers(t)
                 changed = True
-
-        for key_item in sorted(global_bins.values(), key=lambda x: self._ige_id_to_num(str(x["ige_id"]))):
-            soil = key_item["soil"]
-            ige_id = str(key_item["ige_id"])
-            self.ige_registry[ige_id] = self._ensure_ige_cpt_fields({
-                "soil_type": soil.value,
-                "calc_mode": calc_mode_for_soil(soil).value,
-                "style": dict(SOIL_STYLE.get(soil, {})),
-                "label": ige_id,
-                "ordinal": self._ige_id_to_num(ige_id),
-                "notes": "Предварительная интерпретация по данным qc/fs/Rf; требуется ручная проверка",
-            })
 
         if not changed:
             messagebox.showinfo("ИГЭ", "Недостаточно данных для предварительного формирования ИГЭ.")
@@ -1751,10 +1742,12 @@ class GeoCanvasEditor(tk.Tk):
             for lyr in (getattr(t, "layers", []) or []):
                 self._apply_ige_to_layer(lyr)
 
+        self._last_excluded_tests = list(excluded_tests or [])
         self._sync_layers_panel()
         self._redraw()
         self.schedule_graph_redraw()
-        self._set_status("Выполнено предварительное формирование ИГЭ по данным qc/fs/Rf. Проверьте границы и типы вручную.")
+        suffix = "" if not excluded_tests else f" Исключено опытов: {len(excluded_tests)}."
+        self._set_status("Выполнено предварительное формирование ИГЭ по данным qc/fs/Rf. Проверьте границы и типы вручную." + suffix)
 
     def redraw_all(self):
         self._sync_layers_panel()
@@ -1892,6 +1885,7 @@ class GeoCanvasEditor(tk.Tk):
                 }
             )
         self.ribbon_view.set_layers(rows, [x.value for x in SoilType], can_add=(len(keys) < MAX_LAYERS_PER_TEST), can_delete=(len(keys) > MIN_LAYERS_PER_TEST))
+        self._last_excluded_tests = list(excluded_tests or [])
         self._sync_calc_table()
         if rows:
             self.ribbon_view.layer_ige_var.set(str(rows[0].get("ige_id") or "ИГЭ-1"))
@@ -4777,7 +4771,7 @@ class GeoCanvasEditor(tk.Tk):
         self.graph_fs_max_kpa = float(fs_max)
 
         rf_vals: list[float] = []
-        for tt in (getattr(self, "tests", []) or []):
+        for tt in (self._iter_processing_tests()[0] or []):
             qarr = list(getattr(tt, "qc", []) or [])
             farr = list(getattr(tt, "fs", []) or [])
             for i in range(min(len(qarr), len(farr))):
@@ -4787,9 +4781,9 @@ class GeoCanvasEditor(tk.Tk):
                     continue
                 qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
                 rf = calc_rf_pct(fs_kpa, qc_mpa)
-                if rf is not None:
+                if rf is not None and 0.0 <= float(rf) <= 100.0:
                     rf_vals.append(float(rf))
-        self.graph_rf_max_pct = max(5.0, (max(rf_vals) * 1.15 if rf_vals else 10.0))
+        self.graph_rf_max_pct = robust_rf_scale_max(rf_vals, default_max=10.0, percentile=0.95, cap_max=15.0)
 
     def _clear_graph_layers(self):
         for cnv in (getattr(self, "canvas", None), getattr(self, "hcanvas", None)):

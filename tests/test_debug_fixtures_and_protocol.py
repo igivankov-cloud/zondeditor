@@ -136,3 +136,27 @@ def test_debug_protocol_text_contains_n_and_n_points_labels():
     assert "Расчёт заблокирован по N < 6" in text
     assert "Rf_avg" in text
     assert "Комментарий по Rf" in text
+
+
+def test_excluded_disabled_or_invalid_soundings_not_used_in_samples():
+    f = _load_fixture("test_1_basic_stable.json")
+    snap = f["snapshot"]
+    tests = _tests_from_snapshot(snap)
+    tests[0].export_on = False
+    setattr(tests[1], "invalid", True)
+
+    samples = build_ige_samples(
+        tests=tests,
+        ige_registry=dict(snap["ige_registry"]),
+        profile_id="DEFAULT_CURRENT",
+        allow_fill_by_material=False,
+        use_legacy_sandy_loam_sp446=False,
+        allow_normative_lt6=True,
+    )
+
+    assert samples
+    for smp in samples:
+        assert all(sid not in {"test_1", "test_2"} for sid in (smp.used_sounding_ids or []))
+        ex = list(getattr(smp, "excluded_soundings", []) or [])
+        ids = {x.get("sounding_id") for x in ex}
+        assert {"test_1", "test_2"}.issubset(ids)
