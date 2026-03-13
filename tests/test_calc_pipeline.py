@@ -18,7 +18,7 @@ def test_sand_with_sufficient_data_calculated():
     layers = [Layer(top_m=1.0, bot_m=2.0, ige_id="ИГЭ-1", soil_type=SoilType.SAND, calc_mode=calc_mode_for_soil(SoilType.SAND))]
     tests = [_mk_test(1, layers)]
     registry = {"ИГЭ-1": {"soil_type": "песок", "soil_code": "sand"}}
-    samples = build_ige_samples(tests=tests, ige_registry=registry, profile_id="DEFAULT_CURRENT", allow_fill_by_material=False)
+    samples = build_ige_samples(tests=tests, ige_registry=registry, profile_id="DEFAULT_CURRENT", allow_fill_by_material=False, allow_normative_lt6=True)
     s = samples[0]
     assert s.status == "CALCULATED"
     assert s.result.status == "ok"
@@ -30,7 +30,7 @@ def test_clay_soil_requires_consistency_or_il():
     layers = [Layer(top_m=1.0, bot_m=2.0, ige_id="ИГЭ-3", soil_type=SoilType.CLAY, calc_mode=calc_mode_for_soil(SoilType.CLAY))]
     tests = [_mk_test(1, layers)]
     registry = {"ИГЭ-3": {"soil_type": "глина", "soil_code": "clay", "consistency": "тугопластичная"}}
-    samples = build_ige_samples(tests=tests, ige_registry=registry, profile_id="DEFAULT_CURRENT", allow_fill_by_material=False)
+    samples = build_ige_samples(tests=tests, ige_registry=registry, profile_id="DEFAULT_CURRENT", allow_fill_by_material=False, allow_normative_lt6=True)
     s = samples[0]
     assert s.status == "CALCULATED"
     assert s.result.status == "ok"
@@ -41,7 +41,7 @@ def test_fill_soil_preliminary_when_allowed_by_material():
     layers = [Layer(top_m=1.0, bot_m=2.0, ige_id="ИГЭ-5", soil_type=SoilType.FILL, calc_mode=calc_mode_for_soil(SoilType.FILL))]
     tests = [_mk_test(1, layers)]
     registry = {"ИГЭ-5": {"soil_type": "насыпной", "soil_code": "fill", "fill_subtype": "песчаный"}}
-    samples = build_ige_samples(tests=tests, ige_registry=registry, profile_id="DEFAULT_CURRENT", allow_fill_by_material=True)
+    samples = build_ige_samples(tests=tests, ige_registry=registry, profile_id="DEFAULT_CURRENT", allow_fill_by_material=True, allow_normative_lt6=True)
     s = samples[0]
     assert s.status == "PRELIMINARY"
     assert s.method == "SP446_CPT_SAND"
@@ -52,7 +52,7 @@ def test_insufficient_data_returns_missing_fields():
     tests = [_mk_test(1, layers)]
     # clay without IL/consistency => invalid_input
     registry = {"ИГЭ-4": {"soil_type": "глина", "soil_code": "clay", "consistency": ""}}
-    samples = build_ige_samples(tests=tests, ige_registry=registry, profile_id="DEFAULT_CURRENT", allow_fill_by_material=False)
+    samples = build_ige_samples(tests=tests, ige_registry=registry, profile_id="DEFAULT_CURRENT", allow_fill_by_material=False, allow_normative_lt6=True)
     s = samples[0]
     assert s.result.status == "invalid_input"
     assert "consistency_or_IL" in s.missing_fields
@@ -63,7 +63,7 @@ def test_method_not_applicable_and_protocol_trace_payload():
     layers = [Layer(top_m=1.0, bot_m=2.0, ige_id="ИГЭ-6", soil_type=SoilType.PEAT, calc_mode=calc_mode_for_soil(SoilType.PEAT))]
     tests = [_mk_test(1, layers)]
     registry = {"ИГЭ-6": {"soil_type": "торф", "soil_code": "peat"}}
-    samples = build_ige_samples(tests=tests, ige_registry=registry, profile_id="DEFAULT_CURRENT", allow_fill_by_material=False)
+    samples = build_ige_samples(tests=tests, ige_registry=registry, profile_id="DEFAULT_CURRENT", allow_fill_by_material=False, allow_normative_lt6=True)
     s = samples[0]
     assert s.status == "NOT_APPLICABLE"
 
@@ -105,7 +105,7 @@ def test_sandy_loam_blocked_by_default_and_allowed_with_legacy_flag():
     blocked = build_ige_samples(tests=tests, ige_registry=dict(registry), profile_id="DEFAULT_CURRENT", allow_fill_by_material=False, use_legacy_sandy_loam_sp446=False)
     assert blocked[0].status == "NOT_APPLICABLE"
 
-    allowed = build_ige_samples(tests=tests, ige_registry=dict(registry), profile_id="DEFAULT_CURRENT", allow_fill_by_material=False, use_legacy_sandy_loam_sp446=True)
+    allowed = build_ige_samples(tests=tests, ige_registry=dict(registry), profile_id="DEFAULT_CURRENT", allow_fill_by_material=False, use_legacy_sandy_loam_sp446=True, allow_normative_lt6=True)
     assert allowed[0].status == "CALCULATED"
     assert any("старой редакции" in w.lower() for w in allowed[0].warnings)
 

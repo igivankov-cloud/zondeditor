@@ -53,6 +53,10 @@ def build_protocol(*, project_name: str, profile_id: str, samples: list[IGECalcS
             "used_soundings": list(s.used_sounding_ids or []),
             "depth_interval": s.depth_interval,
             "n_points": s.stats.n_points,
+            "n_soundings": int(getattr(s, "sounding_count", 0) or 0),
+            "n_lt_6_triggered": bool(getattr(s, "n_lt_6_triggered", False)),
+            "n_lt_6_blocked": bool(getattr(s, "n_lt_6_blocked", False)),
+            "n_lt_6_overridden": bool(getattr(s, "n_lt_6_overridden", False)),
             "excluded_points": list(s.excluded_points or []),
             "excluded_reasons": list(s.exclusions or []),
             "sample_stats": {
@@ -163,9 +167,10 @@ def build_debug_protocol_text(*, project_name: str, profile_id: str, samples: li
 
         lines.append('Б. Выборка')
         lines.append(f'- Использованные опыты: {", ".join(s.used_sounding_ids or []) or "—"}')
+        lines.append(f'- Число опытов (N): {int(getattr(s, "sounding_count", 0) or 0)}')
         before = int((s.stats.n_points or 0) + (s.excluded_count or 0))
-        lines.append(f'- Точек до фильтрации: {before}')
-        lines.append(f'- Точек после фильтрации: {int(s.stats.n_points or 0)}')
+        lines.append(f'- Число точек до фильтрации: {before}')
+        lines.append(f'- Число точек выборки: {int(s.stats.n_points or 0)}')
         if s.excluded_points:
             lines.append('- Исключённые точки:')
             for ep in s.excluded_points[:30]:
@@ -178,8 +183,6 @@ def build_debug_protocol_text(*, project_name: str, profile_id: str, samples: li
             lines.append(f'- Интервал глубин: {float(s.depth_interval[0]):.2f}-{float(s.depth_interval[1]):.2f} м')
         else:
             lines.append('- Интервал глубин: —')
-        lines.append(f'- n: {int(s.stats.n_points or 0)}')
-
         lines.append('В. Статистика')
         lines.append(f'- qc_min: {s.stats.qc_min_mpa}')
         lines.append(f'- qc_avg: {s.stats.qc_avg_mpa}')
@@ -204,6 +207,9 @@ def build_debug_protocol_text(*, project_name: str, profile_id: str, samples: li
 
         lines.append('Е. Результат')
         lines.append(f'- Статус: {s.status}')
+        lines.append(f'- Правило N < 6 сработало: {"да" if bool(getattr(s, "n_lt_6_triggered", False)) else "нет"}')
+        lines.append(f'- Расчёт заблокирован по N < 6: {"да" if bool(getattr(s, "n_lt_6_blocked", False)) else "нет"}')
+        lines.append(f'- Разрешён по override N < 6: {"да" if bool(getattr(s, "n_lt_6_overridden", False)) else "нет"}')
         lines.append(f'- warnings: {"; ".join(s.warnings or []) or "—"}')
         lines.append(f'- errors: {"; ".join(s.errors or []) or "—"}')
         lines.append(f'- missing fields: {", ".join(s.missing_fields or []) or "—"}')

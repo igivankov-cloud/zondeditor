@@ -33,6 +33,20 @@ def _tests_from_snapshot(snapshot: dict) -> list[TestData]:
     return out
 
 
+def _samples_from_fixture(name: str, **opts):
+    f = _load_fixture(name)
+    snap = f["snapshot"]
+    tests = _tests_from_snapshot(snap)
+    return build_ige_samples(
+        tests=tests,
+        ige_registry=dict(snap["ige_registry"]),
+        profile_id="DEFAULT_CURRENT",
+        allow_fill_by_material=bool(opts.get("allow_fill_by_material", False)),
+        use_legacy_sandy_loam_sp446=bool(opts.get("use_legacy_sandy_loam_sp446", False)),
+        allow_normative_lt6=bool(opts.get("allow_normative_lt6", False)),
+    )
+
+
 def test_debug_fixtures_cover_required_cases():
     names = [
         "test_1_basic_stable.json",
@@ -47,29 +61,76 @@ def test_debug_fixtures_cover_required_cases():
         assert f.get("snapshot", {}).get("ige_registry")
 
 
-def test_debug_protocol_text_contains_sections_and_paths():
-    f = _load_fixture("test_2_sandy_loam_warning.json")
-    snap = f["snapshot"]
-    tests = _tests_from_snapshot(snap)
-    samples = build_ige_samples(
-        tests=tests,
-        ige_registry=dict(snap["ige_registry"]),
-        profile_id="DEFAULT_CURRENT",
-        allow_fill_by_material=False,
-        use_legacy_sandy_loam_sp446=True,
-        allow_normative_lt6=False,
-    )
 
+def test_test_1_2_3_are_not_blocked_by_n_lt_6():
+    s1 = _samples_from_fixture("test_1_basic_stable.json")
+    assert all(x.sounding_count >= 6 for x in s1)
+    assert all(x.status != "N_LT_6_BLOCKED" for x in s1)
+
+    s2 = _samples_from_fixture("test_2_sandy_loam_warning.json")
+    assert all(x.sounding_count >= 6 for x in s2)
+    assert all(x.status != "N_LT_6_BLOCKED" for x in s2)
+
+    s3 = _samples_from_fixture("test_3_fill_preliminary.json")
+    assert all(x.sounding_count >= 6 for x in s3)
+    assert all(x.status != "N_LT_6_BLOCKED" for x in s3)
+
+
+
+def test_test_2_checks_sandy_loam_logic_without_n_lt_6_noise():
+    blocked = _samples_from_fixture("test_2_sandy_loam_warning.json", use_legacy_sandy_loam_sp446=False)
+    sandy = [x for x in blocked if x.ige_id == "ИГЭ-1"][0]
+    assert sandy.status == "NOT_APPLICABLE"
+    assert sandy.sounding_count >= 6
+
+    allowed = _samples_from_fixture("test_2_sandy_loam_warning.json", use_legacy_sandy_loam_sp446=True)
+    sandy_allowed = [x for x in allowed if x.ige_id == "ИГЭ-1"][0]
+    assert sandy_allowed.status == "CALCULATED"
+    assert any("старой редакции" in w.lower() for w in sandy_allowed.warnings)
+    assert sandy_allowed.status != "N_LT_6_BLOCKED"
+
+
+
+def test_test_3_checks_fill_preliminary_without_n_lt_6_noise():
+    blocked = _samples_from_fixture("test_3_fill_preliminary.json", allow_fill_by_material=False)
+    fill_blocked = [x for x in blocked if x.ige_id == "ИГЭ-1"][0]
+    assert fill_blocked.status in {"LAB_ONLY", "NOT_APPLICABLE"}
+    assert fill_blocked.sounding_count >= 6
+
+    allowed = _samples_from_fixture("test_3_fill_preliminary.json", allow_fill_by_material=True)
+    fill_allowed = [x for x in allowed if x.ige_id == "ИГЭ-1"][0]
+    assert fill_allowed.status == "PRELIMINARY"
+    assert fill_allowed.status != "N_LT_6_BLOCKED"
+
+
+
+def test_test_4_is_explicit_n_lt_6_case_by_soundings_count():
+    blocked = _samples_from_fixture("test_4_n_lt_6.json", allow_normative_lt6=False)
+    s_b = blocked[0]
+    assert s_b.sounding_count < 6
+    assert s_b.n_lt_6_triggered is True
+    assert s_b.n_lt_6_blocked is True
+    assert s_b.status == "N_LT_6_BLOCKED"
+
+    allowed = _samples_from_fixture("test_4_n_lt_6.json", allow_normative_lt6=True)
+    s_a = allowed[0]
+    assert s_a.sounding_count < 6
+    assert s_a.n_lt_6_triggered is True
+    assert s_a.n_lt_6_overridden is True
+    assert s_a.status == "CALCULATED"
+    assert any("число опытов" in w.lower() for w in s_a.warnings)
+
+
+
+def test_debug_protocol_text_contains_n_and_n_points_labels():
+    samples = _samples_from_fixture("test_4_n_lt_6.json", allow_normative_lt6=False)
     text = build_debug_protocol_text(
-        project_name=f.get("title", ""),
+        project_name="Тест 4",
         profile_id="DEFAULT_CURRENT",
         samples=samples,
-        calc_options={"use_legacy_sandy_loam_sp446": True},
+        calc_options={"allow_normative_lt6": False},
     )
-    assert "A. Паспорт расчёта" in text
-    assert "Б. Выборка" in text
-    assert "В. Статистика" in text
-    assert "Г. Метод" in text
-    assert "Д. Расчёт" in text
-    assert "Е. Результат" in text
-    assert "супесь по старой редакции" in text
+    assert "Число опытов (N)" in text
+    assert "Число точек выборки" in text
+    assert "Правило N < 6 сработало" in text
+    assert "Расчёт заблокирован по N < 6" in text
