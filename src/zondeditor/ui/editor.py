@@ -79,7 +79,7 @@ from src.zondeditor.domain.cpt_params_ru import (
 from src.zondeditor.calculations.models import CalculationTabState
 from src.zondeditor.calculations.normative_profiles import load_normative_profiles
 from src.zondeditor.calculations.sample_builder import build_ige_samples
-from src.zondeditor.calculations.protocol_builder import build_protocol
+from src.zondeditor.calculations.protocol_builder import build_protocol, build_debug_protocol_text
 
 _rebuild_geo_from_template = build_k2_geo_from_template
 
@@ -1516,12 +1516,79 @@ class GeoCanvasEditor(tk.Tk):
     def _make_calc_protocol(self):
         if not (self.calc_rows or []):
             self._rebuild_calc_samples()
+        samples = list(self.calc_samples or [])
         self.calc_protocol = build_protocol(
             project_name=str(getattr(self, "object_name", "") or ""),
             profile_id="DEFAULT_CURRENT",
-            samples=list(self.calc_samples or []),
+            samples=samples,
         )
+        protocol_text = build_debug_protocol_text(
+            project_name=str(getattr(self, "object_name", "") or ""),
+            profile_id="DEFAULT_CURRENT",
+            samples=samples,
+            calc_options={
+                "cpt_method": getattr(self.calc_tab_state, "cpt_method", ""),
+                "transition_method": getattr(self.calc_tab_state, "transition_method", ""),
+                "allow_normative_lt6": bool(getattr(self.calc_tab_state, "allow_normative_lt6", False)),
+                "use_legacy_sandy_loam_sp446": bool(getattr(self.calc_tab_state, "use_legacy_sandy_loam_sp446", False)),
+                "allow_fill_preliminary": bool(getattr(self.calc_tab_state, "allow_fill_preliminary", False)),
+            },
+        )
+        try:
+            if getattr(self, "ribbon_view", None):
+                self.ribbon_view.set_protocol_text(protocol_text)
+        except Exception:
+            pass
         self._set_status("Протокол расчёта сформирован")
+
+    def _load_debug_test_fixture(self, fixture_name: str):
+        fixture_path = Path('fixtures') / 'testdata' / str(fixture_name)
+        if not fixture_path.exists():
+            messagebox.showerror('Тест', f'Не найден фикстурный проект: {fixture_path}')
+            return
+        try:
+            payload = json.loads(fixture_path.read_text(encoding='utf-8'))
+        except Exception as exc:
+            messagebox.showerror('Тест', f'Не удалось прочитать фикстуру: {exc}')
+            return
+
+        snap = dict((payload.get('snapshot') or {}))
+        tests = list(snap.get('tests') or [])
+        if not tests:
+            messagebox.showwarning('Тест', 'В фикстуре нет тестовых зондирований')
+            return
+
+        # Полная локальная замена текущего состояния без автозапуска расчётов
+        self._restore(snap)
+        self.object_name = str(payload.get('title') or f'Тестовый проект: {fixture_name}')
+        self.object_code = self.object_name
+        self.project_path = None
+        self._dirty = True
+        self.calc_rows = []
+        self.calc_samples = []
+        self.calc_protocol = None
+        try:
+            if getattr(self, 'ribbon_view', None):
+                self.ribbon_view.set_object_name(self.object_name)
+                self.ribbon_view.set_protocol_text('Тест загружен. Нажмите «Пересобрать выборки» / «Рассчитать», затем «Собрать протокол расчёта».')
+        except Exception:
+            pass
+        self._sync_layers_panel()
+        self._redraw()
+        self.schedule_graph_redraw()
+        self._set_status(f"Загружен {payload.get('title', fixture_name)}. Расчёт не запускался автоматически.")
+
+    def _load_test_1_fixture(self):
+        self._load_debug_test_fixture('test_1_basic_stable.json')
+
+    def _load_test_2_fixture(self):
+        self._load_debug_test_fixture('test_2_sandy_loam_warning.json')
+
+    def _load_test_3_fixture(self):
+        self._load_debug_test_fixture('test_3_fill_preliminary.json')
+
+    def _load_test_4_fixture(self):
+        self._load_debug_test_fixture('test_4_n_lt_6.json')
 
     def redraw_all(self):
         self._sync_layers_panel()
@@ -1915,6 +1982,10 @@ class GeoCanvasEditor(tk.Tk):
                 "calc_show_sample": self._show_calc_sample_dialog,
                 "calc_show_excluded": self._show_calc_excluded_dialog,
                 "calc_make_protocol": self._make_calc_protocol,
+                "load_test_1": self._load_test_1_fixture,
+                "load_test_2": self._load_test_2_fixture,
+                "load_test_3": self._load_test_3_fixture,
+                "load_test_4": self._load_test_4_fixture,
             }
             self.ribbon_view = RibbonView(self, commands=commands, icon_font=_pick_icon_font(11))
             self.ribbon_view.pack(side="top", fill="x", before=ribbon)

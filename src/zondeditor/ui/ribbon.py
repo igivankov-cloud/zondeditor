@@ -61,6 +61,7 @@ class RibbonView(ttk.Frame):
         self.tabs.pack(side="top", fill="x", padx=2, pady=(0, 2))
 
         self._build_file_tab()
+        self._build_test_tab()
         self._build_params_tab()
         self._build_view_tab()
         self._build_layers_tab()
@@ -325,10 +326,43 @@ class RibbonView(ttk.Frame):
         self.calc_tree.column("warning", width=240, anchor="w")
         self.calc_tree.pack(fill="both", expand=True)
 
+    def _build_test_tab(self):
+        tab = ttk.Frame(self.tabs, padding=4)
+        self.tabs.add(tab, text="Тест")
+
+        frame = ttk.LabelFrame(tab, text="Отладочные наборы", padding=6)
+        frame.pack(side="left", fill="y", padx=4)
+
+        self._add_btn_grid(frame, "load_test_1", "Тест 1", "Базовый стабильный кейс: 2 ИГЭ, clay/sand", 0, 0)
+        self._add_btn_grid(frame, "load_test_2", "Тест 2", "Супесь: проверка блокировки и legacy-режима", 0, 1)
+        self._add_btn_grid(frame, "load_test_3", "Тест 3", "Насыпной: preliminary и исключённые точки", 1, 0)
+        self._add_btn_grid(frame, "load_test_4", "Тест 4", "N < 6: блокировка и расчёт по флагу", 1, 1)
+
     def _build_protocol_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Протокол")
-        ttk.Label(tab, text="Раздел протокола будет реализован на следующем этапе.", anchor="w").pack(fill="x")
+        btns = ttk.Frame(tab)
+        btns.pack(fill="x", pady=(0, 4))
+        ttk.Button(btns, text="Собрать протокол расчёта", command=self.commands.get("calc_make_protocol")).pack(side="left")
+
+        host = ttk.Frame(tab)
+        host.pack(fill="both", expand=True)
+        self.protocol_text = tk.Text(host, wrap="word", height=18)
+        self.protocol_text.pack(side="left", fill="both", expand=True)
+        scr = ttk.Scrollbar(host, orient="vertical", command=self.protocol_text.yview)
+        scr.pack(side="right", fill="y")
+        self.protocol_text.configure(yscrollcommand=scr.set)
+        self.protocol_text.insert("1.0", "Нажмите «Собрать протокол расчёта», чтобы увидеть отладочный отчёт по ИГЭ.")
+        self.protocol_text.configure(state="disabled")
+
+    def set_protocol_text(self, text: str):
+        w = getattr(self, "protocol_text", None)
+        if w is None:
+            return
+        w.configure(state="normal")
+        w.delete("1.0", "end")
+        w.insert("1.0", str(text or ""))
+        w.configure(state="disabled")
 
     def _sync_ige_canvas(self):
         cnv = getattr(self, "_ige_canvas", None)
