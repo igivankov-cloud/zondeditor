@@ -65,6 +65,7 @@ class TestData:
     depth: list[str]     # meters as string (comma decimal)
     qc: list[str]
     fs: list[str]
+    rf: Optional[list[str]] = None      # derived friction ratio, %
     incl: Optional[list[str]] = None    # K4: U-channel/inclinometer
     marker: str = ""
     header_pos: str = ""                # binding to original GEO (for save-back)

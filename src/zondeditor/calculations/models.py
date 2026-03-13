@@ -29,6 +29,7 @@ class IGECalcPoint:
     depth_m: float
     qc_mpa: float
     fs_kpa: float | None
+    rf_pct: float | None = None
     segment_id: str | None = None
 
 
@@ -39,6 +40,9 @@ class IGECalcStats:
     qc_min_mpa: float | None = None
     qc_max_mpa: float | None = None
     fs_avg_kpa: float | None = None
+    rf_avg_pct: float | None = None
+    rf_min_pct: float | None = None
+    rf_max_pct: float | None = None
     v_qc: float | None = None
     avg_depth_m: float | None = None
 
@@ -67,8 +71,13 @@ class IGECalcSample:
     missing_fields: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     used_sounding_ids: list[str] = field(default_factory=list)
+    sounding_count: int = 0
+    n_lt_6_triggered: bool = False
+    n_lt_6_blocked: bool = False
+    n_lt_6_overridden: bool = False
     depth_interval: tuple[float, float] | None = None
     excluded_points: list[dict[str, Any]] = field(default_factory=list)
+    excluded_soundings: list[dict[str, Any]] = field(default_factory=list)
     contributing_layers: list[dict[str, Any]] = field(default_factory=list)
     required_fields: list[str] = field(default_factory=list)
 

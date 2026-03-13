@@ -79,7 +79,9 @@ from src.zondeditor.domain.cpt_params_ru import (
 from src.zondeditor.calculations.models import CalculationTabState
 from src.zondeditor.calculations.normative_profiles import load_normative_profiles
 from src.zondeditor.calculations.sample_builder import build_ige_samples
-from src.zondeditor.calculations.protocol_builder import build_protocol
+from src.zondeditor.calculations.protocol_builder import build_protocol, build_debug_protocol_text
+from src.zondeditor.calculations.rf_utils import calc_rf_pct, robust_rf_scale_max
+from src.zondeditor.calculations.ige_prebuild import build_preliminary_layers
 
 _rebuild_geo_from_template = build_k2_geo_from_template
 
@@ -235,6 +237,8 @@ class GeoCanvasEditor(tk.Tk):
         self._active_test_idx: int | None = None
         self.graph_qc_max_mpa: float = 30.0
         self.graph_fs_max_kpa: float = 500.0
+        self.graph_rf_max_pct: float = 10.0
+        self.show_rf_graph: bool = False
         self.layer_edit_mode = True
         self._layer_drag = None  # {"ti": int, "boundary": int}
         self._layer_handle_hitbox = []
@@ -516,6 +520,7 @@ class GeoCanvasEditor(tk.Tk):
                 "depth": list(t.depth),
                 "qc": list(t.qc),
                 "fs": list(t.fs),
+                "rf": (None if getattr(t, "rf", None) is None else list(getattr(t, "rf", []) or [])),
                 "incl": (None if getattr(t, "incl", None) is None else list(getattr(t, "incl", []) or [])),
                 "marker": t.marker,
                 "header_pos": t.header_pos,
@@ -561,6 +566,7 @@ class GeoCanvasEditor(tk.Tk):
             "gwl_by_tid": copy.deepcopy(dict(getattr(self, "gwl_by_tid", {}) or {})),
             "compact_1m": bool(getattr(self, "compact_1m", False)),
             "show_graphs": bool(getattr(self, "show_graphs", False)),
+            "show_rf_graph": bool(getattr(self, "show_rf_graph", False)),
             "show_geology_column": bool(getattr(self, "show_geology_column", True)),
             "show_inclinometer": bool(getattr(self, "show_inclinometer", True)),
             "display_sort_mode": str(getattr(self, "display_sort_mode", "date") or "date"),
@@ -619,6 +625,10 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             self.show_graphs = bool(getattr(self, "show_graphs", False))
         try:
+            self.show_rf_graph = bool(snap.get("show_rf_graph", getattr(self, "show_rf_graph", False)))
+        except Exception:
+            self.show_rf_graph = bool(getattr(self, "show_rf_graph", False))
+        try:
             self.show_geology_column = bool(snap.get("show_geology_column", getattr(self, "show_geology_column", True)))
         except Exception:
             self.show_geology_column = bool(getattr(self, "show_geology_column", True))
@@ -647,6 +657,7 @@ class GeoCanvasEditor(tk.Tk):
             if getattr(self, "ribbon_view", None):
                 self.ribbon_view.set_compact_1m(bool(self.compact_1m))
                 self.ribbon_view.set_show_graphs(bool(self.show_graphs))
+                self.ribbon_view.set_show_rf(bool(self.show_rf_graph))
                 self.ribbon_view.set_show_geology_column(bool(self.show_geology_column))
                 self.ribbon_view.set_show_inclinometer(bool(self.show_inclinometer), enabled=(str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"))
                 self.ribbon_view.set_display_sort_mode(str(self.display_sort_mode))
@@ -701,6 +712,7 @@ class GeoCanvasEditor(tk.Tk):
                 depth=list(d["depth"]),
                 qc=list(d["qc"]),
                 fs=list(d["fs"]),
+                rf=(None if d.get("rf") is None else list(d.get("rf") or [])),
                 incl=(None if d.get("incl") is None else list(d.get("incl") or [])),
                 marker=d.get("marker",""),
                 header_pos=d.get("header_pos",""),
@@ -883,6 +895,18 @@ class GeoCanvasEditor(tk.Tk):
 
     def _toggle_show_graphs_from_ui(self):
         self._toggle_show_graphs(bool(getattr(self, "_show_graphs_var", None).get() if getattr(self, "_show_graphs_var", None) is not None else False))
+
+    def _toggle_show_rf_graph(self, value: bool | None = None):
+        if value is None:
+            value = bool(getattr(self, "show_rf_graph", False))
+        self.show_rf_graph = bool(value)
+        try:
+            if getattr(self, "ribbon_view", None):
+                self.ribbon_view.set_show_rf(self.show_rf_graph)
+        except Exception:
+            pass
+        self._redraw()
+        self.schedule_graph_redraw()
 
     def _toggle_show_geology_column(self, value: bool | None = None):
         if value is None:
@@ -1408,9 +1432,36 @@ class GeoCanvasEditor(tk.Tk):
         elif key == "allow_fill_preliminary":
             self.calc_tab_state.allow_fill_preliminary = bool(value)
 
+    def _processing_exclusion_reason(self, ti: int, t) -> str | None:
+        if not bool(getattr(t, "export_on", True)):
+            return "опыт отключён пользователем"
+        fl = (getattr(self, "flags", {}) or {}).get(int(getattr(t, "tid", 0) or 0))
+        if bool(getattr(fl, "invalid", False)):
+            return "опыт помечен как некорректный"
+        if bool(getattr(t, "locked", False)):
+            return "опыт заблокирован"
+        return None
+
+    def _iter_processing_tests(self) -> tuple[list, list[dict[str, str]]]:
+        enabled = []
+        excluded: list[dict[str, str]] = []
+        for ti, t in enumerate(list(self.tests or [])):
+            reason = self._processing_exclusion_reason(ti, t)
+            sid = f"test_{getattr(t, 'tid', ti)}"
+            if reason:
+                excluded.append({"sounding_id": sid, "reason": reason})
+                try:
+                    setattr(t, "invalid", bool("некоррект" in reason))
+                except Exception:
+                    pass
+                continue
+            enabled.append(t)
+        return enabled, excluded
+
     def _rebuild_calc_samples(self):
+        enabled_tests, excluded_tests = self._iter_processing_tests()
         samples = build_ige_samples(
-            tests=list(self.tests or []),
+            tests=list(enabled_tests or []),
             ige_registry=self.ige_registry,
             profile_id="DEFAULT_CURRENT",
             allow_fill_by_material=bool(self.calc_tab_state.allow_fill_preliminary),
@@ -1426,7 +1477,7 @@ class GeoCanvasEditor(tk.Tk):
                 "fill_subtype": str((self.ige_registry.get(smp.ige_id, {}) or {}).get("fill_subtype", "")),
                 "method": smp.method,
                 "status": smp.status,
-                "warning": "; ".join(smp.warnings),
+                "warning": "; ".join(list(smp.warnings or []) + ([f"Исключено опытов: {len(excluded_tests)}"] if excluded_tests else [])),
                 "intervals": [],
                 "n_points": smp.stats.n_points,
                 "qc_avg": smp.stats.qc_avg_mpa,
@@ -1454,11 +1505,13 @@ class GeoCanvasEditor(tk.Tk):
                     "warnings": list(smp.warnings or []),
                     "errors": list(smp.errors or []),
                     "missing_fields": list(smp.missing_fields or []),
+                    "excluded_soundings": list(getattr(smp, "excluded_soundings", []) or []) + list(excluded_tests or []),
                 }
                 for smp in list(samples or [])
             ]
         except Exception:
             pass
+        self._last_excluded_tests = list(excluded_tests or [])
         self._sync_calc_table()
 
     def _run_calc_pipeline(self):
@@ -1516,12 +1569,185 @@ class GeoCanvasEditor(tk.Tk):
     def _make_calc_protocol(self):
         if not (self.calc_rows or []):
             self._rebuild_calc_samples()
+        samples = list(self.calc_samples or [])
         self.calc_protocol = build_protocol(
             project_name=str(getattr(self, "object_name", "") or ""),
             profile_id="DEFAULT_CURRENT",
-            samples=list(self.calc_samples or []),
+            samples=samples,
         )
+        protocol_text = build_debug_protocol_text(
+            project_name=str(getattr(self, "object_name", "") or ""),
+            profile_id="DEFAULT_CURRENT",
+            samples=samples,
+            calc_options={
+                "cpt_method": getattr(self.calc_tab_state, "cpt_method", ""),
+                "transition_method": getattr(self.calc_tab_state, "transition_method", ""),
+                "allow_normative_lt6": bool(getattr(self.calc_tab_state, "allow_normative_lt6", False)),
+                "use_legacy_sandy_loam_sp446": bool(getattr(self.calc_tab_state, "use_legacy_sandy_loam_sp446", False)),
+                "allow_fill_preliminary": bool(getattr(self.calc_tab_state, "allow_fill_preliminary", False)),
+                "excluded_soundings_global": list(getattr(self, "_last_excluded_tests", []) or []),
+            },
+        )
+        try:
+            if getattr(self, "ribbon_view", None):
+                self.ribbon_view.set_protocol_text(protocol_text)
+        except Exception:
+            pass
         self._set_status("Протокол расчёта сформирован")
+
+    def _load_debug_test_fixture(self, fixture_name: str):
+        fixture_path = Path('fixtures') / 'testdata' / str(fixture_name)
+        if not fixture_path.exists():
+            messagebox.showerror('Тест', f'Не найден фикстурный проект: {fixture_path}')
+            return
+        try:
+            payload = json.loads(fixture_path.read_text(encoding='utf-8'))
+        except Exception as exc:
+            messagebox.showerror('Тест', f'Не удалось прочитать фикстуру: {exc}')
+            return
+
+        snap = dict((payload.get('snapshot') or {}))
+        tests = list(snap.get('tests') or [])
+        if not tests:
+            messagebox.showwarning('Тест', 'В фикстуре нет тестовых зондирований')
+            return
+
+        # Полная локальная замена текущего состояния без автозапуска расчётов
+        self._restore(snap)
+        self.object_name = str(payload.get('title') or f'Тестовый проект: {fixture_name}')
+        self.object_code = self.object_name
+        self.project_path = None
+        self._dirty = True
+        self.calc_rows = []
+        self.calc_samples = []
+        self.calc_protocol = None
+        try:
+            if getattr(self, 'ribbon_view', None):
+                self.ribbon_view.set_object_name(self.object_name)
+                self.ribbon_view.set_protocol_text('Тест загружен. Нажмите «Пересобрать выборки» / «Рассчитать», затем «Собрать протокол расчёта».')
+        except Exception:
+            pass
+        self._sync_layers_panel()
+        self._redraw()
+        self.schedule_graph_redraw()
+        self._set_status(f"Загружен {payload.get('title', fixture_name)}. Расчёт не запускался автоматически.")
+
+    def _load_test_1_fixture(self):
+        self._load_debug_test_fixture('test_1_basic_stable.json')
+
+    def _load_test_2_fixture(self):
+        self._load_debug_test_fixture('test_2_sandy_loam_warning.json')
+
+    def _load_test_3_fixture(self):
+        self._load_debug_test_fixture('test_3_fill_preliminary.json')
+
+    def _load_test_4_fixture(self):
+        self._load_debug_test_fixture('test_4_n_lt_6.json')
+
+    def _ensure_test_rf_values(self, t) -> list[str]:
+        qarr = list(getattr(t, "qc", []) or [])
+        farr = list(getattr(t, "fs", []) or [])
+        out: list[str] = []
+        n = max(len(qarr), len(farr))
+        for i in range(n):
+            q_raw = _parse_cell_int(qarr[i]) if i < len(qarr) else None
+            f_raw = _parse_cell_int(farr[i]) if i < len(farr) else None
+            if q_raw is None and f_raw is None:
+                out.append("")
+                continue
+            qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
+            rf = calc_rf_pct(float(fs_kpa), float(qc_mpa))
+            out.append("" if rf is None else f"{float(rf):.3f}")
+        try:
+            t.rf = list(out)
+        except Exception:
+            pass
+        return out
+
+    def _prebuild_iges_from_cpt_preliminary(self):
+        enabled_tests, excluded_tests = self._iter_processing_tests()
+        if not enabled_tests:
+            messagebox.showinfo("ИГЭ", "Нет корректных включённых опытов для предварительного формирования ИГЭ.")
+            return
+
+        self._push_undo()
+        self.ige_registry = {}
+        changed = False
+        ige_counter = 0
+
+        for t in list(enabled_tests or []):
+            qarr = list(getattr(t, "qc", []) or [])
+            farr = list(getattr(t, "fs", []) or [])
+            if not qarr and not farr:
+                continue
+            self._ensure_test_rf_values(t)
+
+            series: list[tuple[float, float, float, float | None]] = []
+            n = max(len(qarr), len(farr))
+            for i in range(n):
+                dv = self._depth_at_index(t, i)
+                if dv is None:
+                    continue
+                q_raw = _parse_cell_int(qarr[i]) if i < len(qarr) else None
+                f_raw = _parse_cell_int(farr[i]) if i < len(farr) else None
+                if q_raw is None and f_raw is None:
+                    continue
+                qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
+                rf = calc_rf_pct(float(fs_kpa), float(qc_mpa))
+                series.append((float(dv), float(qc_mpa), float(fs_kpa), rf))
+
+            auto_layers = build_preliminary_layers(series)
+            layers: list[Layer] = []
+            for cand in auto_layers:
+                soil = SoilType.SANDY_LOAM
+                if cand.soil_kind == SoilType.SAND.value:
+                    soil = SoilType.SAND
+                elif cand.soil_kind == SoilType.LOAM.value:
+                    soil = SoilType.LOAM
+                elif cand.soil_kind == SoilType.SANDY_LOAM.value:
+                    soil = SoilType.SANDY_LOAM
+                ige_counter += 1
+                ige_id = f"ИГЭ-{ige_counter}"
+                layers.append(
+                    Layer(
+                        top_m=float(cand.top_m),
+                        bot_m=float(cand.bot_m),
+                        ige_id=ige_id,
+                        soil_type=soil,
+                        calc_mode=calc_mode_for_soil(soil),
+                        style=dict(SOIL_STYLE.get(soil, {})),
+                        ige_num=self._ige_id_to_num(ige_id),
+                    )
+                )
+                self.ige_registry[ige_id] = self._ensure_ige_cpt_fields(
+                    {
+                        "soil_type": soil.value,
+                        "calc_mode": calc_mode_for_soil(soil).value,
+                        "style": dict(SOIL_STYLE.get(soil, {})),
+                        "label": ige_id,
+                        "ordinal": self._ige_id_to_num(ige_id),
+                        "notes": "Предварительная интерпретация по данным qc/fs/Rf; требуется ручная проверка",
+                    }
+                )
+            if layers:
+                t.layers = normalize_layers(layers)
+                self._renumber_layers(t)
+                changed = True
+
+        if not changed:
+            messagebox.showinfo("ИГЭ", "Недостаточно данных для предварительного формирования ИГЭ.")
+            return
+
+        for t in (self.tests or []):
+            for lyr in (getattr(t, "layers", []) or []):
+                self._apply_ige_to_layer(lyr)
+
+        self._last_excluded_tests = list(excluded_tests or [])
+        self._sync_layers_panel()
+        self._redraw()
+        self.schedule_graph_redraw()
+        suffix = "" if not excluded_tests else f" Исключено опытов: {len(excluded_tests)}."
+        self._set_status("Выполнено предварительное формирование ИГЭ по данным qc/fs/Rf. Проверьте границы и типы вручную." + suffix)
 
     def redraw_all(self):
         self._sync_layers_panel()
@@ -1659,6 +1885,7 @@ class GeoCanvasEditor(tk.Tk):
                 }
             )
         self.ribbon_view.set_layers(rows, [x.value for x in SoilType], can_add=(len(keys) < MAX_LAYERS_PER_TEST), can_delete=(len(keys) > MIN_LAYERS_PER_TEST))
+        self._last_excluded_tests = list(excluded_tests or [])
         self._sync_calc_table()
         if rows:
             self.ribbon_view.layer_ige_var.set(str(rows[0].get("ige_id") or "ИГЭ-1"))
@@ -1890,6 +2117,7 @@ class GeoCanvasEditor(tk.Tk):
                 "fix_algo": self.fix_by_algorithm,
                 "reduce_step": self.convert_10_to_5,
                 "toggle_graphs": self._toggle_show_graphs,
+                "toggle_rf_graph": self._toggle_show_rf_graph,
                 "toggle_geology_column": self._toggle_show_geology_column,
                 "toggle_inclinometer": self._toggle_show_inclinometer,
                 "toggle_compact_1m": self._toggle_compact_1m,
@@ -1902,6 +2130,7 @@ class GeoCanvasEditor(tk.Tk):
                 "change_ige_field": self._change_layer_field_from_ribbon,
                 "rename_ige": self._rename_ige_from_ribbon,
                 "set_layer_soil": self._set_layer_soil_from_ribbon,
+                "ige_prebuild_from_cpt": self._prebuild_iges_from_cpt_preliminary,
                 "calc_cpt": self.calculate_cpt_params,
                 "edit_ige_cpt": self._edit_selected_ige_cpt_params,
                 "apply_calc": lambda: self._redraw(),
@@ -1915,12 +2144,17 @@ class GeoCanvasEditor(tk.Tk):
                 "calc_show_sample": self._show_calc_sample_dialog,
                 "calc_show_excluded": self._show_calc_excluded_dialog,
                 "calc_make_protocol": self._make_calc_protocol,
+                "load_test_1": self._load_test_1_fixture,
+                "load_test_2": self._load_test_2_fixture,
+                "load_test_3": self._load_test_3_fixture,
+                "load_test_4": self._load_test_4_fixture,
             }
             self.ribbon_view = RibbonView(self, commands=commands, icon_font=_pick_icon_font(11))
             self.ribbon_view.pack(side="top", fill="x", before=ribbon)
             self.ribbon_view.set_object_name(self.object_name)
             self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
             self.ribbon_view.set_show_graphs(bool(getattr(self, "show_graphs", False)))
+            self.ribbon_view.set_show_rf(bool(getattr(self, "show_rf_graph", False)))
             self.ribbon_view.set_show_geology_column(bool(getattr(self, "show_geology_column", True)))
             self.ribbon_view.set_show_inclinometer(bool(getattr(self, "show_inclinometer", True)), enabled=(str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"))
             self.ribbon_view.set_compact_1m(bool(getattr(self, "compact_1m", False)))
@@ -4536,17 +4770,32 @@ class GeoCanvasEditor(tk.Tk):
         self.graph_qc_max_mpa = float(qc_max)
         self.graph_fs_max_kpa = float(fs_max)
 
+        rf_vals: list[float] = []
+        for tt in (self._iter_processing_tests()[0] or []):
+            qarr = list(getattr(tt, "qc", []) or [])
+            farr = list(getattr(tt, "fs", []) or [])
+            for i in range(min(len(qarr), len(farr))):
+                q_raw = _parse_cell_int(qarr[i])
+                f_raw = _parse_cell_int(farr[i])
+                if q_raw is None and f_raw is None:
+                    continue
+                qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
+                rf = calc_rf_pct(fs_kpa, qc_mpa)
+                if rf is not None and 0.0 <= float(rf) <= 100.0:
+                    rf_vals.append(float(rf))
+        self.graph_rf_max_pct = robust_rf_scale_max(rf_vals, default_max=10.0, percentile=0.95, cap_max=15.0)
+
     def _clear_graph_layers(self):
         for cnv in (getattr(self, "canvas", None), getattr(self, "hcanvas", None)):
             if cnv is None:
                 continue
-            for tag in ("graph_axes", "graph_qc", "graph_fs", "graph_nodata", "layers_overlay", "layer_handles"):
+            for tag in ("graph_axes", "graph_qc", "graph_fs", "graph_rf", "graph_nodata", "layers_overlay", "layer_handles"):
                 try:
                     cnv.delete(tag)
                 except Exception:
                     pass
 
-    def _draw_graph_axes_for_test(self, ti: int, x0: float, x1: float, qmax: float, fmax: float):
+    def _draw_graph_axes_for_test(self, ti: int, x0: float, x1: float, qmax: float, fmax: float, rfmax: float, show_rf: bool):
         y0 = self.pad_y
         y1 = y0 + self.hdr_h
         tag = ("graph_axes", f"graph_axes_{ti}")
@@ -4554,20 +4803,30 @@ class GeoCanvasEditor(tk.Tk):
         pad = 8
         xa0 = x0 + pad
         xa1 = x1 - pad
-        qc_axis_y = y0 + 24
-        fs_axis_y = y0 + 46
+        qc_axis_y = y0 + 20
+        fs_axis_y = y0 + 40
+        rf_axis_y = y0 + 60
         self.hcanvas.create_line(xa0, qc_axis_y, xa1, qc_axis_y, fill=GRAPH_QC_GREEN, width=1, tags=tag)
         self.hcanvas.create_line(xa0, fs_axis_y, xa1, fs_axis_y, fill=GRAPH_FS_BLUE, width=1, tags=tag)
+        if show_rf:
+            self.hcanvas.create_line(xa0, rf_axis_y, xa1, rf_axis_y, fill=GRAPH_RF_ORANGE, width=1, tags=tag)
         for i in range(0, 6):
             xx = xa0 + ((xa1 - xa0) * i / 5.0)
             self.hcanvas.create_line(xx, qc_axis_y - 3, xx, qc_axis_y + 3, fill=GRAPH_QC_GREEN, width=1, tags=tag)
             self.hcanvas.create_line(xx, fs_axis_y - 3, xx, fs_axis_y + 3, fill=GRAPH_FS_BLUE, width=1, tags=tag)
+            if show_rf:
+                self.hcanvas.create_line(xx, rf_axis_y - 3, xx, rf_axis_y + 3, fill=GRAPH_RF_ORANGE, width=1, tags=tag)
         self.hcanvas.create_text(xa0, qc_axis_y - 10, anchor="w", text="qc, МПа", fill=GRAPH_QC_GREEN, font=("Segoe UI", 8), tags=tag)
         self.hcanvas.create_text(xa0, fs_axis_y - 10, anchor="w", text="fs, кПа", fill=GRAPH_FS_BLUE, font=("Segoe UI", 8), tags=tag)
+        if show_rf:
+            self.hcanvas.create_text(xa0, rf_axis_y - 10, anchor="w", text="Rf, %", fill=GRAPH_RF_ORANGE, font=("Segoe UI", 8), tags=tag)
         q_txt = f"0–{int(float(qmax))}"
         self.hcanvas.create_text(xa1, qc_axis_y - 10, anchor="e", text=q_txt, fill=GRAPH_QC_GREEN, font=("Segoe UI", 7), tags=tag)
         f_txt = f"0–{int(float(fmax))}"
         self.hcanvas.create_text(xa1, fs_axis_y - 10, anchor="e", text=f_txt, fill=GRAPH_FS_BLUE, font=("Segoe UI", 7), tags=tag)
+        if show_rf:
+            r_txt = f"0–{float(rfmax):.1f}%"
+            self.hcanvas.create_text(xa1, rf_axis_y - 10, anchor="e", text=r_txt, fill=GRAPH_RF_ORANGE, font=("Segoe UI", 7), tags=tag)
 
     def _test_last_data_index(self, t) -> int | None:
         qarr = getattr(t, "qc", []) or []
@@ -4739,8 +4998,8 @@ class GeoCanvasEditor(tk.Tk):
             f_raw = _parse_cell_int(farr[i]) if i < len(farr) else None
             qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
             qc_kpa = float(qc_mpa) * 1000.0
-            rf = 0.0 if qc_kpa <= 1e-9 else (float(fs_kpa) / qc_kpa) * 100.0
-            samples.append((float(dv), float(qc_mpa), float(fs_kpa), float(rf)))
+            rf_val = calc_rf_pct(float(fs_kpa), float(qc_mpa))
+            samples.append((float(dv), float(qc_mpa), float(fs_kpa), float(rf_val or 0.0)))
 
         def _stats(vals: list[float]) -> dict[str, float | None]:
             if not vals:
@@ -5021,10 +5280,11 @@ class GeoCanvasEditor(tk.Tk):
                     pass
                 return
 
-    def _draw_graph_lines_for_test(self, ti: int, rect, y_points, qc_mpa, fs_kpa, qmax: float, fmax: float):
+    def _draw_graph_lines_for_test(self, ti: int, rect, y_points, qc_mpa, fs_kpa, rf_pct, qmax: float, fmax: float, rfmax: float, show_rf: bool):
         x0, x1, y0, y1 = rect
         tag_qc = ("graph_qc", f"graph_qc_{ti}")
         tag_fs = ("graph_fs", f"graph_fs_{ti}")
+        tag_rf = ("graph_rf", f"graph_rf_{ti}")
         tag_nodata = ("graph_nodata", f"graph_nodata_{ti}")
 
         if not y_points:
@@ -5032,6 +5292,7 @@ class GeoCanvasEditor(tk.Tk):
             return
         qmax = max(float(qmax), 0.1)
         fmax = max(float(fmax), 1.0)
+        rfmax = max(float(rfmax), 0.5)
 
         pad = 8
         xa0 = x0 + pad
@@ -5042,16 +5303,21 @@ class GeoCanvasEditor(tk.Tk):
 
         qc_pts = []
         fs_pts = []
-        for yy, qv, fv in zip(y_points, qc_mpa, fs_kpa):
+        rf_pts = []
+        for yy, qv, fv, rv in zip(y_points, qc_mpa, fs_kpa, rf_pct):
             if yy < y0 - 1e-6 or yy > y1 + 1e-6:
                 continue
             qc_pts.extend([_sx(qv, qmax), yy])
             fs_pts.extend([_sx(fv, fmax), yy])
+            if show_rf and rv is not None:
+                rf_pts.extend([_sx(float(rv), rfmax), yy])
 
         if len(qc_pts) >= 4:
             self.canvas.create_line(*qc_pts, fill=GRAPH_QC_GREEN, width=2, smooth=False, tags=tag_qc)
         if len(fs_pts) >= 4:
             self.canvas.create_line(*fs_pts, fill=GRAPH_FS_BLUE, width=2, smooth=False, tags=tag_fs)
+        if show_rf and len(rf_pts) >= 4:
+            self.canvas.create_line(*rf_pts, fill=GRAPH_RF_ORANGE, width=2, smooth=False, tags=tag_rf)
 
     def _draw_groundwater_line_for_test(self, ti: int, rect):
         settings = dict(getattr(self, "cpt_calc_settings", {}) or {})
@@ -5100,6 +5366,7 @@ class GeoCanvasEditor(tk.Tk):
             y_points = []
             qc_vals = []
             fs_vals = []
+            rf_vals = []
             qarr = getattr(t, "qc", []) or []
             farr = getattr(t, "fs", []) or []
             units = getattr(self, "_grid_units", []) or []
@@ -5120,6 +5387,7 @@ class GeoCanvasEditor(tk.Tk):
                     y_points.append(y0r + (row_h_cur * 0.5))
                     qc_vals.append(float(qc_mpa))
                     fs_vals.append(float(fs_kpa))
+                    rf_vals.append(calc_rf_pct(float(fs_kpa), float(qc_mpa)))
                 elif unit[0] == "meter":
                     meter_n = int(unit[1])
                     for di in range(max(len(qarr), len(farr))):
@@ -5135,6 +5403,7 @@ class GeoCanvasEditor(tk.Tk):
                         y_points.append(y0r + (frac * row_h_cur))
                         qc_vals.append(float(qc_mpa))
                         fs_vals.append(float(fs_kpa))
+                        rf_vals.append(calc_rf_pct(float(fs_kpa), float(qc_mpa)))
 
             plot_rect = (x0, x1, y0, y1)
             tag_axes = ("graph_axes", f"graph_axes_{ti}")
@@ -5145,21 +5414,22 @@ class GeoCanvasEditor(tk.Tk):
                 labels = self._draw_layers_overlay_for_test(ti, plot_rect, self._depth_to_canvas_y, tag_overlay) or []
             if not y_points:
                 if show_graphs:
-                    self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
+                    self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa, self.graph_rf_max_pct, bool(getattr(self, "show_rf_graph", False)))
                     self._draw_groundwater_line_for_test(ti, plot_rect)
-                    self._draw_graph_lines_for_test(ti, plot_rect, [], [], [], self.graph_qc_max_mpa, self.graph_fs_max_kpa)
+                    self._draw_graph_lines_for_test(ti, plot_rect, [], [], [], [], self.graph_qc_max_mpa, self.graph_fs_max_kpa, self.graph_rf_max_pct, bool(getattr(self, "show_rf_graph", False)))
                 for span in labels:
                     self._draw_layer_label_chip(span, tag_overlay)
                 if show_geology:
                     self._draw_layer_handles_for_test(ti, plot_rect)
                 continue
-            packed = sorted(zip(y_points, qc_vals, fs_vals), key=lambda x: x[0])
+            packed = sorted(zip(y_points, qc_vals, fs_vals, rf_vals), key=lambda x: x[0])
             y_points = [x[0] for x in packed]
             qc_vals = [x[1] for x in packed]
             fs_vals = [x[2] for x in packed]
+            rf_vals = [x[3] for x in packed]
 
             if show_graphs:
-                self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
+                self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa, self.graph_rf_max_pct, bool(getattr(self, "show_rf_graph", False)))
                 self._draw_groundwater_line_for_test(ti, plot_rect)
                 self._draw_graph_lines_for_test(
                     ti,
@@ -5167,8 +5437,11 @@ class GeoCanvasEditor(tk.Tk):
                     y_points,
                     qc_vals,
                     fs_vals,
+                    rf_vals,
                     self.graph_qc_max_mpa,
                     self.graph_fs_max_kpa,
+                    self.graph_rf_max_pct,
+                    bool(getattr(self, "show_rf_graph", False)),
                 )
             for span in labels:
                 self._draw_layer_label_chip(span, tag_overlay)

@@ -7,6 +7,7 @@ from src.zondeditor.domain.cpt_ru_sp446 import parse_depth_float
 from .applicability import resolve_applicability
 from .calc_methods import load_method_catalog, run_method
 from .models import IGECalcPoint, IGECalcResult, IGECalcSample, IGECalcStats, IGEModel
+from .rf_utils import calc_rf_pct
 from .soil_catalog import load_soil_catalog, soil_code_by_name
 from .statistics import calc_stats
 from .validation import validate_inputs
@@ -28,6 +29,16 @@ def _iter_points(test: Any):
         if q <= 0:
             continue
         yield float(d), q, f
+
+
+def _test_exclusion_reason(test: Any) -> str | None:
+    if not bool(getattr(test, "export_on", True)):
+        return "опыт отключён пользователем"
+    if bool(getattr(test, "invalid", False)):
+        return "опыт помечен как некорректный"
+    if bool(getattr(test, "locked", False)):
+        return "опыт заблокирован"
+    return None
 
 
 def _build_ige_model(ige_id: str, ent: dict[str, Any], profile_id: str) -> IGEModel:
@@ -93,14 +104,16 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
 
         points: list[IGECalcPoint] = []
         excluded_points: list[dict[str, Any]] = []
+        excluded_soundings: list[dict[str, Any]] = []
         used_sounding_ids: list[str] = []
         layer_refs: list[dict[str, Any]] = []
 
         for test in tests or []:
-            if not bool(getattr(test, "export_on", True)):
-                continue
             tid = str(getattr(test, "tid", ""))
-            touched = False
+            reason = _test_exclusion_reason(test)
+            if reason:
+                excluded_soundings.append({"sounding_id": f"test_{tid}", "reason": reason})
+                continue
             for idx, lyr in enumerate((getattr(test, "layers", []) or []), start=1):
                 lid = str(getattr(lyr, "ige_id", "") or "").strip()
                 if lid != ige_key:
@@ -112,13 +125,13 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
                 for dep, qc_mpa, fs_kpa in _iter_points(test):
                     if not (top <= dep <= bot):
                         continue
-                    touched = True
                     if dep < 1.0:
                         excluded_points.append({"sounding_id": f"test_{tid}", "depth_m": dep, "reason": "Глубина менее 1 м", "segment_id": seg})
                         continue
-                    points.append(IGECalcPoint(sounding_id=f"test_{tid}", depth_m=dep, qc_mpa=qc_mpa, fs_kpa=fs_kpa, segment_id=seg))
-            if touched and f"test_{tid}" not in used_sounding_ids:
-                used_sounding_ids.append(f"test_{tid}")
+                    sid = f"test_{tid}"
+                    points.append(IGECalcPoint(sounding_id=sid, depth_m=dep, qc_mpa=qc_mpa, fs_kpa=fs_kpa, rf_pct=calc_rf_pct(fs_kpa, qc_mpa), segment_id=seg))
+                    if sid not in used_sounding_ids:
+                        used_sounding_ids.append(sid)
 
         stats: IGECalcStats = calc_stats(points)
         warnings = [w for w in [app.warning] if w]
@@ -157,13 +170,19 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
             if method_run.status == "invalid_input":
                 app.status = "INVALID_INPUT"
 
-        if int(stats.n_points or 0) < 6 and app.status in {"CALCULATED", "PRELIMINARY"}:
+        sounding_count = len(used_sounding_ids)
+        n_lt_6_triggered = sounding_count < 6 and app.status in {"CALCULATED", "PRELIMINARY"}
+        n_lt_6_blocked = False
+        n_lt_6_overridden = False
+        if n_lt_6_triggered:
             if not bool(allow_normative_lt6):
                 app.status = "N_LT_6_BLOCKED"
-                errors.append("N < 6: нормативное значение не рассчитывается без разрешающей опции")
+                n_lt_6_blocked = True
+                errors.append("N < 6 (число опытов): нормативное значение не рассчитывается без разрешающей опции")
                 result = IGECalcResult(status="invalid_input", not_implemented=False)
             else:
-                warnings.append("N < 6: расчёт разрешён с предупреждением")
+                n_lt_6_overridden = True
+                warnings.append("N < 6 (число опытов): расчёт разрешён с предупреждением")
 
         depths = [p.depth_m for p in points]
         depth_interval = (min(depths), max(depths)) if depths else None
@@ -183,8 +202,13 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
             missing_fields=missing_fields,
             errors=errors,
             used_sounding_ids=used_sounding_ids,
+            sounding_count=sounding_count,
+            n_lt_6_triggered=n_lt_6_triggered,
+            n_lt_6_blocked=n_lt_6_blocked,
+            n_lt_6_overridden=n_lt_6_overridden,
             depth_interval=depth_interval,
             excluded_points=excluded_points,
+            excluded_soundings=excluded_soundings,
             contributing_layers=layer_refs,
             required_fields=required_fields,
         )
