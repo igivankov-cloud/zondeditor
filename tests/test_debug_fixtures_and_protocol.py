@@ -145,6 +145,8 @@ def test_debug_protocol_contains_training_block():
         profile_id="DEFAULT_CURRENT",
         samples=samples,
         calc_options={
+            "interpretation_status": "completed",
+            "approved_for_training": True,
             "training_info": {
                 "method": "Пользовательский",
                 "used_trained_profile": True,
@@ -152,12 +154,18 @@ def test_debug_protocol_contains_training_block():
                 "examples_count": 3,
                 "profile_source": "обученный",
                 "saved_training_example": True,
+                "case_eligibility": {"eligible": False, "reasons": ["test reason"]},
+                "examples_filter": {"total": 5, "valid": 2, "rejected": 3, "reason_counts": {"invalid_data_flags": 2}},
             }
         },
     )
     assert "Блок адаптации/обучения" in text
     assert "Метод интерпретации: Пользовательский" in text
     assert "Примеров у профиля: 3" in text
+    assert "Статус интерпретации: completed" in text
+    assert "Допуск в обучение: да" in text
+    assert "Текущий кейс пригоден для обучения: нет" in text
+    assert "Примеров валидных: 2" in text
 
 
 def test_excluded_disabled_or_invalid_soundings_not_used_in_samples():

@@ -151,6 +151,10 @@ def build_debug_protocol_text(*, project_name: str, profile_id: str, samples: li
     lines: list[str] = []
     lines.append(f'Отладочный протокол расчёта: {project_name or "(без названия)"}')
     lines.append(f'Норматив: {profile_id}')
+    interp_status = str(calc_options.get("interpretation_status") or "draft")
+    approved = bool(calc_options.get("approved_for_training", False))
+    lines.append(f"Статус интерпретации: {interp_status}")
+    lines.append(f"Допуск в обучение: {'да' if approved else 'нет'}")
     global_excluded = list(calc_options.get("excluded_soundings_global") or [])
     training_info = dict(calc_options.get("training_info") or {})
     if training_info:
@@ -162,6 +166,24 @@ def build_debug_protocol_text(*, project_name: str, profile_id: str, samples: li
         lines.append(f"- Источник профиля: {training_info.get('profile_source', 'базовый')}")
         if training_info.get("saved_training_example"):
             lines.append("- Текущий кейс сохранён как обучающий пример")
+        case_eligibility = dict(training_info.get("case_eligibility") or {})
+        if case_eligibility:
+            lines.append(f"- Текущий кейс пригоден для обучения: {'да' if case_eligibility.get('eligible') else 'нет'}")
+            reasons = list(case_eligibility.get("reasons") or [])
+            if reasons:
+                lines.append("- Причины непригодности кейса:")
+                for r in reasons:
+                    lines.append(f"  * {r}")
+        ex_filter = dict(training_info.get("examples_filter") or {})
+        if ex_filter:
+            lines.append(f"- Примеров всего: {int(ex_filter.get('total', 0) or 0)}")
+            lines.append(f"- Примеров валидных: {int(ex_filter.get('valid', 0) or 0)}")
+            lines.append(f"- Примеров отбраковано: {int(ex_filter.get('rejected', 0) or 0)}")
+            rc = dict(ex_filter.get("reason_counts") or {})
+            if rc:
+                lines.append("- Причины отбраковки накопленных примеров:")
+                for key, val in sorted(rc.items()):
+                    lines.append(f"  * {key}: {int(val or 0)}")
     if global_excluded:
         lines.append(f'Глобально исключённых опытов: {len(global_excluded)}')
         for ex in global_excluded:

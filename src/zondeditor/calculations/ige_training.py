@@ -117,6 +117,94 @@ class ProfileUpdateResult:
     stats: dict[str, Any]
 
 
+@dataclass
+class TrainingEligibilityResult:
+    eligible: bool
+    reasons: list[str]
+    used_test_ids: list[str]
+
+
+def _test_id(meta: dict[str, Any]) -> str:
+    return str(meta.get("test_id") or "")
+
+
+def evaluate_training_case_eligibility(
+    *,
+    interpretation_status: str,
+    approved_for_training: bool,
+    has_prebuild_snapshot: bool,
+    test_meta: list[dict[str, Any]],
+) -> TrainingEligibilityResult:
+    reasons: list[str] = []
+    used_ids: list[str] = []
+    if not has_prebuild_snapshot:
+        reasons.append("нет данных предварительного автоформирования (_last_prebuild_snapshot)")
+    if str(interpretation_status or "").strip().lower() != "completed":
+        reasons.append("интерпретация не завершена (требуется статус 'Завершено')")
+    if not bool(approved_for_training):
+        reasons.append("выключена галка «Использовать для обучения»")
+
+    if not test_meta:
+        reasons.append("нет участвующих опытов для интерпретации")
+    for one in (test_meta or []):
+        tid = _test_id(one)
+        if tid:
+            used_ids.append(tid)
+        if not bool(one.get("export_on", True)):
+            reasons.append(f"опыт {tid or '?'} отключён")
+        if bool(one.get("is_excluded", False)):
+            reasons.append(f"опыт {tid or '?'} исключён")
+        if bool(one.get("is_invalid", False)):
+            reasons.append(f"опыт {tid or '?'} некорректный")
+        if not bool(one.get("is_real_field_data", True)):
+            reasons.append(f"опыт {tid or '?'} не является реальными полевыми данными")
+        if bool(one.get("is_synthetic", False)):
+            reasons.append(f"опыт {tid or '?'} синтетический")
+        if bool(one.get("is_copied", False)):
+            reasons.append(f"опыт {tid or '?'} помечен как копия")
+        if bool(one.get("has_problem_points", False)):
+            reasons.append(f"опыт {tid or '?'} содержит проблемные точки")
+
+    dedup = sorted(set(str(x) for x in reasons if str(x).strip()))
+    return TrainingEligibilityResult(eligible=(len(dedup) == 0), reasons=dedup, used_test_ids=sorted(set(used_ids)))
+
+
+def filter_valid_training_examples(examples: list[dict[str, Any]]) -> dict[str, Any]:
+    valid: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    reason_counts: dict[str, int] = {}
+    for ex in (examples or []):
+        q = dict(ex.get("quality") or {})
+        reasons = list(q.get("rejection_reasons") or [])
+        completed = str(ex.get("interpretation_status") or "").lower() == "completed"
+        approved = bool(ex.get("approved_for_training", False))
+        data_valid = bool(q.get("is_valid_for_training", False))
+        is_active = bool(ex.get("is_active", True))
+        if completed and approved and data_valid and is_active and not reasons:
+            valid.append(ex)
+            continue
+        if not completed:
+            reasons.append("status_not_completed")
+        if not approved:
+            reasons.append("not_approved_for_training")
+        if not data_valid:
+            reasons.append("invalid_data_flags")
+        if not is_active:
+            reasons.append("inactive_example_version")
+        one_reasons = sorted(set(str(r) for r in reasons if str(r).strip()))
+        for r in one_reasons:
+            reason_counts[r] = int(reason_counts.get(r, 0) or 0) + 1
+        rejected.append({"example_id": ex.get("example_id"), "reasons": one_reasons})
+    return {
+        "valid_examples": valid,
+        "rejected_examples": rejected,
+        "reason_counts": reason_counts,
+        "total": len(examples or []),
+        "valid": len(valid),
+        "rejected": len(rejected),
+    }
+
+
 def update_profile_from_examples(*, base_profile: dict[str, Any], examples: list[dict[str, Any]]) -> ProfileUpdateResult:
     profile = dict(base_profile or {})
     if not examples:

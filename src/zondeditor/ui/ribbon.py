@@ -31,6 +31,8 @@ class RibbonView(ttk.Frame):
         self.layer_mode_var = tk.StringVar(value="")
         self.layer_ige_var = tk.StringVar(value="ИГЭ-1")
         self.prebuild_method_var = tk.StringVar(value="Базовый")
+        self.interpretation_status_var = tk.StringVar(value="Черновик")
+        self.approved_for_training_var = tk.BooleanVar(value=False)
         self._buttons: dict[str, ttk.Button] = {}
         self._layer_rows: list[dict] = []
         self._ige_controls: dict[str, ttk.Combobox] = {}
@@ -297,6 +299,20 @@ class RibbonView(ttk.Frame):
         ttk.Button(auto_row, text="Показать отличия", command=self.commands.get("show_training_diff")).pack(side="left", padx=(6, 0))
         ttk.Button(auto_row, text="Обновить профиль", command=self.commands.get("update_adaptive_profile")).pack(side="left", padx=(6, 0))
         ttk.Button(auto_row, text="Сбросить профиль", command=self.commands.get("reset_adaptive_profile")).pack(side="left", padx=(6, 0))
+
+        status_row = ttk.Frame(tab)
+        status_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(status_row, text="Статус интерпретации:").pack(side="left")
+        status_combo = ttk.Combobox(status_row, state="readonly", width=14, textvariable=self.interpretation_status_var, values=["Черновик", "В работе", "Завершено"])
+        status_combo.pack(side="left", padx=(4, 8))
+        status_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("interpretation_status_changed", lambda *_: None)(self.interpretation_status_var.get()))
+        approved_chk = ttk.Checkbutton(
+            status_row,
+            text="Использовать для обучения",
+            variable=self.approved_for_training_var,
+            command=lambda: self.commands.get("approved_for_training_changed", lambda *_: None)(bool(self.approved_for_training_var.get())),
+        )
+        approved_chk.pack(side="left")
 
     def _build_calc_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
