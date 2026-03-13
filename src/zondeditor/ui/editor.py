@@ -76,6 +76,10 @@ from src.zondeditor.domain.cpt_params_ru import (
     METHOD_SP446,
     calculate_ige_cpt_results,
 )
+from src.zondeditor.calculations.models import CalculationTabState
+from src.zondeditor.calculations.normative_profiles import load_normative_profiles
+from src.zondeditor.calculations.sample_builder import build_ige_samples
+from src.zondeditor.calculations.protocol_builder import build_protocol
 
 _rebuild_geo_from_template = build_k2_geo_from_template
 
@@ -252,6 +256,11 @@ class GeoCanvasEditor(tk.Tk):
         self._debug_tail_edit = bool(os.environ.get("ZONDEDITOR_DEBUG_TAIL_EDIT") == "1")
         self._debug_tail_rows = int(os.environ.get("ZONDEDITOR_DEBUG_TAIL_ROWS", "10") or 10)
         self.cpt_calc_settings = {"method": METHOD_SP446, "alluvial_sands": True, "groundwater_level": None}
+        self.calc_tab_state = CalculationTabState()
+        self.calc_rows = []
+        self.calc_samples = []
+        self.calc_protocol = None
+        self.normative_profiles = load_normative_profiles()
 
         try:
             self.graph_w = int(self.winfo_fpixels("4c"))
@@ -560,6 +569,7 @@ class GeoCanvasEditor(tk.Tk):
             "project_ops": copy.deepcopy(list(getattr(self, "project_ops", []) or [])),
             "ige_registry": copy.deepcopy(dict(getattr(self, "ige_registry", {}) or {})),
             "cpt_calc_settings": copy.deepcopy(dict(getattr(self, "cpt_calc_settings", {}) or {})),
+            "calc_tab_state": copy.deepcopy(getattr(self, "calc_tab_state", CalculationTabState()).__dict__),
         }
 
     def _restore(self, snap: dict):
@@ -642,6 +652,11 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.set_display_sort_mode(str(self.display_sort_mode))
                 self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
                 self.ribbon_view.set_layer_edit_mode(True)
+                self.ribbon_view.calc_cpt_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).cpt_method or "СП 446.1325800.2019, приложение Ж"))
+                self.ribbon_view.calc_transition_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).transition_method or "СП 22.13330.2016 (п. 5.3.17)"))
+                self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
+                self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
+                self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
         except Exception:
             pass
 
@@ -657,6 +672,10 @@ class GeoCanvasEditor(tk.Tk):
             self.cpt_calc_settings = copy.deepcopy(dict(snap.get("cpt_calc_settings", {}) or {})) or {"method": METHOD_SP446, "alluvial_sands": True, "groundwater_level": None}
         except Exception:
             self.cpt_calc_settings = {"method": METHOD_SP446, "alluvial_sands": True, "groundwater_level": None}
+        cts = dict(snap.get("calc_tab_state") or {})
+        _base_cts = CalculationTabState().__dict__
+        _safe_cts = {k: v for k, v in cts.items() if k in _base_cts}
+        self.calc_tab_state = CalculationTabState(**{**_base_cts, **_safe_cts})
         self._ensure_default_iges()
 
         for d in snap.get("tests", []):
@@ -1148,6 +1167,17 @@ class GeoCanvasEditor(tk.Tk):
         ent.setdefault("sand_is_alluvial", False)
         ent.setdefault("sandy_loam_kind", "")
         ent.setdefault("notes", "")
+        ent.setdefault("fill_subtype", "")
+        ent.setdefault("stable_ige_id", "")
+        ent.setdefault("display_label", "")
+        ent.setdefault("soil_family", "")
+        ent.setdefault("is_alluvial", False)
+        ent.setdefault("manual_notes", "")
+        ent.setdefault("calc_method", "")
+        ent.setdefault("calc_status", "")
+        ent.setdefault("calc_warning", "")
+        ent.setdefault("use_for_auto_calc", False)
+        ent.setdefault("requires_manual_confirmation", False)
         return ent
 
     def _auto_recalculate_cpt(self):
@@ -1357,6 +1387,142 @@ class GeoCanvasEditor(tk.Tk):
         self.ribbon_view.layer_soil_var.set(str(ent.get("soil_type") or ""))
         self.ribbon_view.layer_mode_var.set(str(ent.get("calc_mode") or ""))
 
+    def _on_calc_profile_changed(self, profile_id: str):
+        return
+
+    def _on_calc_mode_changed(self, mode: str):
+        return
+
+    def _on_calc_option_changed(self, option: str, value):
+        key = str(option or "").strip()
+        if not key:
+            return
+        if key == "cpt_method":
+            self.calc_tab_state.cpt_method = str(value or "СП 446.1325800.2019, приложение Ж")
+        elif key == "transition_method":
+            self.calc_tab_state.transition_method = str(value or "СП 22.13330.2016 (п. 5.3.17)")
+        elif key == "allow_normative_lt6":
+            self.calc_tab_state.allow_normative_lt6 = bool(value)
+        elif key == "use_legacy_sandy_loam_sp446":
+            self.calc_tab_state.use_legacy_sandy_loam_sp446 = bool(value)
+        elif key == "allow_fill_preliminary":
+            self.calc_tab_state.allow_fill_preliminary = bool(value)
+
+    def _rebuild_calc_samples(self):
+        samples = build_ige_samples(
+            tests=list(self.tests or []),
+            ige_registry=self.ige_registry,
+            profile_id="DEFAULT_CURRENT",
+            allow_fill_by_material=bool(self.calc_tab_state.allow_fill_preliminary),
+            use_legacy_sandy_loam_sp446=bool(self.calc_tab_state.use_legacy_sandy_loam_sp446),
+            allow_normative_lt6=bool(self.calc_tab_state.allow_normative_lt6),
+        )
+        self.calc_samples = samples
+        rows = []
+        for smp in samples:
+            rows.append({
+                "ige_id": smp.ige_id,
+                "soil_type": str((self.ige_registry.get(smp.ige_id, {}) or {}).get("soil_type", "")),
+                "fill_subtype": str((self.ige_registry.get(smp.ige_id, {}) or {}).get("fill_subtype", "")),
+                "method": smp.method,
+                "status": smp.status,
+                "warning": "; ".join(smp.warnings),
+                "intervals": [],
+                "n_points": smp.stats.n_points,
+                "qc_avg": smp.stats.qc_avg_mpa,
+                "qc_min": smp.stats.qc_min_mpa,
+                "qc_max": smp.stats.qc_max_mpa,
+                "V_qc": smp.stats.v_qc,
+                "avg_depth": smp.stats.avg_depth_m,
+                "fs_avg": smp.stats.fs_avg_kpa,
+                "E": smp.result.E_MPa,
+                "phi": smp.result.phi_deg,
+                "c": smp.result.c_kPa,
+            })
+        self.calc_rows = rows
+        try:
+            self.calc_tab_state.last_run_at = _dt.datetime.now().replace(microsecond=0).isoformat()
+            self.calc_tab_state.last_trace = [
+                {
+                    "ige_id": smp.ige_id,
+                    "method": smp.method,
+                    "status": smp.status,
+                    "used_soundings": list(smp.used_sounding_ids or []),
+                    "depth_interval": smp.depth_interval,
+                    "n_points": smp.stats.n_points,
+                    "excluded_count": smp.excluded_count,
+                    "warnings": list(smp.warnings or []),
+                    "errors": list(smp.errors or []),
+                    "missing_fields": list(smp.missing_fields or []),
+                }
+                for smp in list(samples or [])
+            ]
+        except Exception:
+            pass
+        self._sync_calc_table()
+
+    def _run_calc_pipeline(self):
+        self._rebuild_calc_samples()
+        self._set_status(f"Расчёт: подготовлено ИГЭ {len(self.calc_rows or [])}")
+
+    def _sync_calc_table(self):
+        rv = getattr(self, "ribbon_view", None)
+        tree = getattr(rv, "calc_tree", None) if rv is not None else None
+        if tree is None:
+            return
+        for iid in tree.get_children():
+            tree.delete(iid)
+        for row in list(self.calc_rows or []):
+            intervals = row.get("intervals") or []
+            interval_txt = ""
+            if intervals:
+                a = min(float(x[1]) for x in intervals)
+                b = max(float(x[2]) for x in intervals)
+                interval_txt = f"{a:.2f}-{b:.2f}"
+            tree.insert("", "end", values=(
+                row.get("ige_id", ""),
+                row.get("soil_type", ""),
+                row.get("fill_subtype", ""),
+                row.get("method", ""),
+                row.get("status", ""),
+                row.get("n_points", 0),
+                "" if row.get("qc_avg") is None else f"{float(row['qc_avg']):.3f}",
+                "" if row.get("V_qc") is None else f"{float(row['V_qc']):.3f}",
+                interval_txt,
+                "" if row.get("E") is None else row.get("E"),
+                "" if row.get("phi") is None else row.get("phi"),
+                "" if row.get("c") is None else row.get("c"),
+                row.get("warning", ""),
+            ))
+
+    def _show_calc_sample_dialog(self):
+        if not (self.calc_samples or {}):
+            self._rebuild_calc_samples()
+        lines = []
+        for smp in list(self.calc_samples or []):
+            lines.append(f"{smp.ige_id}: n={len(smp.points)}, qc={','.join(f'{p.qc_mpa:.2f}' for p in smp.points[:12])}")
+        messagebox.showinfo("Выборки ИГЭ", "\n".join(lines) if lines else "Нет выборок")
+
+    def _show_calc_excluded_dialog(self):
+        if not (self.calc_samples or {}):
+            self._rebuild_calc_samples()
+        lines = []
+        for smp in list(self.calc_samples or []):
+            if smp.excluded_count:
+                reasons = ", ".join(list(smp.exclusions or []))
+                lines.append(f"{smp.ige_id}: исключено {smp.excluded_count}" + (f" ({reasons})" if reasons else ""))
+        messagebox.showinfo("Исключённые точки", "\n".join(lines) if lines else "Нет исключённых точек")
+
+    def _make_calc_protocol(self):
+        if not (self.calc_rows or []):
+            self._rebuild_calc_samples()
+        self.calc_protocol = build_protocol(
+            project_name=str(getattr(self, "object_name", "") or ""),
+            profile_id="DEFAULT_CURRENT",
+            samples=list(self.calc_samples or []),
+        )
+        self._set_status("Протокол расчёта сформирован")
+
     def redraw_all(self):
         self._sync_layers_panel()
         self._redraw()
@@ -1429,6 +1595,8 @@ class GeoCanvasEditor(tk.Tk):
         ent.update({"soil_type": soil.value, "calc_mode": calc_mode_for_soil(soil).value, "style": dict(SOIL_STYLE.get(soil, {}))})
         if soil != SoilType.SAND:
             ent["sand_is_alluvial"] = False
+        if soil != SoilType.FILL:
+            ent["fill_subtype"] = ""
         for t in (self.tests or []):
             for lyr in self._ensure_test_layers(t):
                 if str(getattr(lyr, "ige_id", "") or "").strip() == ige:
@@ -1485,11 +1653,13 @@ class GeoCanvasEditor(tk.Tk):
                     "sand_is_alluvial": bool(ent.get("sand_is_alluvial", False)),
                     "sandy_loam_kind": str(ent.get("sandy_loam_kind") or ""),
                     "consistency": str(ent.get("consistency") or ""),
+                    "fill_subtype": str(ent.get("fill_subtype") or ""),
                     "IL": ent.get("IL", ""),
                     "notes": str(ent.get("notes") or ""),
                 }
             )
         self.ribbon_view.set_layers(rows, [x.value for x in SoilType], can_add=(len(keys) < MAX_LAYERS_PER_TEST), can_delete=(len(keys) > MIN_LAYERS_PER_TEST))
+        self._sync_calc_table()
         if rows:
             self.ribbon_view.layer_ige_var.set(str(rows[0].get("ige_id") or "ИГЭ-1"))
             self.ribbon_view.layer_soil_var.set(str(rows[0].get("soil") or ""))
@@ -1737,6 +1907,14 @@ class GeoCanvasEditor(tk.Tk):
                 "apply_calc": lambda: self._redraw(),
                 "k2k4_30": lambda: messagebox.showinfo("К2→К4", "Режим 30 МПа будет добавлен в следующем шаге."),
                 "k2k4_50": lambda: messagebox.showinfo("К2→К4", "Режим 50 МПа будет добавлен в следующем шаге."),
+                "calc_profile_changed": self._on_calc_profile_changed,
+                "calc_mode_changed": self._on_calc_mode_changed,
+                "calc_option_changed": self._on_calc_option_changed,
+                "calc_run": self._run_calc_pipeline,
+                "calc_rebuild_samples": self._rebuild_calc_samples,
+                "calc_show_sample": self._show_calc_sample_dialog,
+                "calc_show_excluded": self._show_calc_excluded_dialog,
+                "calc_make_protocol": self._make_calc_protocol,
             }
             self.ribbon_view = RibbonView(self, commands=commands, icon_font=_pick_icon_font(11))
             self.ribbon_view.pack(side="top", fill="x", before=ribbon)
@@ -1748,6 +1926,14 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view.set_compact_1m(bool(getattr(self, "compact_1m", False)))
             self.ribbon_view.set_display_sort_mode(str(getattr(self, "display_sort_mode", "date")))
             self.ribbon_view.set_layer_edit_mode(True)
+            try:
+                self.ribbon_view.calc_cpt_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).cpt_method or "СП 446.1325800.2019, приложение Ж"))
+                self.ribbon_view.calc_transition_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).transition_method or "СП 22.13330.2016 (п. 5.3.17)"))
+                self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
+                self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
+                self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
+            except Exception:
+                pass
             ribbon.pack_forget()
         # ========= Main canvas (fixed header) =========
         mid = ttk.Frame(self)
@@ -8621,10 +8807,12 @@ class GeoCanvasEditor(tk.Tk):
             state["common_params"] = self._common_params_from_project_settings(settings)
         if "cpt_calc_settings" not in state:
             state["cpt_calc_settings"] = dict((getattr(settings, "extras", {}) or {}).get("cpt_calc_settings") or {})
+        if "calc_tab_state" not in state:
+            state["calc_tab_state"] = dict((getattr(settings, "extras", {}) or {}).get("calc_tab_state") or {})
         return state
 
     def _project_settings_from_ui(self) -> ProjectSettings:
-        extras = {"cpt_calc_settings": dict(getattr(self, "cpt_calc_settings", {}) or {})}
+        extras = {"cpt_calc_settings": dict(getattr(self, "cpt_calc_settings", {}) or {}), "calc_tab_state": dict(getattr(self, "calc_tab_state", CalculationTabState()).__dict__)}
         cp = self._current_common_params()
         scale_val = str(cp.get("controller_scale_div", "250") or "250")
         fcone_val = str(cp.get("cone_kn", "30") or "30")
@@ -8887,6 +9075,10 @@ class GeoCanvasEditor(tk.Tk):
         self._rebuild_marks_index()
         status_info = self._recompute_statuses_after_data_load(preview_mode=False)
         self.cpt_calc_settings = dict((project.settings.extras or {}).get("cpt_calc_settings") or self.cpt_calc_settings or {"method": METHOD_SP446, "alluvial_sands": True, "groundwater_level": None})
+        _base_cts = CalculationTabState().__dict__
+        _raw_cts = dict((project.settings.extras or {}).get("calc_tab_state") or {})
+        _safe_cts = {k: v for k, v in _raw_cts.items() if k in _base_cts}
+        self.calc_tab_state = CalculationTabState(**{**_base_cts, **_safe_cts})
         self._dirty = False
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)

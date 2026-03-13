@@ -1,0 +1,13 @@
+{
+  "project_id": "test_calc_6_soundings_v1",
+  "project_name": "Тест расчёта 6 зондировок",
+  "soundings": 6,
+  "iges": [
+    {"label": "ИГЭ-1", "soil_code": "sand", "subtype": "средней крупности", "is_alluvial": true},
+    {"label": "ИГЭ-2", "soil_code": "sandy_loam", "subtype": "пластичная"},
+    {"label": "ИГЭ-3", "soil_code": "loam", "subtype": "тугопластичная"},
+    {"label": "ИГЭ-4", "soil_code": "clay", "subtype": "мягкопластичная"},
+    {"label": "ИГЭ-5", "soil_code": "fill", "subtype": "песчаный"},
+    {"label": "ИГЭ-6", "soil_code": "peat"}
+  ]
+}

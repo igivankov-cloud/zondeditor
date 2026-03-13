@@ -1,0 +1,42 @@
+{
+  "profiles": [
+    {
+      "profile_id": "DEFAULT_CURRENT",
+      "profile_name": "Актуальная база РФ",
+      "calc_mode": "AUTO",
+      "comments": "Основной профиль по действующей нормативной базе РФ",
+      "enabled_methods": ["SP446_CPT_SAND", "SP446_CPT_CLAY", "LAB_ONLY", "MANUAL"],
+      "applicability_rules_profile": "DEFAULT_CURRENT",
+      "documents": [
+        {"doc_id": "SP22_2016", "title": "СП 22.13330.2016", "edition": "2016", "amendments": "с изменениями", "revision_note": "актуализированная редакция"},
+        {"doc_id": "SP47_2016", "title": "СП 47.13330.2016", "edition": "2016", "amendments": "с изменениями", "revision_note": "актуализированная редакция"},
+        {"doc_id": "SP446_2019", "title": "СП 446.1325800.2019", "edition": "2019", "amendments": "с изменением", "revision_note": "актуализированная редакция"},
+        {"doc_id": "GOST25100_2020", "title": "ГОСТ 25100-2020", "edition": "2020", "amendments": "", "revision_note": "действующий"},
+        {"doc_id": "GOST20522_2012", "title": "ГОСТ 20522-2012", "edition": "2012", "amendments": "", "revision_note": "действующий"},
+        {"doc_id": "GOST19912_2012", "title": "ГОСТ 19912-2012", "edition": "2012", "amendments": "", "revision_note": "действующий"}
+      ]
+    },
+    {
+      "profile_id": "GEOEXPLORER_SP446",
+      "profile_name": "Совместимость GeoExplorer (СП 446)",
+      "calc_mode": "COMPAT",
+      "comments": "Профиль совместимости/сравнения",
+      "enabled_methods": ["SP446_CPT_SAND", "SP446_CPT_CLAY", "LAB_ONLY", "MANUAL"],
+      "applicability_rules_profile": "DEFAULT_CURRENT",
+      "documents": [
+        {"doc_id": "SP446_2019", "title": "СП 446.1325800.2019", "edition": "2019", "amendments": "с изменением", "revision_note": "совместимость с историческим workflow"}
+      ]
+    },
+    {
+      "profile_id": "LEGACY_SP11_105",
+      "profile_name": "Legacy СП 11-105",
+      "calc_mode": "LEGACY",
+      "comments": "Legacy-профиль для сравнения и тестов",
+      "enabled_methods": ["LAB_ONLY", "MANUAL", "SP22_TABLE_A"],
+      "applicability_rules_profile": "DEFAULT_CURRENT",
+      "documents": [
+        {"doc_id": "SP11_105_97", "title": "СП 11-105-97", "edition": "1997", "amendments": "legacy", "revision_note": "историческая методика"}
+      ]
+    }
+  ]
+}

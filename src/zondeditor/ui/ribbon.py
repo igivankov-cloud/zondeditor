@@ -39,6 +39,11 @@ class RibbonView(ttk.Frame):
         self._ige_soil_values: list[str] = []
         self._add_ige_btn = None
         self._ige_order: list[str] = []
+        self.calc_cpt_method_var = tk.StringVar(value="СП 446.1325800.2019, приложение Ж")
+        self.calc_transition_method_var = tk.StringVar(value="СП 22.13330.2016 (п. 5.3.17)")
+        self.calc_allow_normative_lt6_var = tk.BooleanVar(value=False)
+        self.calc_legacy_sandy_loam_var = tk.BooleanVar(value=False)
+        self.calc_fill_preliminary_var = tk.BooleanVar(value=False)
 
         try:
             style = ttk.Style(self)
@@ -60,6 +65,7 @@ class RibbonView(ttk.Frame):
         self._build_view_tab()
         self._build_layers_tab()
         self._build_calc_tab()
+        self._build_protocol_tab()
         self._build_processing_tab()
 
     def _add_qat_btn(self, parent, key: str, text: str, tip: str):
@@ -267,10 +273,62 @@ class RibbonView(ttk.Frame):
     def _build_calc_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Расчёт")
-        info = ttk.LabelFrame(tab, text="Подготовка расчётных параметров", padding=6)
-        info.pack(fill="x", expand=False)
-        ttk.Label(info, text="Эта вкладка предназначена для статистики и расчёта (qc_avg, n, V, φ, c, E).", anchor="w").pack(fill="x")
-        ttk.Label(info, text="На текущем шаге поля вынесены из вкладки ИГЭ и будут развиваться здесь.", anchor="w").pack(fill="x", pady=(2, 0))
+
+        params = ttk.LabelFrame(tab, text="Параметры расчёта", padding=6)
+        params.pack(fill="x", expand=False)
+
+        ttk.Label(params, text="Расчёт по результатам зондирования:").grid(row=0, column=0, sticky="w")
+        self.calc_cpt_method_combo = ttk.Combobox(
+            params,
+            state="readonly",
+            textvariable=self.calc_cpt_method_var,
+            values=[
+                "СП 446.1325800.2019, приложение Ж",
+                "СНиП 2.02.01-83* (п. 12.4) — для опор мостов",
+            ],
+            width=56,
+        )
+        self.calc_cpt_method_combo.grid(row=0, column=1, sticky="w", padx=(6, 0))
+        self.calc_cpt_method_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("calc_option_changed", lambda *_: None)("cpt_method", self.calc_cpt_method_var.get()))
+
+        ttk.Label(params, text="Переход к нормативным / расчётным значениям:").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self.calc_transition_method_combo = ttk.Combobox(
+            params,
+            state="readonly",
+            textvariable=self.calc_transition_method_var,
+            values=["СП 22.13330.2016 (п. 5.3.17)"],
+            width=56,
+        )
+        self.calc_transition_method_combo.grid(row=1, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
+        self.calc_transition_method_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("calc_option_changed", lambda *_: None)("transition_method", self.calc_transition_method_var.get()))
+
+        ttk.Checkbutton(params, text="Рассчитывать нормативные значения при N < 6", variable=self.calc_allow_normative_lt6_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_normative_lt6", bool(self.calc_allow_normative_lt6_var.get()))).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(params, text="Рассчитывать супесь по старой редакции СП 446", variable=self.calc_legacy_sandy_loam_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("use_legacy_sandy_loam_sp446", bool(self.calc_legacy_sandy_loam_var.get()))).grid(row=3, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        ttk.Checkbutton(params, text="Разрешить предварительный расчёт насыпного по материалу", variable=self.calc_fill_preliminary_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_fill_preliminary", bool(self.calc_fill_preliminary_var.get()))).grid(row=4, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
+        btns = ttk.Frame(tab)
+        btns.pack(fill="x", pady=(6, 4))
+        ttk.Button(btns, text="Рассчитать", command=self.commands.get("calc_run")).pack(side="left", padx=(0, 4))
+        ttk.Button(btns, text="Пересобрать выборки", command=self.commands.get("calc_rebuild_samples")).pack(side="left", padx=4)
+        ttk.Button(btns, text="Показать выборку ИГЭ", command=self.commands.get("calc_show_sample")).pack(side="left", padx=4)
+        ttk.Button(btns, text="Показать исключённые точки", command=self.commands.get("calc_show_excluded")).pack(side="left", padx=4)
+
+        cols = ("ige", "soil", "subtype", "method", "status", "n", "qc_avg", "V", "interval", "E", "phi", "c", "warning")
+        self.calc_tree = ttk.Treeview(tab, columns=cols, show="headings", height=8)
+        heads = {
+            "ige": "ИГЭ", "soil": "тип", "subtype": "subtype", "method": "метод", "status": "статус", "n": "n",
+            "qc_avg": "qc_avg", "V": "V", "interval": "интервал", "E": "E", "phi": "φ", "c": "c", "warning": "предупреждение"
+        }
+        for c in cols:
+            self.calc_tree.heading(c, text=heads[c])
+            self.calc_tree.column(c, width=90, anchor="center")
+        self.calc_tree.column("warning", width=240, anchor="w")
+        self.calc_tree.pack(fill="both", expand=True)
+
+    def _build_protocol_tab(self):
+        tab = ttk.Frame(self.tabs, padding=4)
+        self.tabs.add(tab, text="Протокол")
+        ttk.Label(tab, text="Раздел протокола будет реализован на следующем этапе.", anchor="w").pack(fill="x")
 
     def _sync_ige_canvas(self):
         cnv = getattr(self, "_ige_canvas", None)
@@ -404,6 +462,14 @@ class RibbonView(ttk.Frame):
             cb_kind.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=sand_kind: self._change_ige_field(ig, "sand_kind", vv.get()))
             cb_sat.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=sat: self._change_ige_field(ig, "sand_water_saturation", vv.get()))
             cb_den.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=dens: self._change_ige_field(ig, "density_state", vv.get()))
+            return
+
+        if "насып" in soil:
+            fill_sub = tk.StringVar(value=str(row.get("fill_subtype", "") or ""))
+            cb_fill = ttk.Combobox(parent, state="readonly", width=18, values=["песчаный", "глинистый", "более 10% строительного материала"], textvariable=fill_sub)
+            cb_fill.grid(row=0, column=0, sticky="ew")
+            self._set_combo_placeholder(cb_fill, fill_sub, "песчаный")
+            cb_fill.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=fill_sub: self._change_ige_field(ig, "fill_subtype", vv.get()))
             return
 
         if "супес" in soil:
