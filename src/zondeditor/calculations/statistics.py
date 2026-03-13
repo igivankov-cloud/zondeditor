@@ -3,11 +3,13 @@ from __future__ import annotations
 from statistics import mean, pstdev
 
 from .models import IGECalcPoint, IGECalcStats
+from .rf_utils import calc_rf_pct
 
 
 def calc_stats(points: list[IGECalcPoint]) -> IGECalcStats:
     qc = [float(p.qc_mpa) for p in points if float(p.qc_mpa) > 0]
     fs = [float(p.fs_kpa) for p in points if p.fs_kpa is not None]
+    rf = [float(v) for v in ((p.rf_pct if p.rf_pct is not None else calc_rf_pct(p.fs_kpa, p.qc_mpa)) for p in points) if v is not None]
     depths = [float(p.depth_m) for p in points]
     if not qc:
         return IGECalcStats()
@@ -19,6 +21,9 @@ def calc_stats(points: list[IGECalcPoint]) -> IGECalcStats:
         qc_min_mpa=min(qc),
         qc_max_mpa=max(qc),
         fs_avg_kpa=(float(mean(fs)) if fs else None),
+        rf_avg_pct=(float(mean(rf)) if rf else None),
+        rf_min_pct=(min(rf) if rf else None),
+        rf_max_pct=(max(rf) if rf else None),
         v_qc=(sd / avg if avg > 0 else 0.0),
         avg_depth_m=(float(mean(depths)) if depths else None),
     )

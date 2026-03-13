@@ -7,6 +7,7 @@ from src.zondeditor.domain.cpt_ru_sp446 import parse_depth_float
 from .applicability import resolve_applicability
 from .calc_methods import load_method_catalog, run_method
 from .models import IGECalcPoint, IGECalcResult, IGECalcSample, IGECalcStats, IGEModel
+from .rf_utils import calc_rf_pct
 from .soil_catalog import load_soil_catalog, soil_code_by_name
 from .statistics import calc_stats
 from .validation import validate_inputs
@@ -115,7 +116,7 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
                         excluded_points.append({"sounding_id": f"test_{tid}", "depth_m": dep, "reason": "Глубина менее 1 м", "segment_id": seg})
                         continue
                     sid = f"test_{tid}"
-                    points.append(IGECalcPoint(sounding_id=sid, depth_m=dep, qc_mpa=qc_mpa, fs_kpa=fs_kpa, segment_id=seg))
+                    points.append(IGECalcPoint(sounding_id=sid, depth_m=dep, qc_mpa=qc_mpa, fs_kpa=fs_kpa, rf_pct=calc_rf_pct(fs_kpa, qc_mpa), segment_id=seg))
                     if sid not in used_sounding_ids:
                         used_sounding_ids.append(sid)
 

@@ -59,3 +59,5 @@ GUI_BLUE_P = GUI_BLUE  # preview mode color
 # ---- graph overlay colors (separate from table highlight palette) ----
 GRAPH_QC_GREEN = "#16a34a"
 GRAPH_FS_BLUE = "#2563eb"
+
+GRAPH_RF_ORANGE = "#f59e0b"

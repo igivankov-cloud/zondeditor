@@ -134,3 +134,5 @@ def test_debug_protocol_text_contains_n_and_n_points_labels():
     assert "Число точек выборки" in text
     assert "Правило N < 6 сработало" in text
     assert "Расчёт заблокирован по N < 6" in text
+    assert "Rf_avg" in text
+    assert "Комментарий по Rf" in text

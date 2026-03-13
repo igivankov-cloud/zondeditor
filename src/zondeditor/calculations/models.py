@@ -29,6 +29,7 @@ class IGECalcPoint:
     depth_m: float
     qc_mpa: float
     fs_kpa: float | None
+    rf_pct: float | None = None
     segment_id: str | None = None
 
 
@@ -39,6 +40,9 @@ class IGECalcStats:
     qc_min_mpa: float | None = None
     qc_max_mpa: float | None = None
     fs_avg_kpa: float | None = None
+    rf_avg_pct: float | None = None
+    rf_min_pct: float | None = None
+    rf_max_pct: float | None = None
     v_qc: float | None = None
     avg_depth_m: float | None = None
 

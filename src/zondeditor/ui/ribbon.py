@@ -21,6 +21,7 @@ class RibbonView(ttk.Frame):
         self.cone_area_cm2_var = tk.StringVar(value="10")
         self.sleeve_area_cm2_var = tk.StringVar(value="350")
         self.show_graphs_var = tk.BooleanVar(value=False)
+        self.show_rf_var = tk.BooleanVar(value=False)
         self.show_geology_var = tk.BooleanVar(value=True)
         self.show_inclinometer_var = tk.BooleanVar(value=True)
         self.compact_1m_var = tk.BooleanVar(value=False)
@@ -213,6 +214,15 @@ class RibbonView(ttk.Frame):
         graphs_chk.pack(side="top", anchor="w", pady=(2, 0))
         ToolTip(graphs_chk, "Показывать графическую часть зондирования")
 
+        rf_chk = ttk.Checkbutton(
+            opts_col,
+            text="Показать Rf",
+            variable=self.show_rf_var,
+            command=lambda: self.commands.get("toggle_rf_graph", lambda *_: None)(bool(self.show_rf_var.get())),
+        )
+        rf_chk.pack(side="top", anchor="w", pady=(2, 0))
+        ToolTip(rf_chk, "Показывать кривую фрикционного отношения Rf=(fs/qc)*100%")
+
         geology_chk = ttk.Checkbutton(
             opts_col,
             text="Геологическая колонка",
@@ -270,6 +280,14 @@ class RibbonView(ttk.Frame):
         self._ige_canvas.bind("<MouseWheel>", self._on_ige_wheel_x)
         self._ige_canvas.bind("<Button-4>", lambda _e: self._on_ige_wheel_x_linux(-1))
         self._ige_canvas.bind("<Button-5>", lambda _e: self._on_ige_wheel_x_linux(1))
+
+        auto_row = ttk.Frame(tab)
+        auto_row.pack(fill="x", pady=(6, 0))
+        ttk.Button(
+            auto_row,
+            text="Сформировать по данным qc / fs / Rf (предварительно)",
+            command=self.commands.get("ige_prebuild_from_cpt"),
+        ).pack(side="left")
 
     def _build_calc_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
@@ -636,6 +654,9 @@ class RibbonView(ttk.Frame):
 
     def set_show_graphs(self, value: bool):
         self.show_graphs_var.set(bool(value))
+
+    def set_show_rf(self, value: bool):
+        self.show_rf_var.set(bool(value))
 
     def set_compact_1m(self, value: bool):
         self.compact_1m_var.set(bool(value))

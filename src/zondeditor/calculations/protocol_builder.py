@@ -64,6 +64,9 @@ def build_protocol(*, project_name: str, profile_id: str, samples: list[IGECalcS
                 "qc_min_mpa": s.stats.qc_min_mpa,
                 "qc_max_mpa": s.stats.qc_max_mpa,
                 "fs_avg_kpa": s.stats.fs_avg_kpa,
+                "rf_avg_pct": s.stats.rf_avg_pct,
+                "rf_min_pct": s.stats.rf_min_pct,
+                "rf_max_pct": s.stats.rf_max_pct,
                 "v_qc": s.stats.v_qc,
                 "avg_depth_m": s.stats.avg_depth_m,
             },
@@ -189,6 +192,17 @@ def build_debug_protocol_text(*, project_name: str, profile_id: str, samples: li
         lines.append(f'- qc_max: {s.stats.qc_max_mpa}')
         lines.append(f'- V: {s.stats.v_qc}')
         lines.append(f'- fs_avg: {s.stats.fs_avg_kpa}')
+        lines.append(f'- Rf_avg: {s.stats.rf_avg_pct}')
+        lines.append(f'- Rf_min: {s.stats.rf_min_pct}')
+        lines.append(f'- Rf_max: {s.stats.rf_max_pct}')
+        if s.stats.rf_avg_pct is None:
+            lines.append('- Комментарий по Rf: недостаточно данных для оценки')
+        elif float(s.stats.rf_avg_pct) < 1.0:
+            lines.append('- Комментарий по Rf: низкое фрикционное отношение, вероятна более песчаная реакция')
+        elif float(s.stats.rf_avg_pct) < 2.5:
+            lines.append('- Комментарий по Rf: переходное фрикционное отношение, требуется ручная проверка')
+        else:
+            lines.append('- Комментарий по Rf: повышенное фрикционное отношение, вероятна более глинистая реакция')
 
         lines.append('Г. Метод')
         lines.append(f'- Внутренний ключ: {s.method}')
