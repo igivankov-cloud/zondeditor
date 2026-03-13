@@ -274,6 +274,7 @@ class GeoCanvasEditor(tk.Tk):
         self.calc_rows = []
         self.calc_samples = []
         self.calc_protocol = None
+        self._last_excluded_tests: list[dict[str, object]] = []
         self.normative_profiles = load_normative_profiles()
         self.prebuild_method = "Базовый"
         self.interpretation_region_options = [
@@ -2413,8 +2414,10 @@ class GeoCanvasEditor(tk.Tk):
                 }
             )
         self.ribbon_view.set_layers(rows, [x.value for x in SoilType], can_add=(len(keys) < MAX_LAYERS_PER_TEST), can_delete=(len(keys) > MIN_LAYERS_PER_TEST))
-        self._last_excluded_tests = list(excluded_tests or [])
-        self._sync_calc_table()
+        try:
+            self._sync_calc_table()
+        except Exception:
+            pass
         if rows:
             self.ribbon_view.layer_ige_var.set(str(rows[0].get("ige_id") or "ИГЭ-1"))
             self.ribbon_view.layer_soil_var.set(str(rows[0].get("soil") or ""))
