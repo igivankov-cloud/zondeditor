@@ -138,6 +138,28 @@ def test_debug_protocol_text_contains_n_and_n_points_labels():
     assert "Комментарий по Rf" in text
 
 
+def test_debug_protocol_contains_training_block():
+    samples = _samples_from_fixture("test_1_basic_stable.json")
+    text = build_debug_protocol_text(
+        project_name="Тест training",
+        profile_id="DEFAULT_CURRENT",
+        samples=samples,
+        calc_options={
+            "training_info": {
+                "method": "Пользовательский",
+                "used_trained_profile": True,
+                "profile_state": "medium",
+                "examples_count": 3,
+                "profile_source": "обученный",
+                "saved_training_example": True,
+            }
+        },
+    )
+    assert "Блок адаптации/обучения" in text
+    assert "Метод интерпретации: Пользовательский" in text
+    assert "Примеров у профиля: 3" in text
+
+
 def test_excluded_disabled_or_invalid_soundings_not_used_in_samples():
     f = _load_fixture("test_1_basic_stable.json")
     snap = f["snapshot"]

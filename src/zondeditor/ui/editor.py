@@ -81,7 +81,14 @@ from src.zondeditor.calculations.normative_profiles import load_normative_profil
 from src.zondeditor.calculations.sample_builder import build_ige_samples
 from src.zondeditor.calculations.protocol_builder import build_protocol, build_debug_protocol_text
 from src.zondeditor.calculations.rf_utils import calc_rf_pct, robust_rf_scale_max
-from src.zondeditor.calculations.ige_prebuild import build_preliminary_layers
+from src.zondeditor.calculations.ige_prebuild import build_preliminary_layers, build_preliminary_layers_with_profile
+from src.zondeditor.calculations.ige_training import (
+    diff_layer_models,
+    layer_brief,
+    make_diff_text,
+    now_iso,
+    update_profile_from_examples,
+)
 
 _rebuild_geo_from_template = build_k2_geo_from_template
 
@@ -265,6 +272,25 @@ class GeoCanvasEditor(tk.Tk):
         self.calc_samples = []
         self.calc_protocol = None
         self.normative_profiles = load_normative_profiles()
+        self.prebuild_method = "Базовый"
+        self.prebuild_custom_profile = {
+            "min_layer_thickness_m": 0.8,
+            "smoothing_window": 5,
+            "boundary_q_jump": 2.0,
+            "boundary_fs_jump": 40.0,
+            "boundary_rf_jump": 0.8,
+            "merge_same_soil": True,
+            "rf_sand_max": 1.0,
+            "rf_sandy_loam_max": 2.5,
+            "max_layers": 6,
+            "training_examples_count": 0,
+            "last_updated_at": "",
+            "auto_adjustments": [],
+            "training_confidence": "low",
+        }
+        self.training_examples: list[dict] = []
+        self._last_prebuild_snapshot: dict[str, object] | None = None
+        self._last_profile_update_summary: dict[str, object] = {}
 
         try:
             self.graph_w = int(self.winfo_fpixels("4c"))
@@ -576,6 +602,10 @@ class GeoCanvasEditor(tk.Tk):
             "ige_registry": copy.deepcopy(dict(getattr(self, "ige_registry", {}) or {})),
             "cpt_calc_settings": copy.deepcopy(dict(getattr(self, "cpt_calc_settings", {}) or {})),
             "calc_tab_state": copy.deepcopy(getattr(self, "calc_tab_state", CalculationTabState()).__dict__),
+            "prebuild_method": str(getattr(self, "prebuild_method", "Базовый") or "Базовый"),
+            "prebuild_custom_profile": copy.deepcopy(dict(getattr(self, "prebuild_custom_profile", {}) or {})),
+            "training_examples": copy.deepcopy(list(getattr(self, "training_examples", []) or [])),
+            "last_profile_update_summary": copy.deepcopy(dict(getattr(self, "_last_profile_update_summary", {}) or {})),
         }
 
     def _restore(self, snap: dict):
@@ -668,6 +698,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
                 self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
                 self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
+                self.ribbon_view.prebuild_method_var.set(str(getattr(self, "prebuild_method", "Базовый") or "Базовый"))
         except Exception:
             pass
 
@@ -687,6 +718,11 @@ class GeoCanvasEditor(tk.Tk):
         _base_cts = CalculationTabState().__dict__
         _safe_cts = {k: v for k, v in cts.items() if k in _base_cts}
         self.calc_tab_state = CalculationTabState(**{**_base_cts, **_safe_cts})
+        self.prebuild_method = str(snap.get("prebuild_method") or getattr(self, "prebuild_method", "Базовый") or "Базовый")
+        self.prebuild_custom_profile = dict(getattr(self, "prebuild_custom_profile", {}) or {})
+        self.prebuild_custom_profile.update(dict(snap.get("prebuild_custom_profile") or {}))
+        self.training_examples = list(snap.get("training_examples") or [])
+        self._last_profile_update_summary = dict(snap.get("last_profile_update_summary") or {})
         self._ensure_default_iges()
 
         for d in snap.get("tests", []):
@@ -1586,6 +1622,14 @@ class GeoCanvasEditor(tk.Tk):
                 "use_legacy_sandy_loam_sp446": bool(getattr(self.calc_tab_state, "use_legacy_sandy_loam_sp446", False)),
                 "allow_fill_preliminary": bool(getattr(self.calc_tab_state, "allow_fill_preliminary", False)),
                 "excluded_soundings_global": list(getattr(self, "_last_excluded_tests", []) or []),
+                "training_info": {
+                    "method": str(getattr(self, "prebuild_method", "Базовый") or "Базовый"),
+                    "used_trained_profile": str(getattr(self, "prebuild_method", "")) == "Пользовательский",
+                    "profile_state": str((getattr(self, "prebuild_custom_profile", {}) or {}).get("training_confidence", "low")),
+                    "examples_count": int(len(getattr(self, "training_examples", []) or [])),
+                    "profile_source": "обученный" if (getattr(self, "prebuild_custom_profile", {}) or {}).get("auto_adjustments") else "базовый",
+                    "saved_training_example": bool(getattr(self, "training_examples", [])),
+                },
             },
         )
         try:
@@ -1674,6 +1718,7 @@ class GeoCanvasEditor(tk.Tk):
         self.ige_registry = {}
         changed = False
         ige_counter = 0
+        auto_snapshot_tests: list[dict[str, object]] = []
 
         for t in list(enabled_tests or []):
             qarr = list(getattr(t, "qc", []) or [])
@@ -1696,8 +1741,22 @@ class GeoCanvasEditor(tk.Tk):
                 rf = calc_rf_pct(float(fs_kpa), float(qc_mpa))
                 series.append((float(dv), float(qc_mpa), float(fs_kpa), rf))
 
-            auto_layers = build_preliminary_layers(series)
+            profile = None
+            method_used = str(getattr(self, "prebuild_method", "Базовый") or "Базовый")
+            if method_used == "Пользовательский":
+                profile = dict(getattr(self, "prebuild_custom_profile", {}) or {})
+            elif method_used == "Robertson basic":
+                profile = {
+                    "smoothing_window": 7,
+                    "boundary_q_jump": 1.8,
+                    "boundary_fs_jump": 35.0,
+                    "boundary_rf_jump": 0.7,
+                    "max_layers": 7,
+                    "min_layer_thickness_m": 0.7,
+                }
+            auto_layers = build_preliminary_layers(series) if profile is None else build_preliminary_layers_with_profile(series, profile=profile)
             layers: list[Layer] = []
+            auto_layers_payload: list[dict[str, object]] = []
             for cand in auto_layers:
                 soil = SoilType.SANDY_LOAM
                 if cand.soil_kind == SoilType.SAND.value:
@@ -1726,13 +1785,37 @@ class GeoCanvasEditor(tk.Tk):
                         "style": dict(SOIL_STYLE.get(soil, {})),
                         "label": ige_id,
                         "ordinal": self._ige_id_to_num(ige_id),
-                        "notes": "Предварительная интерпретация по данным qc/fs/Rf; требуется ручная проверка",
+                        "notes": f"Предварительная интерпретация ({method_used}) по данным qc/fs/Rf; требуется ручная проверка",
+                    }
+                )
+                auto_layers_payload.append(
+                    {
+                        "top_m": float(cand.top_m),
+                        "bot_m": float(cand.bot_m),
+                        "soil_type": str(soil.value),
+                        "ige_id": ige_id,
+                        "method_label": method_used,
+                        "behavior_type": "preliminary",
+                        "confidence": 0.5,
+                        "comments": "Автосегментация, требуется ручная проверка",
                     }
                 )
             if layers:
                 t.layers = normalize_layers(layers)
                 self._renumber_layers(t)
                 changed = True
+                auto_snapshot_tests.append(
+                    {
+                        "test_id": str(getattr(t, "orig_id", None) or f"test_{int(getattr(t, 'tid', 0))}"),
+                        "tid": int(getattr(t, "tid", 0) or 0),
+                        "layers": auto_layers_payload,
+                        "series": [
+                            {"depth": float(x[0]), "qc": float(x[1]), "fs": float(x[2]), "rf": (None if x[3] is None else float(x[3]))}
+                            for x in series
+                        ],
+                        "has_problem_points": bool(getattr(t, "invalid", False)),
+                    }
+                )
 
         if not changed:
             messagebox.showinfo("ИГЭ", "Недостаточно данных для предварительного формирования ИГЭ.")
@@ -1748,6 +1831,111 @@ class GeoCanvasEditor(tk.Tk):
         self.schedule_graph_redraw()
         suffix = "" if not excluded_tests else f" Исключено опытов: {len(excluded_tests)}."
         self._set_status("Выполнено предварительное формирование ИГЭ по данным qc/fs/Rf. Проверьте границы и типы вручную." + suffix)
+        self._last_prebuild_snapshot = {
+            "created_at": now_iso(),
+            "method": str(getattr(self, "prebuild_method", "Базовый") or "Базовый"),
+            "custom_profile": copy.deepcopy(dict(getattr(self, "prebuild_custom_profile", {}) or {})),
+            "tests": auto_snapshot_tests,
+            "excluded_tests": [str(getattr(x, "orig_id", None) or f"test_{int(getattr(x, 'tid', 0))}") for x in (excluded_tests or [])],
+        }
+
+    def _on_prebuild_method_changed(self, value: str):
+        self.prebuild_method = str(value or "Базовый")
+
+    def _manual_layers_snapshot(self) -> dict[str, list[dict[str, object]]]:
+        out: dict[str, list[dict[str, object]]] = {}
+        for t in (self.tests or []):
+            key = str(getattr(t, "orig_id", None) or f"test_{int(getattr(t, 'tid', 0))}")
+            out[key] = [layer_brief(layer_to_dict(x)) for x in (getattr(t, "layers", []) or [])]
+        return out
+
+    def _build_training_diff(self) -> tuple[dict[str, object] | None, str]:
+        snap = dict(getattr(self, "_last_prebuild_snapshot", {}) or {})
+        if not snap:
+            return None, "Нет данных автоформирования. Сначала выполните предварительное формирование ИГЭ."
+        by_test_auto = {str(x.get("test_id")): list(x.get("layers") or []) for x in (snap.get("tests") or [])}
+        by_test_manual = self._manual_layers_snapshot()
+        diff_tests: list[dict[str, object]] = []
+        lines: list[str] = []
+        for test_id, auto_layers in by_test_auto.items():
+            manual_layers = list(by_test_manual.get(test_id) or [])
+            d = diff_layer_models([layer_brief(x) for x in auto_layers], manual_layers)
+            diff_tests.append({"test_id": test_id, "diff": d})
+            lines.append(f"[{test_id}]\n{make_diff_text(d)}")
+        return {"tests": diff_tests}, "\n\n".join(lines) if lines else "Отличий не найдено."
+
+    def _show_training_diff(self):
+        _diff, text = self._build_training_diff()
+        messagebox.showinfo("Отличия авто/ручного ИГЭ", text)
+
+    def _save_training_example(self):
+        diff_pack, text = self._build_training_diff()
+        if diff_pack is None:
+            messagebox.showwarning("Обучение", text)
+            return
+        snap = dict(getattr(self, "_last_prebuild_snapshot", {}) or {})
+        example = {
+            "created_at": now_iso(),
+            "project_name": str(getattr(self, "object_name", "") or ""),
+            "source_method": str(snap.get("method") or getattr(self, "prebuild_method", "Базовый")),
+            "custom_profile": copy.deepcopy(dict(snap.get("custom_profile") or {})),
+            "auto_segmentation": list(snap.get("tests") or []),
+            "manual_segmentation": self._manual_layers_snapshot(),
+            "diff": diff_pack,
+            "excluded_tests": list(snap.get("excluded_tests") or []),
+            "meta": {
+                "soundings_involved": len(list(snap.get("tests") or [])),
+                "has_problem_columns": any(bool(x.get("has_problem_points")) for x in (snap.get("tests") or [])),
+                "auto_method": str(snap.get("method") or ""),
+            },
+        }
+        self.training_examples.append(example)
+        self._set_status(f"Сохранён обучающий пример #{len(self.training_examples)}")
+        messagebox.showinfo("Обучение", f"Пример сохранён.\nВсего примеров: {len(self.training_examples)}\n\n{text}")
+
+    def _update_adaptive_profile(self):
+        examples = list(getattr(self, "training_examples", []) or [])
+        if not examples:
+            messagebox.showwarning("Обучение", "Нет сохранённых примеров для обновления профиля.")
+            return
+        old_profile = copy.deepcopy(dict(getattr(self, "prebuild_custom_profile", {}) or {}))
+        result = update_profile_from_examples(base_profile=old_profile, examples=examples)
+        new_profile = dict(result.updated_profile or {})
+        adj = dict((result.stats or {}).get("adjusted") or {})
+        lines = [f"Примеров: {int((result.stats or {}).get('examples_used', 0) or 0)}", "Изменения профиля:"]
+        if adj:
+            for k, v in adj.items():
+                lines.append(f"- {k}: {v.get('old')} -> {v.get('new')} ({v.get('reason')})")
+        else:
+            lines.append("- Значимых изменений не выявлено (осторожный режим).")
+        if not messagebox.askyesno("Обновить профиль", "\n".join(lines) + "\n\nПрименить?"):
+            return
+        self._push_undo()
+        self.prebuild_custom_profile = new_profile
+        self._last_profile_update_summary = {"updated_at": now_iso(), "stats": result.stats}
+        self._set_status("Пользовательский профиль обновлён по обучающим примерам")
+
+    def _reset_adaptive_profile(self):
+        if not messagebox.askyesno("Сброс профиля", "Сбросить пользовательский профиль к базовым настройкам?"):
+            return
+        self._push_undo()
+        self.prebuild_custom_profile.update(
+            {
+                "min_layer_thickness_m": 0.8,
+                "smoothing_window": 5,
+                "boundary_q_jump": 2.0,
+                "boundary_fs_jump": 40.0,
+                "boundary_rf_jump": 0.8,
+                "merge_same_soil": True,
+                "rf_sand_max": 1.0,
+                "rf_sandy_loam_max": 2.5,
+                "max_layers": 6,
+                "auto_adjustments": [],
+            }
+        )
+        self.prebuild_custom_profile["last_updated_at"] = now_iso()
+        self.prebuild_custom_profile["training_confidence"] = "low"
+        self._set_status("Пользовательский профиль сброшен к базовым значениям")
 
     def redraw_all(self):
         self._sync_layers_panel()
@@ -2131,6 +2319,11 @@ class GeoCanvasEditor(tk.Tk):
                 "rename_ige": self._rename_ige_from_ribbon,
                 "set_layer_soil": self._set_layer_soil_from_ribbon,
                 "ige_prebuild_from_cpt": self._prebuild_iges_from_cpt_preliminary,
+                "prebuild_method_changed": self._on_prebuild_method_changed,
+                "save_training_example": self._save_training_example,
+                "show_training_diff": self._show_training_diff,
+                "update_adaptive_profile": self._update_adaptive_profile,
+                "reset_adaptive_profile": self._reset_adaptive_profile,
                 "calc_cpt": self.calculate_cpt_params,
                 "edit_ige_cpt": self._edit_selected_ige_cpt_params,
                 "apply_calc": lambda: self._redraw(),
@@ -2166,6 +2359,8 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
                 self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
                 self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
+                if getattr(self.ribbon_view, "prebuild_method_var", None):
+                    self.ribbon_view.prebuild_method_var.set(str(self.prebuild_method))
             except Exception:
                 pass
             ribbon.pack_forget()

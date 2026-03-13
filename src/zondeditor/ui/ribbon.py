@@ -30,6 +30,7 @@ class RibbonView(ttk.Frame):
         self.layer_soil_var = tk.StringVar(value="")
         self.layer_mode_var = tk.StringVar(value="")
         self.layer_ige_var = tk.StringVar(value="ИГЭ-1")
+        self.prebuild_method_var = tk.StringVar(value="Базовый")
         self._buttons: dict[str, ttk.Button] = {}
         self._layer_rows: list[dict] = []
         self._ige_controls: dict[str, ttk.Combobox] = {}
@@ -283,11 +284,19 @@ class RibbonView(ttk.Frame):
 
         auto_row = ttk.Frame(tab)
         auto_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(auto_row, text="Метод:").pack(side="left")
+        method_combo = ttk.Combobox(auto_row, state="readonly", width=18, textvariable=self.prebuild_method_var, values=["Базовый", "Robertson basic", "Пользовательский"])
+        method_combo.pack(side="left", padx=(4, 6))
+        method_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("prebuild_method_changed", lambda *_: None)(self.prebuild_method_var.get()))
         ttk.Button(
             auto_row,
             text="Сформировать по данным qc / fs / Rf (предварительно)",
             command=self.commands.get("ige_prebuild_from_cpt"),
         ).pack(side="left")
+        ttk.Button(auto_row, text="Сохранить как пример", command=self.commands.get("save_training_example")).pack(side="left", padx=(6, 0))
+        ttk.Button(auto_row, text="Показать отличия", command=self.commands.get("show_training_diff")).pack(side="left", padx=(6, 0))
+        ttk.Button(auto_row, text="Обновить профиль", command=self.commands.get("update_adaptive_profile")).pack(side="left", padx=(6, 0))
+        ttk.Button(auto_row, text="Сбросить профиль", command=self.commands.get("reset_adaptive_profile")).pack(side="left", padx=(6, 0))
 
     def _build_calc_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)

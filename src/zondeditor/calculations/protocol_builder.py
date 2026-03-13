@@ -152,6 +152,16 @@ def build_debug_protocol_text(*, project_name: str, profile_id: str, samples: li
     lines.append(f'Отладочный протокол расчёта: {project_name or "(без названия)"}')
     lines.append(f'Норматив: {profile_id}')
     global_excluded = list(calc_options.get("excluded_soundings_global") or [])
+    training_info = dict(calc_options.get("training_info") or {})
+    if training_info:
+        lines.append("Блок адаптации/обучения:")
+        lines.append(f"- Метод интерпретации: {training_info.get('method', '—')}")
+        lines.append(f"- Использован обученный профиль: {'да' if training_info.get('used_trained_profile') else 'нет'}")
+        lines.append(f"- Состояние профиля: {training_info.get('profile_state', '—')}")
+        lines.append(f"- Примеров у профиля: {int(training_info.get('examples_count', 0) or 0)}")
+        lines.append(f"- Источник профиля: {training_info.get('profile_source', 'базовый')}")
+        if training_info.get("saved_training_example"):
+            lines.append("- Текущий кейс сохранён как обучающий пример")
     if global_excluded:
         lines.append(f'Глобально исключённых опытов: {len(global_excluded)}')
         for ex in global_excluded:
