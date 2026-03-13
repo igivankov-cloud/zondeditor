@@ -39,11 +39,11 @@ class RibbonView(ttk.Frame):
         self._ige_soil_values: list[str] = []
         self._add_ige_btn = None
         self._ige_order: list[str] = []
-        self.calc_profile_var = tk.StringVar(value="DEFAULT_CURRENT")
-        self.calc_mode_var = tk.StringVar(value="AUTO")
-        self.calc_sandy_loam_profile_var = tk.BooleanVar(value=True)
-        self.calc_fill_manual_var = tk.BooleanVar(value=False)
-        self.calc_make_protocol_var = tk.BooleanVar(value=True)
+        self.calc_cpt_method_var = tk.StringVar(value="СП 446.1325800.2019, приложение Ж")
+        self.calc_transition_method_var = tk.StringVar(value="СП 22.13330.2016 (п. 5.3.17)")
+        self.calc_allow_normative_lt6_var = tk.BooleanVar(value=False)
+        self.calc_legacy_sandy_loam_var = tk.BooleanVar(value=False)
+        self.calc_fill_preliminary_var = tk.BooleanVar(value=False)
 
         try:
             style = ttk.Style(self)
@@ -65,6 +65,7 @@ class RibbonView(ttk.Frame):
         self._build_view_tab()
         self._build_layers_tab()
         self._build_calc_tab()
+        self._build_protocol_tab()
         self._build_processing_tab()
 
     def _add_qat_btn(self, parent, key: str, text: str, tip: str):
@@ -272,21 +273,38 @@ class RibbonView(ttk.Frame):
     def _build_calc_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Расчёт")
+
         params = ttk.LabelFrame(tab, text="Параметры расчёта", padding=6)
         params.pack(fill="x", expand=False)
-        ttk.Label(params, text="Нормативный профиль:").grid(row=0, column=0, sticky="w")
-        self.calc_profile_combo = ttk.Combobox(params, state="readonly", textvariable=self.calc_profile_var, values=["DEFAULT_CURRENT", "GEOEXPLORER_SP446", "LEGACY_SP11_105"], width=24)
-        self.calc_profile_combo.grid(row=0, column=1, sticky="w", padx=(6, 12))
-        self.calc_profile_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("calc_profile_changed", lambda *_: None)(self.calc_profile_var.get()))
 
-        ttk.Label(params, text="Режим:").grid(row=0, column=2, sticky="w")
-        self.calc_mode_combo = ttk.Combobox(params, state="readonly", textvariable=self.calc_mode_var, values=["AUTO", "COMPAT", "LEGACY"], width=20)
-        self.calc_mode_combo.grid(row=0, column=3, sticky="w", padx=(6, 0))
-        self.calc_mode_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("calc_mode_changed", lambda *_: None)(self.calc_mode_var.get()))
+        ttk.Label(params, text="Расчёт по результатам зондирования:").grid(row=0, column=0, sticky="w")
+        self.calc_cpt_method_combo = ttk.Combobox(
+            params,
+            state="readonly",
+            textvariable=self.calc_cpt_method_var,
+            values=[
+                "СП 446.1325800.2019, приложение Ж",
+                "СНиП 2.02.01-83* (п. 12.4) — для опор мостов",
+            ],
+            width=56,
+        )
+        self.calc_cpt_method_combo.grid(row=0, column=1, sticky="w", padx=(6, 0))
+        self.calc_cpt_method_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("calc_option_changed", lambda *_: None)("cpt_method", self.calc_cpt_method_var.get()))
 
-        ttk.Checkbutton(params, text="Учитывать супесь по выбранному профилю", variable=self.calc_sandy_loam_profile_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("sandy_loam_by_profile", bool(self.calc_sandy_loam_profile_var.get()))).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        ttk.Checkbutton(params, text="Насыпной: разрешить расчёт по материалу вручную", variable=self.calc_fill_manual_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_fill_by_material", bool(self.calc_fill_manual_var.get()))).grid(row=1, column=2, columnspan=2, sticky="w", pady=(4, 0))
-        ttk.Checkbutton(params, text="Формировать протокол", variable=self.calc_make_protocol_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("make_protocol", bool(self.calc_make_protocol_var.get()))).grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ttk.Label(params, text="Переход к нормативным / расчётным значениям:").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self.calc_transition_method_combo = ttk.Combobox(
+            params,
+            state="readonly",
+            textvariable=self.calc_transition_method_var,
+            values=["СП 22.13330.2016 (п. 5.3.17)"],
+            width=56,
+        )
+        self.calc_transition_method_combo.grid(row=1, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
+        self.calc_transition_method_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("calc_option_changed", lambda *_: None)("transition_method", self.calc_transition_method_var.get()))
+
+        ttk.Checkbutton(params, text="Рассчитывать нормативные значения при N < 6", variable=self.calc_allow_normative_lt6_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_normative_lt6", bool(self.calc_allow_normative_lt6_var.get()))).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(params, text="Рассчитывать супесь по старой редакции СП 446", variable=self.calc_legacy_sandy_loam_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("use_legacy_sandy_loam_sp446", bool(self.calc_legacy_sandy_loam_var.get()))).grid(row=3, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        ttk.Checkbutton(params, text="Разрешить предварительный расчёт насыпного по материалу", variable=self.calc_fill_preliminary_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_fill_preliminary", bool(self.calc_fill_preliminary_var.get()))).grid(row=4, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         btns = ttk.Frame(tab)
         btns.pack(fill="x", pady=(6, 4))
@@ -294,7 +312,6 @@ class RibbonView(ttk.Frame):
         ttk.Button(btns, text="Пересобрать выборки", command=self.commands.get("calc_rebuild_samples")).pack(side="left", padx=4)
         ttk.Button(btns, text="Показать выборку ИГЭ", command=self.commands.get("calc_show_sample")).pack(side="left", padx=4)
         ttk.Button(btns, text="Показать исключённые точки", command=self.commands.get("calc_show_excluded")).pack(side="left", padx=4)
-        ttk.Button(btns, text="Сформировать протокол", command=self.commands.get("calc_make_protocol")).pack(side="left", padx=4)
 
         cols = ("ige", "soil", "subtype", "method", "status", "n", "qc_avg", "V", "interval", "E", "phi", "c", "warning")
         self.calc_tree = ttk.Treeview(tab, columns=cols, show="headings", height=8)
@@ -305,8 +322,13 @@ class RibbonView(ttk.Frame):
         for c in cols:
             self.calc_tree.heading(c, text=heads[c])
             self.calc_tree.column(c, width=90, anchor="center")
-        self.calc_tree.column("warning", width=220, anchor="w")
+        self.calc_tree.column("warning", width=240, anchor="w")
         self.calc_tree.pack(fill="both", expand=True)
+
+    def _build_protocol_tab(self):
+        tab = ttk.Frame(self.tabs, padding=4)
+        self.tabs.add(tab, text="Протокол")
+        ttk.Label(tab, text="Раздел протокола будет реализован на следующем этапе.", anchor="w").pack(fill="x")
 
     def _sync_ige_canvas(self):
         cnv = getattr(self, "_ige_canvas", None)

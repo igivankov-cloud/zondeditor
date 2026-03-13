@@ -75,10 +75,11 @@ class IGECalcSample:
 
 @dataclass
 class CalculationTabState:
-    selected_profile_id: str = "DEFAULT_CURRENT"
-    selected_method_mode: str = "AUTO"
-    include_sandy_loam: bool = True
-    allow_fill_by_material: bool = False
+    cpt_method: str = "СП 446.1325800.2019, приложение Ж"
+    transition_method: str = "СП 22.13330.2016 (п. 5.3.17)"
+    allow_normative_lt6: bool = False
+    use_legacy_sandy_loam_sp446: bool = False
+    allow_fill_preliminary: bool = False
     show_excluded_points: bool = False
     last_run_at: str | None = None
     selected_ige_id: str | None = None

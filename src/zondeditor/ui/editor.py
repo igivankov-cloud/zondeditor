@@ -652,11 +652,11 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.set_display_sort_mode(str(self.display_sort_mode))
                 self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
                 self.ribbon_view.set_layer_edit_mode(True)
-                self.ribbon_view.calc_profile_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).selected_profile_id or "DEFAULT_CURRENT"))
-                self.ribbon_view.calc_mode_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).selected_method_mode or "AUTO"))
-                self.ribbon_view.calc_sandy_loam_profile_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).include_sandy_loam))
-                self.ribbon_view.calc_fill_manual_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_by_material))
-                self.ribbon_view.calc_make_protocol_var.set(True)
+                self.ribbon_view.calc_cpt_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).cpt_method or "СП 446.1325800.2019, приложение Ж"))
+                self.ribbon_view.calc_transition_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).transition_method or "СП 22.13330.2016 (п. 5.3.17)"))
+                self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
+                self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
+                self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
         except Exception:
             pass
 
@@ -673,7 +673,9 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             self.cpt_calc_settings = {"method": METHOD_SP446, "alluvial_sands": True, "groundwater_level": None}
         cts = dict(snap.get("calc_tab_state") or {})
-        self.calc_tab_state = CalculationTabState(**{**CalculationTabState().__dict__, **cts})
+        _base_cts = CalculationTabState().__dict__
+        _safe_cts = {k: v for k, v in cts.items() if k in _base_cts}
+        self.calc_tab_state = CalculationTabState(**{**_base_cts, **_safe_cts})
         self._ensure_default_iges()
 
         for d in snap.get("tests", []):
@@ -1386,32 +1388,34 @@ class GeoCanvasEditor(tk.Tk):
         self.ribbon_view.layer_mode_var.set(str(ent.get("calc_mode") or ""))
 
     def _on_calc_profile_changed(self, profile_id: str):
-        pid = str(profile_id or "DEFAULT_CURRENT").strip() or "DEFAULT_CURRENT"
-        if pid in (self.normative_profiles or {}):
-            prof = self.normative_profiles[pid]
-            self.calc_tab_state.selected_profile_id = pid
-            self.calc_tab_state.selected_method_mode = str(prof.calc_mode or self.calc_tab_state.selected_method_mode)
+        return
 
     def _on_calc_mode_changed(self, mode: str):
-        self.calc_tab_state.selected_method_mode = str(mode or "AUTO")
+        return
 
-    def _on_calc_option_changed(self, option: str, value: bool):
+    def _on_calc_option_changed(self, option: str, value):
         key = str(option or "").strip()
         if not key:
             return
-        if key == "sandy_loam_by_profile":
-            self.calc_tab_state.include_sandy_loam = bool(value)
-        elif key == "allow_fill_by_material":
-            self.calc_tab_state.allow_fill_by_material = bool(value)
-        elif key == "make_protocol":
-            pass
+        if key == "cpt_method":
+            self.calc_tab_state.cpt_method = str(value or "СП 446.1325800.2019, приложение Ж")
+        elif key == "transition_method":
+            self.calc_tab_state.transition_method = str(value or "СП 22.13330.2016 (п. 5.3.17)")
+        elif key == "allow_normative_lt6":
+            self.calc_tab_state.allow_normative_lt6 = bool(value)
+        elif key == "use_legacy_sandy_loam_sp446":
+            self.calc_tab_state.use_legacy_sandy_loam_sp446 = bool(value)
+        elif key == "allow_fill_preliminary":
+            self.calc_tab_state.allow_fill_preliminary = bool(value)
 
     def _rebuild_calc_samples(self):
         samples = build_ige_samples(
             tests=list(self.tests or []),
             ige_registry=self.ige_registry,
-            profile_id=str(self.calc_tab_state.selected_profile_id or "DEFAULT_CURRENT"),
-            allow_fill_by_material=bool(self.calc_tab_state.allow_fill_by_material),
+            profile_id="DEFAULT_CURRENT",
+            allow_fill_by_material=bool(self.calc_tab_state.allow_fill_preliminary),
+            use_legacy_sandy_loam_sp446=bool(self.calc_tab_state.use_legacy_sandy_loam_sp446),
+            allow_normative_lt6=bool(self.calc_tab_state.allow_normative_lt6),
         )
         self.calc_samples = samples
         rows = []
@@ -1514,7 +1518,7 @@ class GeoCanvasEditor(tk.Tk):
             self._rebuild_calc_samples()
         self.calc_protocol = build_protocol(
             project_name=str(getattr(self, "object_name", "") or ""),
-            profile_id=str(self.calc_tab_state.selected_profile_id or "DEFAULT_CURRENT"),
+            profile_id="DEFAULT_CURRENT",
             samples=list(self.calc_samples or []),
         )
         self._set_status("Протокол расчёта сформирован")
@@ -1923,11 +1927,11 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view.set_display_sort_mode(str(getattr(self, "display_sort_mode", "date")))
             self.ribbon_view.set_layer_edit_mode(True)
             try:
-                self.ribbon_view.calc_profile_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).selected_profile_id or "DEFAULT_CURRENT"))
-                self.ribbon_view.calc_mode_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).selected_method_mode or "AUTO"))
-                self.ribbon_view.calc_sandy_loam_profile_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).include_sandy_loam))
-                self.ribbon_view.calc_fill_manual_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_by_material))
-                self.ribbon_view.calc_make_protocol_var.set(True)
+                self.ribbon_view.calc_cpt_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).cpt_method or "СП 446.1325800.2019, приложение Ж"))
+                self.ribbon_view.calc_transition_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).transition_method or "СП 22.13330.2016 (п. 5.3.17)"))
+                self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
+                self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
+                self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
             except Exception:
                 pass
             ribbon.pack_forget()
@@ -9071,7 +9075,10 @@ class GeoCanvasEditor(tk.Tk):
         self._rebuild_marks_index()
         status_info = self._recompute_statuses_after_data_load(preview_mode=False)
         self.cpt_calc_settings = dict((project.settings.extras or {}).get("cpt_calc_settings") or self.cpt_calc_settings or {"method": METHOD_SP446, "alluvial_sands": True, "groundwater_level": None})
-        self.calc_tab_state = CalculationTabState(**{**CalculationTabState().__dict__, **dict((project.settings.extras or {}).get("calc_tab_state") or {})})
+        _base_cts = CalculationTabState().__dict__
+        _raw_cts = dict((project.settings.extras or {}).get("calc_tab_state") or {})
+        _safe_cts = {k: v for k, v in _raw_cts.items() if k in _base_cts}
+        self.calc_tab_state = CalculationTabState(**{**_base_cts, **_safe_cts})
         self._dirty = False
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)

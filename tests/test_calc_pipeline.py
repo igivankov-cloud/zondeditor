@@ -95,3 +95,29 @@ def test_not_implemented_method_returns_status():
     s = samples[0]
     assert s.status == "NOT_IMPLEMENTED"
     assert s.result.status == "not_implemented"
+
+
+def test_sandy_loam_blocked_by_default_and_allowed_with_legacy_flag():
+    layers = [Layer(top_m=1.0, bot_m=2.0, ige_id="ИГЭ-8", soil_type=SoilType.SANDY_LOAM, calc_mode=calc_mode_for_soil(SoilType.SANDY_LOAM))]
+    tests = [_mk_test(1, layers)]
+    registry = {"ИГЭ-8": {"soil_type": "супесь", "soil_code": "sandy_loam", "consistency": "пластичная"}}
+
+    blocked = build_ige_samples(tests=tests, ige_registry=dict(registry), profile_id="DEFAULT_CURRENT", allow_fill_by_material=False, use_legacy_sandy_loam_sp446=False)
+    assert blocked[0].status == "NOT_APPLICABLE"
+
+    allowed = build_ige_samples(tests=tests, ige_registry=dict(registry), profile_id="DEFAULT_CURRENT", allow_fill_by_material=False, use_legacy_sandy_loam_sp446=True)
+    assert allowed[0].status == "CALCULATED"
+    assert any("старой редакции" in w.lower() for w in allowed[0].warnings)
+
+
+def test_n_lt_6_blocked_unless_option_enabled():
+    layers = [Layer(top_m=1.0, bot_m=1.4, ige_id="ИГЭ-9", soil_type=SoilType.SAND, calc_mode=calc_mode_for_soil(SoilType.SAND))]
+    tests = [_mk_test(1, layers)]
+    registry = {"ИГЭ-9": {"soil_type": "песок", "soil_code": "sand"}}
+
+    blocked = build_ige_samples(tests=tests, ige_registry=dict(registry), profile_id="DEFAULT_CURRENT", allow_fill_by_material=False, allow_normative_lt6=False)
+    assert blocked[0].status == "N_LT_6_BLOCKED"
+
+    allowed = build_ige_samples(tests=tests, ige_registry=dict(registry), profile_id="DEFAULT_CURRENT", allow_fill_by_material=False, allow_normative_lt6=True)
+    assert allowed[0].status == "CALCULATED"
+    assert any("n < 6" in w.lower() for w in allowed[0].warnings)

@@ -72,7 +72,7 @@ def _missing_by_required_fields(required_fields: list[str], *, stats: IGECalcSta
     return missing
 
 
-def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any]], profile_id: str, allow_fill_by_material: bool) -> list[IGECalcSample]:
+def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any]], profile_id: str, allow_fill_by_material: bool, use_legacy_sandy_loam_sp446: bool = False, allow_normative_lt6: bool = False) -> list[IGECalcSample]:
     out: list[IGECalcSample] = []
     method_catalog = load_method_catalog()
 
@@ -80,6 +80,16 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
         ent = dict(ige_registry.get(ige_key) or {})
         ige = _build_ige_model(ige_key, ent, profile_id)
         app = resolve_applicability(profile_id=profile_id, soil_code=ige.soil_code, subtype=ige.subtype, allow_fill_by_material=allow_fill_by_material)
+
+        if ige.soil_code == "sandy_loam":
+            if not bool(use_legacy_sandy_loam_sp446):
+                app.status = "NOT_APPLICABLE"
+                app.warning = "Супесь по действующей редакции СП 446 (Изм. №1) не рассчитывается"
+                app.method = "LAB_ONLY"
+            else:
+                app.status = "CALCULATED"
+                app.method = "SP446_CPT_CLAY"
+                app.warning = "Рассчитано по старой редакции СП 446"
 
         points: list[IGECalcPoint] = []
         excluded_points: list[dict[str, Any]] = []
@@ -146,6 +156,14 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
                 app.status = "NOT_IMPLEMENTED"
             if method_run.status == "invalid_input":
                 app.status = "INVALID_INPUT"
+
+        if int(stats.n_points or 0) < 6 and app.status in {"CALCULATED", "PRELIMINARY"}:
+            if not bool(allow_normative_lt6):
+                app.status = "N_LT_6_BLOCKED"
+                errors.append("N < 6: нормативное значение не рассчитывается без разрешающей опции")
+                result = IGECalcResult(status="invalid_input", not_implemented=False)
+            else:
+                warnings.append("N < 6: расчёт разрешён с предупреждением")
 
         depths = [p.depth_m for p in points]
         depth_interval = (min(depths), max(depths)) if depths else None
