@@ -81,7 +81,7 @@ from src.zondeditor.calculations.normative_profiles import load_normative_profil
 from src.zondeditor.calculations.sample_builder import build_ige_samples
 from src.zondeditor.calculations.protocol_builder import build_protocol, build_debug_protocol_text
 from src.zondeditor.calculations.rf_utils import calc_rf_pct, robust_rf_scale_max
-from src.zondeditor.calculations.ige_prebuild import build_preliminary_layers, build_preliminary_layers_with_profile
+from src.zondeditor.calculations.ige_prebuild import build_preliminary_layers, build_preliminary_layers_with_profile, correlate_intervals_to_global_iges
 from src.zondeditor.calculations.ige_training import (
     build_prebuild_context,
     evaluate_training_case_eligibility,
@@ -1822,10 +1822,25 @@ class GeoCanvasEditor(tk.Tk):
 
         if bool(push_undo):
             self._push_undo()
-        self.ige_registry = {}
         changed = False
-        ige_counter = 0
         auto_snapshot_tests: list[dict[str, object]] = []
+        local_intervals_by_test: dict[str, list[dict[str, object]]] = {}
+        local_series_by_test: dict[str, list[dict[str, object]]] = {}
+        test_objects_by_id: dict[str, object] = {}
+
+        method_used = str(getattr(self, "prebuild_method", "Базовый") or "Базовый")
+        profile = None
+        if method_used == "Пользовательский":
+            profile = dict(getattr(self, "prebuild_custom_profile", {}) or {})
+        elif method_used == "Robertson basic":
+            profile = {
+                "smoothing_window": 7,
+                "boundary_q_jump": 1.8,
+                "boundary_fs_jump": 35.0,
+                "boundary_rf_jump": 0.7,
+                "max_layers": 7,
+                "min_layer_thickness_m": 0.7,
+            }
 
         for t in list(enabled_tests or []):
             qarr = list(getattr(t, "qc", []) or [])
@@ -1847,23 +1862,10 @@ class GeoCanvasEditor(tk.Tk):
                 qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
                 rf = calc_rf_pct(float(fs_kpa), float(qc_mpa))
                 series.append((float(dv), float(qc_mpa), float(fs_kpa), rf))
-
-            profile = None
-            method_used = str(getattr(self, "prebuild_method", "Базовый") or "Базовый")
-            if method_used == "Пользовательский":
-                profile = dict(getattr(self, "prebuild_custom_profile", {}) or {})
-            elif method_used == "Robertson basic":
-                profile = {
-                    "smoothing_window": 7,
-                    "boundary_q_jump": 1.8,
-                    "boundary_fs_jump": 35.0,
-                    "boundary_rf_jump": 0.7,
-                    "max_layers": 7,
-                    "min_layer_thickness_m": 0.7,
-                }
             auto_layers = build_preliminary_layers(series) if profile is None else build_preliminary_layers_with_profile(series, profile=profile)
-            layers: list[Layer] = []
-            auto_layers_payload: list[dict[str, object]] = []
+            test_id = str(getattr(t, "orig_id", None) or f"test_{int(getattr(t, 'tid', 0))}")
+            test_objects_by_id[test_id] = t
+            local_intervals: list[dict[str, object]] = []
             for cand in auto_layers:
                 soil = SoilType.SANDY_LOAM
                 if cand.soil_kind == SoilType.SAND.value:
@@ -1872,12 +1874,75 @@ class GeoCanvasEditor(tk.Tk):
                     soil = SoilType.LOAM
                 elif cand.soil_kind == SoilType.SANDY_LOAM.value:
                     soil = SoilType.SANDY_LOAM
-                ige_counter += 1
-                ige_id = f"ИГЭ-{ige_counter}"
+                seg = [x for x in series if float(cand.top_m) <= float(x[0]) <= float(cand.bot_m)]
+                qc_avg = (sum(float(x[1]) for x in seg) / len(seg)) if seg else None
+                rf_vals = [float(x[3]) for x in seg if x[3] is not None]
+                rf_avg = (sum(rf_vals) / len(rf_vals)) if rf_vals else None
+                local_intervals.append(
+                    {
+                        "z_from": float(cand.top_m),
+                        "z_to": float(cand.bot_m),
+                        "preliminary_type": str(soil.value),
+                        "qc_avg": qc_avg,
+                        "rf_avg": rf_avg,
+                        "method_label": method_used,
+                        "behavior_type": "preliminary",
+                        "comments": "Автосегментация, требуется ручная проверка",
+                        "confidence": 0.5,
+                    }
+                )
+            if local_intervals:
+                local_intervals_by_test[test_id] = local_intervals
+                local_series_by_test[test_id] = [
+                    {"depth": float(x[0]), "qc": float(x[1]), "fs": float(x[2]), "rf": (None if x[3] is None else float(x[3]))}
+                    for x in series
+                ]
+
+        assigned, clusters = correlate_intervals_to_global_iges(local_intervals_by_test)
+        if not clusters:
+            messagebox.showinfo("ИГЭ", "Недостаточно данных для предварительного формирования ИГЭ.")
+            return
+
+        self.ige_registry = {}
+        cluster_to_ige: dict[str, str] = {}
+        for idx, cl in enumerate(clusters, start=1):
+            ige_id = f"ИГЭ-{idx}"
+            cluster_to_ige[str(cl.get("cluster_id"))] = ige_id
+            soil_raw = str(cl.get("preliminary_type") or SoilType.SANDY_LOAM.value)
+            soil = SoilType.SANDY_LOAM
+            for st in (SoilType.SAND, SoilType.LOAM, SoilType.SANDY_LOAM, SoilType.CLAY, SoilType.PEAT):
+                if soil_raw == st.value:
+                    soil = st
+                    break
+            self.ige_registry[ige_id] = self._ensure_ige_cpt_fields(
+                {
+                    "soil_type": soil.value,
+                    "calc_mode": calc_mode_for_soil(soil).value,
+                    "style": dict(SOIL_STYLE.get(soil, {})),
+                    "label": ige_id,
+                    "ordinal": idx,
+                    "notes": f"Предварительная интерпретация ({method_used}) по данным qc/fs/Rf; требуется ручная проверка",
+                }
+            )
+
+        for test_id, t in test_objects_by_id.items():
+            items = list(assigned.get(test_id) or [])
+            layers: list[Layer] = []
+            auto_layers_payload: list[dict[str, object]] = []
+            for it in items:
+                cluster_id = str(it.get("cluster_id") or "")
+                ige_id = str(cluster_to_ige.get(cluster_id) or "ИГЭ-1")
+                ent = self._ensure_ige_cpt_fields(self._ensure_ige_entry(ige_id))
+                soil_val = str(ent.get("soil_type") or SoilType.SANDY_LOAM.value)
+                soil = SoilType.SANDY_LOAM
+                for st in SoilType:
+                    if soil_val == st.value:
+                        soil = st
+                        break
                 layers.append(
                     Layer(
-                        top_m=float(cand.top_m),
-                        bot_m=float(cand.bot_m),
+                        top_m=float(it.get("z_from", 0.0) or 0.0),
+                        bot_m=float(it.get("z_to", 0.0) or 0.0),
                         ige_id=ige_id,
                         soil_type=soil,
                         calc_mode=calc_mode_for_soil(soil),
@@ -1885,26 +1950,18 @@ class GeoCanvasEditor(tk.Tk):
                         ige_num=self._ige_id_to_num(ige_id),
                     )
                 )
-                self.ige_registry[ige_id] = self._ensure_ige_cpt_fields(
-                    {
-                        "soil_type": soil.value,
-                        "calc_mode": calc_mode_for_soil(soil).value,
-                        "style": dict(SOIL_STYLE.get(soil, {})),
-                        "label": ige_id,
-                        "ordinal": self._ige_id_to_num(ige_id),
-                        "notes": f"Предварительная интерпретация ({method_used}) по данным qc/fs/Rf; требуется ручная проверка",
-                    }
-                )
                 auto_layers_payload.append(
                     {
-                        "top_m": float(cand.top_m),
-                        "bot_m": float(cand.bot_m),
-                        "soil_type": str(soil.value),
+                        "top_m": float(it.get("z_from", 0.0) or 0.0),
+                        "bot_m": float(it.get("z_to", 0.0) or 0.0),
+                        "soil_type": str(it.get("preliminary_type") or ""),
                         "ige_id": ige_id,
                         "method_label": method_used,
-                        "behavior_type": "preliminary",
-                        "confidence": 0.5,
-                        "comments": "Автосегментация, требуется ручная проверка",
+                        "behavior_type": str(it.get("behavior_type") or "preliminary"),
+                        "confidence": float(it.get("confidence", 0.5) or 0.5),
+                        "comments": str(it.get("comments") or ""),
+                        "qc_avg": it.get("qc_avg"),
+                        "rf_avg": it.get("rf_avg"),
                     }
                 )
             if layers:
@@ -1913,13 +1970,10 @@ class GeoCanvasEditor(tk.Tk):
                 changed = True
                 auto_snapshot_tests.append(
                     {
-                        "test_id": str(getattr(t, "orig_id", None) or f"test_{int(getattr(t, 'tid', 0))}"),
+                        "test_id": str(test_id),
                         "tid": int(getattr(t, "tid", 0) or 0),
                         "layers": auto_layers_payload,
-                        "series": [
-                            {"depth": float(x[0]), "qc": float(x[1]), "fs": float(x[2]), "rf": (None if x[3] is None else float(x[3]))}
-                            for x in series
-                        ],
+                        "series": list(local_series_by_test.get(test_id) or []),
                         "has_problem_points": bool(getattr(t, "invalid", False)),
                     }
                 )
