@@ -81,7 +81,17 @@ from src.zondeditor.calculations.normative_profiles import load_normative_profil
 from src.zondeditor.calculations.sample_builder import build_ige_samples
 from src.zondeditor.calculations.protocol_builder import build_protocol, build_debug_protocol_text
 from src.zondeditor.calculations.rf_utils import calc_rf_pct, robust_rf_scale_max
-from src.zondeditor.calculations.ige_prebuild import build_preliminary_layers
+from src.zondeditor.calculations.ige_prebuild import build_preliminary_layers, build_preliminary_layers_with_profile, correlate_intervals_to_global_iges
+from src.zondeditor.calculations.ige_training import (
+    build_prebuild_context,
+    evaluate_training_case_eligibility,
+    filter_valid_training_examples,
+    diff_layer_models,
+    layer_brief,
+    make_diff_text,
+    now_iso,
+    update_profile_from_examples,
+)
 
 _rebuild_geo_from_template = build_k2_geo_from_template
 
@@ -264,7 +274,51 @@ class GeoCanvasEditor(tk.Tk):
         self.calc_rows = []
         self.calc_samples = []
         self.calc_protocol = None
+        self._last_excluded_tests: list[dict[str, object]] = []
         self.normative_profiles = load_normative_profiles()
+        self.prebuild_method = "Базовый"
+        self.interpretation_region_options = [
+            "Общий",
+            "Пермский край",
+            "Свердловская область",
+            "Тюменская область",
+            "ХМАО",
+            "ЯНАО",
+            "Пользовательский",
+        ]
+        self.preferred_home_region = self._load_home_region()
+        self.interpretation_region = str(self.preferred_home_region or "Общий")
+        self.prebuild_context_hash = ""
+        self.prebuild_context: dict[str, object] = {}
+        self.training_eligible = True
+        self.training_block_reason = ""
+        self.interpretation_status = "draft"
+        self.approved_for_training = False
+        self.interpretation_revision = 0
+        self._training_snapshot_hash = ""
+        self._last_training_validation: dict[str, object] = {}
+        self._is_debug_fixture_session = False
+        self.training_example_saved_at = ""
+        self.training_example_version = 0
+        self.training_source_meta: dict[str, object] = {}
+        self.prebuild_custom_profile = {
+            "min_layer_thickness_m": 0.8,
+            "smoothing_window": 5,
+            "boundary_q_jump": 2.0,
+            "boundary_fs_jump": 40.0,
+            "boundary_rf_jump": 0.8,
+            "merge_same_soil": True,
+            "rf_sand_max": 1.0,
+            "rf_sandy_loam_max": 2.5,
+            "max_layers": 6,
+            "training_examples_count": 0,
+            "last_updated_at": "",
+            "auto_adjustments": [],
+            "training_confidence": "low",
+        }
+        self.training_examples: list[dict] = []
+        self._last_prebuild_snapshot: dict[str, object] | None = None
+        self._last_profile_update_summary: dict[str, object] = {}
 
         try:
             self.graph_w = int(self.winfo_fpixels("4c"))
@@ -324,6 +378,31 @@ class GeoCanvasEditor(tk.Tk):
 
         tk_mod.Tk = _guarded_tk
         tk_mod._zondeditor_tk_guard = True
+
+    def _prefs_path(self) -> Path:
+        return Path.home() / ".zondeditor_prefs.json"
+
+    def _load_home_region(self) -> str:
+        try:
+            p = self._prefs_path()
+            if not p.exists():
+                return "Общий"
+            data = json.loads(p.read_text(encoding="utf-8"))
+            region = str(data.get("preferred_home_region") or "Общий")
+            return region if region else "Общий"
+        except Exception:
+            return "Общий"
+
+    def _save_home_region(self, region: str):
+        try:
+            p = self._prefs_path()
+            payload = {}
+            if p.exists():
+                payload = json.loads(p.read_text(encoding="utf-8"))
+            payload["preferred_home_region"] = str(region or "Общий")
+            p.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
     # ---------------- history ----------------
 
@@ -576,6 +655,25 @@ class GeoCanvasEditor(tk.Tk):
             "ige_registry": copy.deepcopy(dict(getattr(self, "ige_registry", {}) or {})),
             "cpt_calc_settings": copy.deepcopy(dict(getattr(self, "cpt_calc_settings", {}) or {})),
             "calc_tab_state": copy.deepcopy(getattr(self, "calc_tab_state", CalculationTabState()).__dict__),
+            "prebuild_method": str(getattr(self, "prebuild_method", "Базовый") or "Базовый"),
+            "interpretation_region": str(getattr(self, "interpretation_region", "Общий") or "Общий"),
+            "preferred_home_region": str(getattr(self, "preferred_home_region", "Общий") or "Общий"),
+            "prebuild_context_hash": str(getattr(self, "prebuild_context_hash", "") or ""),
+            "prebuild_context": copy.deepcopy(dict(getattr(self, "prebuild_context", {}) or {})),
+            "training_eligible": bool(getattr(self, "training_eligible", True)),
+            "training_block_reason": str(getattr(self, "training_block_reason", "") or ""),
+            "prebuild_custom_profile": copy.deepcopy(dict(getattr(self, "prebuild_custom_profile", {}) or {})),
+            "training_examples": copy.deepcopy(list(getattr(self, "training_examples", []) or [])),
+            "last_profile_update_summary": copy.deepcopy(dict(getattr(self, "_last_profile_update_summary", {}) or {})),
+            "interpretation_status": str(getattr(self, "interpretation_status", "draft") or "draft"),
+            "approved_for_training": bool(getattr(self, "approved_for_training", False)),
+            "interpretation_revision": int(getattr(self, "interpretation_revision", 0) or 0),
+            "training_snapshot_hash": str(getattr(self, "_training_snapshot_hash", "") or ""),
+            "is_debug_fixture_session": bool(getattr(self, "_is_debug_fixture_session", False)),
+            "last_training_validation": copy.deepcopy(dict(getattr(self, "_last_training_validation", {}) or {})),
+            "training_example_saved_at": str(getattr(self, "training_example_saved_at", "") or ""),
+            "training_example_version": int(getattr(self, "training_example_version", 0) or 0),
+            "training_source_meta": copy.deepcopy(dict(getattr(self, "training_source_meta", {}) or {})),
         }
 
     def _restore(self, snap: dict):
@@ -668,6 +766,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
                 self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
                 self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
+                self.ribbon_view.prebuild_method_var.set(str(getattr(self, "prebuild_method", "Базовый") or "Базовый"))
         except Exception:
             pass
 
@@ -687,6 +786,34 @@ class GeoCanvasEditor(tk.Tk):
         _base_cts = CalculationTabState().__dict__
         _safe_cts = {k: v for k, v in cts.items() if k in _base_cts}
         self.calc_tab_state = CalculationTabState(**{**_base_cts, **_safe_cts})
+        self.prebuild_method = str(snap.get("prebuild_method") or getattr(self, "prebuild_method", "Базовый") or "Базовый")
+        self.interpretation_region = str(snap.get("interpretation_region") or getattr(self, "interpretation_region", "Общий") or "Общий")
+        self.preferred_home_region = str(snap.get("preferred_home_region") or getattr(self, "preferred_home_region", "Общий") or "Общий")
+        self.prebuild_context_hash = str(snap.get("prebuild_context_hash") or getattr(self, "prebuild_context_hash", "") or "")
+        self.prebuild_context = dict(snap.get("prebuild_context") or getattr(self, "prebuild_context", {}) or {})
+        self.training_eligible = bool(snap.get("training_eligible", getattr(self, "training_eligible", True)))
+        self.training_block_reason = str(snap.get("training_block_reason") or getattr(self, "training_block_reason", "") or "")
+        self.interpretation_status = str(snap.get("interpretation_status") or getattr(self, "interpretation_status", "draft") or "draft")
+        self.approved_for_training = bool(snap.get("approved_for_training", getattr(self, "approved_for_training", False)))
+        self.interpretation_revision = int(snap.get("interpretation_revision", getattr(self, "interpretation_revision", 0)) or 0)
+        self._training_snapshot_hash = str(snap.get("training_snapshot_hash") or getattr(self, "_training_snapshot_hash", "") or "")
+        self._is_debug_fixture_session = bool(snap.get("is_debug_fixture_session", getattr(self, "_is_debug_fixture_session", False)))
+        self._last_training_validation = dict(snap.get("last_training_validation") or {})
+        self.training_example_saved_at = str(snap.get("training_example_saved_at") or getattr(self, "training_example_saved_at", "") or "")
+        self.training_example_version = int(snap.get("training_example_version", getattr(self, "training_example_version", 0)) or 0)
+        self.training_source_meta = dict(snap.get("training_source_meta") or getattr(self, "training_source_meta", {}) or {})
+        self.prebuild_custom_profile = dict(getattr(self, "prebuild_custom_profile", {}) or {})
+        self.prebuild_custom_profile.update(dict(snap.get("prebuild_custom_profile") or {}))
+        self.training_examples = list(snap.get("training_examples") or [])
+        self._last_profile_update_summary = dict(snap.get("last_profile_update_summary") or {})
+        try:
+            if getattr(self, "ribbon_view", None):
+                self.ribbon_view.prebuild_method_var.set(str(self.prebuild_method))
+                self.ribbon_view.interpretation_region_var.set(str(self.interpretation_region))
+                self.ribbon_view.interpretation_status_var.set(self._interpretation_status_ui_label())
+                self.ribbon_view.approved_for_training_var.set(bool(self.approved_for_training))
+        except Exception:
+            pass
         self._ensure_default_iges()
 
         for d in snap.get("tests", []):
@@ -1580,12 +1707,30 @@ class GeoCanvasEditor(tk.Tk):
             profile_id="DEFAULT_CURRENT",
             samples=samples,
             calc_options={
+                "interpretation_status": str(getattr(self, "interpretation_status", "draft") or "draft"),
+                "approved_for_training": bool(getattr(self, "approved_for_training", False)),
                 "cpt_method": getattr(self.calc_tab_state, "cpt_method", ""),
                 "transition_method": getattr(self.calc_tab_state, "transition_method", ""),
                 "allow_normative_lt6": bool(getattr(self.calc_tab_state, "allow_normative_lt6", False)),
                 "use_legacy_sandy_loam_sp446": bool(getattr(self.calc_tab_state, "use_legacy_sandy_loam_sp446", False)),
                 "allow_fill_preliminary": bool(getattr(self.calc_tab_state, "allow_fill_preliminary", False)),
                 "excluded_soundings_global": list(getattr(self, "_last_excluded_tests", []) or []),
+                "training_info": {
+                    "method": str(getattr(self, "prebuild_method", "Базовый") or "Базовый"),
+                    "region": str(getattr(self, "interpretation_region", "Общий") or "Общий"),
+                    "current_context_hash": str((self._current_prebuild_context() or {}).get("hash") or ""),
+                    "prebuild_context_hash": str(getattr(self, "prebuild_context_hash", "") or ""),
+                    "context_matches": bool(self._is_context_match()),
+                    "training_eligible": bool(getattr(self, "training_eligible", True)),
+                    "training_block_reason": str(getattr(self, "training_block_reason", "") or ""),
+                    "used_trained_profile": str(getattr(self, "prebuild_method", "")) == "Пользовательский",
+                    "profile_state": str((getattr(self, "prebuild_custom_profile", {}) or {}).get("training_confidence", "low")),
+                    "examples_count": int(len(getattr(self, "training_examples", []) or [])),
+                    "profile_source": "обученный" if (getattr(self, "prebuild_custom_profile", {}) or {}).get("auto_adjustments") else "базовый",
+                    "saved_training_example": bool(getattr(self, "training_examples", [])),
+                    "case_eligibility": dict(getattr(self, "_last_training_validation", {}) or {}),
+                    "examples_filter": dict(((getattr(self, "_last_profile_update_summary", {}) or {}).get("stats") or {}).get("filter") or {}),
+                },
             },
         )
         try:
@@ -1621,10 +1766,15 @@ class GeoCanvasEditor(tk.Tk):
         self.calc_rows = []
         self.calc_samples = []
         self.calc_protocol = None
+        self._is_debug_fixture_session = True
+        self.interpretation_status = "draft"
+        self.approved_for_training = False
         try:
             if getattr(self, 'ribbon_view', None):
                 self.ribbon_view.set_object_name(self.object_name)
                 self.ribbon_view.set_protocol_text('Тест загружен. Нажмите «Пересобрать выборки» / «Рассчитать», затем «Собрать протокол расчёта».')
+                self.ribbon_view.interpretation_status_var.set(self._interpretation_status_ui_label())
+                self.ribbon_view.approved_for_training_var.set(False)
         except Exception:
             pass
         self._sync_layers_panel()
@@ -1664,16 +1814,33 @@ class GeoCanvasEditor(tk.Tk):
             pass
         return out
 
-    def _prebuild_iges_from_cpt_preliminary(self):
+    def _prebuild_iges_from_cpt_preliminary(self, *, push_undo: bool = True):
         enabled_tests, excluded_tests = self._iter_processing_tests()
         if not enabled_tests:
             messagebox.showinfo("ИГЭ", "Нет корректных включённых опытов для предварительного формирования ИГЭ.")
             return
 
-        self._push_undo()
-        self.ige_registry = {}
+        if bool(push_undo):
+            self._push_undo()
         changed = False
-        ige_counter = 0
+        auto_snapshot_tests: list[dict[str, object]] = []
+        local_intervals_by_test: dict[str, list[dict[str, object]]] = {}
+        local_series_by_test: dict[str, list[dict[str, object]]] = {}
+        test_objects_by_id: dict[str, object] = {}
+
+        method_used = str(getattr(self, "prebuild_method", "Базовый") or "Базовый")
+        profile = None
+        if method_used == "Пользовательский":
+            profile = dict(getattr(self, "prebuild_custom_profile", {}) or {})
+        elif method_used == "Robertson basic":
+            profile = {
+                "smoothing_window": 7,
+                "boundary_q_jump": 1.8,
+                "boundary_fs_jump": 35.0,
+                "boundary_rf_jump": 0.7,
+                "max_layers": 7,
+                "min_layer_thickness_m": 0.7,
+            }
 
         for t in list(enabled_tests or []):
             qarr = list(getattr(t, "qc", []) or [])
@@ -1695,9 +1862,10 @@ class GeoCanvasEditor(tk.Tk):
                 qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
                 rf = calc_rf_pct(float(fs_kpa), float(qc_mpa))
                 series.append((float(dv), float(qc_mpa), float(fs_kpa), rf))
-
-            auto_layers = build_preliminary_layers(series)
-            layers: list[Layer] = []
+            auto_layers = build_preliminary_layers(series) if profile is None else build_preliminary_layers_with_profile(series, profile=profile)
+            test_id = str(getattr(t, "orig_id", None) or f"test_{int(getattr(t, 'tid', 0))}")
+            test_objects_by_id[test_id] = t
+            local_intervals: list[dict[str, object]] = []
             for cand in auto_layers:
                 soil = SoilType.SANDY_LOAM
                 if cand.soil_kind == SoilType.SAND.value:
@@ -1706,12 +1874,75 @@ class GeoCanvasEditor(tk.Tk):
                     soil = SoilType.LOAM
                 elif cand.soil_kind == SoilType.SANDY_LOAM.value:
                     soil = SoilType.SANDY_LOAM
-                ige_counter += 1
-                ige_id = f"ИГЭ-{ige_counter}"
+                seg = [x for x in series if float(cand.top_m) <= float(x[0]) <= float(cand.bot_m)]
+                qc_avg = (sum(float(x[1]) for x in seg) / len(seg)) if seg else None
+                rf_vals = [float(x[3]) for x in seg if x[3] is not None]
+                rf_avg = (sum(rf_vals) / len(rf_vals)) if rf_vals else None
+                local_intervals.append(
+                    {
+                        "z_from": float(cand.top_m),
+                        "z_to": float(cand.bot_m),
+                        "preliminary_type": str(soil.value),
+                        "qc_avg": qc_avg,
+                        "rf_avg": rf_avg,
+                        "method_label": method_used,
+                        "behavior_type": "preliminary",
+                        "comments": "Автосегментация, требуется ручная проверка",
+                        "confidence": 0.5,
+                    }
+                )
+            if local_intervals:
+                local_intervals_by_test[test_id] = local_intervals
+                local_series_by_test[test_id] = [
+                    {"depth": float(x[0]), "qc": float(x[1]), "fs": float(x[2]), "rf": (None if x[3] is None else float(x[3]))}
+                    for x in series
+                ]
+
+        assigned, clusters = correlate_intervals_to_global_iges(local_intervals_by_test)
+        if not clusters:
+            messagebox.showinfo("ИГЭ", "Недостаточно данных для предварительного формирования ИГЭ.")
+            return
+
+        self.ige_registry = {}
+        cluster_to_ige: dict[str, str] = {}
+        for idx, cl in enumerate(clusters, start=1):
+            ige_id = f"ИГЭ-{idx}"
+            cluster_to_ige[str(cl.get("cluster_id"))] = ige_id
+            soil_raw = str(cl.get("preliminary_type") or SoilType.SANDY_LOAM.value)
+            soil = SoilType.SANDY_LOAM
+            for st in (SoilType.SAND, SoilType.LOAM, SoilType.SANDY_LOAM, SoilType.CLAY, SoilType.PEAT):
+                if soil_raw == st.value:
+                    soil = st
+                    break
+            self.ige_registry[ige_id] = self._ensure_ige_cpt_fields(
+                {
+                    "soil_type": soil.value,
+                    "calc_mode": calc_mode_for_soil(soil).value,
+                    "style": dict(SOIL_STYLE.get(soil, {})),
+                    "label": ige_id,
+                    "ordinal": idx,
+                    "notes": f"Предварительная интерпретация ({method_used}) по данным qc/fs/Rf; требуется ручная проверка",
+                }
+            )
+
+        for test_id, t in test_objects_by_id.items():
+            items = list(assigned.get(test_id) or [])
+            layers: list[Layer] = []
+            auto_layers_payload: list[dict[str, object]] = []
+            for it in items:
+                cluster_id = str(it.get("cluster_id") or "")
+                ige_id = str(cluster_to_ige.get(cluster_id) or "ИГЭ-1")
+                ent = self._ensure_ige_cpt_fields(self._ensure_ige_entry(ige_id))
+                soil_val = str(ent.get("soil_type") or SoilType.SANDY_LOAM.value)
+                soil = SoilType.SANDY_LOAM
+                for st in SoilType:
+                    if soil_val == st.value:
+                        soil = st
+                        break
                 layers.append(
                     Layer(
-                        top_m=float(cand.top_m),
-                        bot_m=float(cand.bot_m),
+                        top_m=float(it.get("z_from", 0.0) or 0.0),
+                        bot_m=float(it.get("z_to", 0.0) or 0.0),
                         ige_id=ige_id,
                         soil_type=soil,
                         calc_mode=calc_mode_for_soil(soil),
@@ -1719,20 +1950,33 @@ class GeoCanvasEditor(tk.Tk):
                         ige_num=self._ige_id_to_num(ige_id),
                     )
                 )
-                self.ige_registry[ige_id] = self._ensure_ige_cpt_fields(
+                auto_layers_payload.append(
                     {
-                        "soil_type": soil.value,
-                        "calc_mode": calc_mode_for_soil(soil).value,
-                        "style": dict(SOIL_STYLE.get(soil, {})),
-                        "label": ige_id,
-                        "ordinal": self._ige_id_to_num(ige_id),
-                        "notes": "Предварительная интерпретация по данным qc/fs/Rf; требуется ручная проверка",
+                        "top_m": float(it.get("z_from", 0.0) or 0.0),
+                        "bot_m": float(it.get("z_to", 0.0) or 0.0),
+                        "soil_type": str(it.get("preliminary_type") or ""),
+                        "ige_id": ige_id,
+                        "method_label": method_used,
+                        "behavior_type": str(it.get("behavior_type") or "preliminary"),
+                        "confidence": float(it.get("confidence", 0.5) or 0.5),
+                        "comments": str(it.get("comments") or ""),
+                        "qc_avg": it.get("qc_avg"),
+                        "rf_avg": it.get("rf_avg"),
                     }
                 )
             if layers:
                 t.layers = normalize_layers(layers)
                 self._renumber_layers(t)
                 changed = True
+                auto_snapshot_tests.append(
+                    {
+                        "test_id": str(test_id),
+                        "tid": int(getattr(t, "tid", 0) or 0),
+                        "layers": auto_layers_payload,
+                        "series": list(local_series_by_test.get(test_id) or []),
+                        "has_problem_points": bool(getattr(t, "invalid", False)),
+                    }
+                )
 
         if not changed:
             messagebox.showinfo("ИГЭ", "Недостаточно данных для предварительного формирования ИГЭ.")
@@ -1748,6 +1992,345 @@ class GeoCanvasEditor(tk.Tk):
         self.schedule_graph_redraw()
         suffix = "" if not excluded_tests else f" Исключено опытов: {len(excluded_tests)}."
         self._set_status("Выполнено предварительное формирование ИГЭ по данным qc/fs/Rf. Проверьте границы и типы вручную." + suffix)
+        self._last_prebuild_snapshot = {
+            "created_at": now_iso(),
+            "method": str(getattr(self, "prebuild_method", "Базовый") or "Базовый"),
+            "region": str(getattr(self, "interpretation_region", "Общий") or "Общий"),
+            "custom_profile": copy.deepcopy(dict(getattr(self, "prebuild_custom_profile", {}) or {})),
+            "tests": auto_snapshot_tests,
+            "excluded_tests": [str(getattr(x, "orig_id", None) or f"test_{int(getattr(x, 'tid', 0))}") for x in (excluded_tests or [])],
+        }
+        self.interpretation_revision = int(getattr(self, "interpretation_revision", 0) or 0) + 1
+        ctx = self._current_prebuild_context()
+        self.prebuild_context = dict(ctx)
+        self.prebuild_context_hash = str(ctx.get("hash") or "")
+        self.training_eligible = True
+        self.training_block_reason = ""
+
+    def _on_prebuild_method_changed(self, value: str):
+        self._apply_interpretation_context_change(new_method=str(value or "Базовый"), new_region=None)
+
+    def _on_interpretation_region_changed(self, value: str):
+        self._apply_interpretation_context_change(new_method=None, new_region=str(value or "Общий"))
+
+    def _current_prebuild_context(self) -> dict[str, Any]:
+        used_ids = sorted(str(x.get("test_id") or "") for x in list((getattr(self, "_last_prebuild_snapshot", {}) or {}).get("tests") or []) if str(x.get("test_id") or "").strip())
+        return build_prebuild_context(
+            method=str(getattr(self, "prebuild_method", "Базовый") or "Базовый"),
+            region=str(getattr(self, "interpretation_region", "Общий") or "Общий"),
+            custom_profile=dict(getattr(self, "prebuild_custom_profile", {}) or {}),
+            used_test_ids=used_ids,
+            interpretation_revision=int(getattr(self, "interpretation_revision", 0) or 0),
+        )
+
+    def _is_context_match(self) -> bool:
+        current = self._current_prebuild_context()
+        prev = str(getattr(self, "prebuild_context_hash", "") or "")
+        if not prev:
+            return True
+        return str(current.get("hash") or "") == prev
+
+    def _mark_training_context_mismatch(self, reason: str = "context_changed_after_prebuild"):
+        self.training_eligible = False
+        self.training_block_reason = str(reason or "context_changed_after_prebuild")
+        self._last_training_validation = {
+            "eligible": False,
+            "reasons": ["Контекст интерпретации изменён после автоформирования"],
+            "checked_at": now_iso(),
+        }
+
+    def _ask_context_change_action(self) -> str:
+        dlg = tk.Toplevel(self)
+        dlg.title("Смена контекста интерпретации")
+        dlg.transient(self)
+        dlg.grab_set()
+        ttk.Label(
+            dlg,
+            text=(
+                "Метод интерпретации или регион изменён.\n"
+                "Текущие слои были сформированы в другом контексте.\n"
+                "Вы можете переформировать слои заново или продолжить работу\n"
+                "с текущими слоями без допуска к обучению."
+            ),
+            justify="left",
+        ).pack(padx=12, pady=(12, 8), anchor="w")
+        out = {"value": "cancel"}
+        row = ttk.Frame(dlg)
+        row.pack(fill="x", padx=12, pady=(0, 12))
+        ttk.Button(row, text="Сбросить и сформировать заново", command=lambda: (out.update(value="rebuild"), dlg.destroy())).pack(side="left", padx=(0, 6))
+        ttk.Button(row, text="Продолжить без обучения", command=lambda: (out.update(value="keep_no_training"), dlg.destroy())).pack(side="left", padx=6)
+        ttk.Button(row, text="Отмена", command=lambda: (out.update(value="cancel"), dlg.destroy())).pack(side="right")
+        self.wait_window(dlg)
+        return str(out.get("value") or "cancel")
+
+    def _apply_interpretation_context_change(self, *, new_method: str | None, new_region: str | None):
+        old_method = str(getattr(self, "prebuild_method", "Базовый") or "Базовый")
+        old_region = str(getattr(self, "interpretation_region", "Общий") or "Общий")
+        tgt_method = str(new_method if new_method is not None else old_method)
+        tgt_region = str(new_region if new_region is not None else old_region)
+        if tgt_method == old_method and tgt_region == old_region:
+            return
+
+        has_prebuild = bool(getattr(self, "_last_prebuild_snapshot", None))
+        if has_prebuild:
+            action = self._ask_context_change_action()
+            if action == "cancel":
+                if getattr(self, "ribbon_view", None):
+                    self.ribbon_view.prebuild_method_var.set(old_method)
+                    self.ribbon_view.interpretation_region_var.set(old_region)
+                return
+            if action == "rebuild":
+                self._push_undo()
+                self.prebuild_method = tgt_method
+                self.interpretation_region = tgt_region
+                self.preferred_home_region = tgt_region
+                self._save_home_region(tgt_region)
+                self.training_eligible = True
+                self.training_block_reason = ""
+                self._prebuild_iges_from_cpt_preliminary(push_undo=False)
+                if getattr(self, "ribbon_view", None):
+                    self.ribbon_view.prebuild_method_var.set(self.prebuild_method)
+                    self.ribbon_view.interpretation_region_var.set(self.interpretation_region)
+                return
+            if action == "keep_no_training":
+                self._push_undo()
+                self.prebuild_method = tgt_method
+                self.interpretation_region = tgt_region
+                self.preferred_home_region = tgt_region
+                self._save_home_region(tgt_region)
+                self._mark_training_context_mismatch("context_changed_after_prebuild")
+                if getattr(self, "ribbon_view", None):
+                    self.ribbon_view.prebuild_method_var.set(self.prebuild_method)
+                    self.ribbon_view.interpretation_region_var.set(self.interpretation_region)
+                return
+
+        self.prebuild_method = tgt_method
+        self.interpretation_region = tgt_region
+        self.preferred_home_region = tgt_region
+        self._save_home_region(tgt_region)
+
+    def _interpretation_status_ui_label(self) -> str:
+        mapping = {"draft": "Черновик", "in_progress": "В работе", "completed": "Завершено"}
+        return mapping.get(str(getattr(self, "interpretation_status", "draft") or "draft"), "Черновик")
+
+    def _on_interpretation_status_changed(self, value: str):
+        mapping = {"Черновик": "draft", "В работе": "in_progress", "Завершено": "completed"}
+        self.interpretation_status = mapping.get(str(value or "").strip(), "draft")
+
+    def _on_approved_for_training_changed(self, value: bool):
+        self.approved_for_training = bool(value)
+
+    def _training_snapshot_hash(self, manual_layers: dict[str, list[dict[str, object]]]) -> str:
+        payload = json.dumps(manual_layers, ensure_ascii=False, sort_keys=True)
+        return str(abs(hash(payload)))
+
+    def _collect_training_test_meta(self) -> list[dict[str, object]]:
+        snap = dict(getattr(self, "_last_prebuild_snapshot", {}) or {})
+        test_map = {str(x.get("test_id")): dict(x or {}) for x in (snap.get("tests") or [])}
+        excluded_ids = set(str(x) for x in (snap.get("excluded_tests") or []))
+        out: list[dict[str, object]] = []
+        for t in (self.tests or []):
+            test_id = str(getattr(t, "orig_id", None) or f"test_{int(getattr(t, 'tid', 0))}")
+            if test_id not in test_map:
+                continue
+            fl = (getattr(self, "flags", {}) or {}).get(getattr(t, "tid", -1))
+            invalid = bool(getattr(fl, "invalid", False) or getattr(t, "invalid", False))
+            meta = {
+                "test_id": test_id,
+                "is_real_field_data": not bool(getattr(t, "is_synthetic", False) or getattr(t, "is_copied", False) or getattr(self, "_is_debug_fixture_session", False)),
+                "is_synthetic": bool(getattr(t, "is_synthetic", False) or getattr(self, "_is_debug_fixture_session", False)),
+                "is_copied": bool(getattr(t, "is_copied", False)),
+                "is_invalid": invalid,
+                "is_excluded": bool(test_id in excluded_ids),
+                "export_on": bool(getattr(t, "export_on", True)),
+                "has_problem_points": bool(test_map.get(test_id, {}).get("has_problem_points", False)),
+            }
+            out.append(meta)
+        return out
+
+    def _evaluate_current_training_eligibility(self):
+        meta = self._collect_training_test_meta()
+        context_matches = bool(self._is_context_match())
+        return evaluate_training_case_eligibility(
+            interpretation_status=str(getattr(self, "interpretation_status", "draft") or "draft"),
+            approved_for_training=bool(getattr(self, "approved_for_training", False)),
+            has_prebuild_snapshot=bool(getattr(self, "_last_prebuild_snapshot", None)),
+            test_meta=meta,
+            context_matches_prebuild=context_matches and bool(getattr(self, "training_eligible", True)),
+            training_block_reason=str(getattr(self, "training_block_reason", "") or ""),
+        )
+
+    def _manual_layers_snapshot(self) -> dict[str, list[dict[str, object]]]:
+        out: dict[str, list[dict[str, object]]] = {}
+        for t in (self.tests or []):
+            key = str(getattr(t, "orig_id", None) or f"test_{int(getattr(t, 'tid', 0))}")
+            out[key] = [layer_brief(layer_to_dict(x)) for x in (getattr(t, "layers", []) or [])]
+        return out
+
+    def _build_training_diff(self) -> tuple[dict[str, object] | None, str]:
+        snap = dict(getattr(self, "_last_prebuild_snapshot", {}) or {})
+        if not snap:
+            return None, "Нет данных автоформирования. Сначала выполните предварительное формирование ИГЭ."
+        by_test_auto = {str(x.get("test_id")): list(x.get("layers") or []) for x in (snap.get("tests") or [])}
+        by_test_manual = self._manual_layers_snapshot()
+        diff_tests: list[dict[str, object]] = []
+        lines: list[str] = []
+        for test_id, auto_layers in by_test_auto.items():
+            manual_layers = list(by_test_manual.get(test_id) or [])
+            d = diff_layer_models([layer_brief(x) for x in auto_layers], manual_layers)
+            diff_tests.append({"test_id": test_id, "diff": d})
+            lines.append(f"[{test_id}]\n{make_diff_text(d)}")
+        return {"tests": diff_tests}, "\n\n".join(lines) if lines else "Отличий не найдено."
+
+    def _show_training_diff(self):
+        _diff, text = self._build_training_diff()
+        messagebox.showinfo("Отличия авто/ручного ИГЭ", text)
+
+    def _save_training_example(self):
+        diff_pack, text = self._build_training_diff()
+        if diff_pack is None:
+            messagebox.showwarning("Обучение", text)
+            return
+        eligibility = self._evaluate_current_training_eligibility()
+        if not eligibility.eligible:
+            reasons = "\n".join(f"- {r}" for r in (eligibility.reasons or []))
+            self._last_training_validation = {
+                "eligible": False,
+                "reasons": list(eligibility.reasons or []),
+                "checked_at": now_iso(),
+            }
+            messagebox.showwarning("Обучение запрещено", f"Сохранение обучающего примера недоступно:\n{reasons}")
+            return
+        snap = dict(getattr(self, "_last_prebuild_snapshot", {}) or {})
+        manual_snapshot = self._manual_layers_snapshot()
+        snapshot_hash = self._training_snapshot_hash(manual_snapshot)
+        prev = next(
+            (
+                ex
+                for ex in (self.training_examples or [])
+                if str(ex.get("project_name") or "") == str(getattr(self, "object_name", "") or "")
+                and str(ex.get("snapshot_hash") or "") == snapshot_hash
+                and bool(ex.get("is_active", True))
+            ),
+            None,
+        )
+        next_version = 1
+        for ex in (self.training_examples or []):
+            if str(ex.get("project_name") or "") == str(getattr(self, "object_name", "") or ""):
+                next_version = max(next_version, int(ex.get("example_version", 0) or 0) + 1)
+                ex["is_active"] = False
+        example = {
+            "example_id": f"{str(getattr(self, 'object_name', '') or 'project')}::{next_version}",
+            "created_at": now_iso(),
+            "project_name": str(getattr(self, "object_name", "") or ""),
+            "source_method": str(snap.get("method") or getattr(self, "prebuild_method", "Базовый")),
+            "interpretation_status": str(getattr(self, "interpretation_status", "draft") or "draft"),
+            "approved_for_training": bool(getattr(self, "approved_for_training", False)),
+            "example_version": int(next_version),
+            "interpretation_revision": int(getattr(self, "interpretation_revision", 0) or 0),
+            "snapshot_hash": snapshot_hash,
+            "is_active": True,
+            "replaced_example_id": (prev.get("example_id") if prev else None),
+            "custom_profile": copy.deepcopy(dict(snap.get("custom_profile") or {})),
+            "auto_segmentation": list(snap.get("tests") or []),
+            "manual_segmentation": manual_snapshot,
+            "diff": diff_pack,
+            "excluded_tests": list(snap.get("excluded_tests") or []),
+            "meta": {
+                "soundings_involved": len(list(snap.get("tests") or [])),
+                "has_problem_columns": any(bool(x.get("has_problem_points")) for x in (snap.get("tests") or [])),
+                "auto_method": str(snap.get("method") or ""),
+            },
+            "quality": {
+                "is_valid_for_training": True,
+                "rejection_reasons": [],
+                "used_test_ids": list(eligibility.used_test_ids or []),
+            },
+        }
+        self._training_snapshot_hash = snapshot_hash
+        self.training_eligible = True
+        self.training_block_reason = ""
+        self._last_training_validation = {
+            "eligible": True,
+            "reasons": [],
+            "checked_at": now_iso(),
+            "used_test_ids": list(eligibility.used_test_ids or []),
+        }
+        self.training_examples.append(example)
+        self.training_example_saved_at = str(example.get("created_at") or "")
+        self.training_example_version = int(next_version)
+        self.training_source_meta = {
+            "source_method": str(example.get("source_method") or ""),
+            "snapshot_hash": snapshot_hash,
+            "used_test_ids": list(eligibility.used_test_ids or []),
+        }
+        self._set_status(f"Сохранён обучающий пример #{len(self.training_examples)}")
+        repl = "" if prev is None else f"\nЗаменён предыдущий активный пример: {prev.get('example_id')}"
+        messagebox.showinfo("Обучение", f"Пример сохранён.\nВерсия: {next_version}{repl}\nВсего примеров: {len(self.training_examples)}\n\n{text}")
+
+    def _update_adaptive_profile(self):
+        examples = list(getattr(self, "training_examples", []) or [])
+        if not examples:
+            messagebox.showwarning("Обучение", "Нет сохранённых примеров для обновления профиля.")
+            return
+        filter_pack = filter_valid_training_examples(examples)
+        valid_examples = list(filter_pack.get("valid_examples") or [])
+        if not valid_examples:
+            msg = [
+                f"Всего примеров: {int(filter_pack.get('total', 0) or 0)}",
+                "Валидных для обучения: 0",
+                f"Отброшено: {int(filter_pack.get('rejected', 0) or 0)}",
+            ]
+            for k, v in sorted((filter_pack.get("reason_counts") or {}).items()):
+                msg.append(f"- {k}: {int(v)}")
+            self._last_profile_update_summary = {"updated_at": now_iso(), "stats": {"filter": filter_pack}}
+            messagebox.showwarning("Обновить профиль", "\n".join(msg))
+            return
+        old_profile = copy.deepcopy(dict(getattr(self, "prebuild_custom_profile", {}) or {}))
+        result = update_profile_from_examples(base_profile=old_profile, examples=valid_examples)
+        new_profile = dict(result.updated_profile or {})
+        adj = dict((result.stats or {}).get("adjusted") or {})
+        lines = [
+            f"Примеров всего: {int(filter_pack.get('total', 0) or 0)}",
+            f"Валидных для обучения: {int(filter_pack.get('valid', 0) or 0)}",
+            f"Отброшено: {int(filter_pack.get('rejected', 0) or 0)}",
+            "Изменения профиля:",
+        ]
+        for k, v in sorted((filter_pack.get("reason_counts") or {}).items()):
+            lines.append(f"- отбраковано [{k}]: {int(v)}")
+        if adj:
+            for k, v in adj.items():
+                lines.append(f"- {k}: {v.get('old')} -> {v.get('new')} ({v.get('reason')})")
+        else:
+            lines.append("- Значимых изменений не выявлено (осторожный режим).")
+        if not messagebox.askyesno("Обновить профиль", "\n".join(lines) + "\n\nПрименить?"):
+            return
+        self._push_undo()
+        self.prebuild_custom_profile = new_profile
+        self._last_profile_update_summary = {"updated_at": now_iso(), "stats": {**dict(result.stats or {}), "filter": filter_pack}}
+        self._set_status("Пользовательский профиль обновлён по обучающим примерам")
+
+    def _reset_adaptive_profile(self):
+        if not messagebox.askyesno("Сброс профиля", "Сбросить пользовательский профиль к базовым настройкам?"):
+            return
+        self._push_undo()
+        self.prebuild_custom_profile.update(
+            {
+                "min_layer_thickness_m": 0.8,
+                "smoothing_window": 5,
+                "boundary_q_jump": 2.0,
+                "boundary_fs_jump": 40.0,
+                "boundary_rf_jump": 0.8,
+                "merge_same_soil": True,
+                "rf_sand_max": 1.0,
+                "rf_sandy_loam_max": 2.5,
+                "max_layers": 6,
+                "auto_adjustments": [],
+            }
+        )
+        self.prebuild_custom_profile["last_updated_at"] = now_iso()
+        self.prebuild_custom_profile["training_confidence"] = "low"
+        self._set_status("Пользовательский профиль сброшен к базовым значениям")
 
     def redraw_all(self):
         self._sync_layers_panel()
@@ -1885,8 +2468,10 @@ class GeoCanvasEditor(tk.Tk):
                 }
             )
         self.ribbon_view.set_layers(rows, [x.value for x in SoilType], can_add=(len(keys) < MAX_LAYERS_PER_TEST), can_delete=(len(keys) > MIN_LAYERS_PER_TEST))
-        self._last_excluded_tests = list(excluded_tests or [])
-        self._sync_calc_table()
+        try:
+            self._sync_calc_table()
+        except Exception:
+            pass
         if rows:
             self.ribbon_view.layer_ige_var.set(str(rows[0].get("ige_id") or "ИГЭ-1"))
             self.ribbon_view.layer_soil_var.set(str(rows[0].get("soil") or ""))
@@ -2131,6 +2716,14 @@ class GeoCanvasEditor(tk.Tk):
                 "rename_ige": self._rename_ige_from_ribbon,
                 "set_layer_soil": self._set_layer_soil_from_ribbon,
                 "ige_prebuild_from_cpt": self._prebuild_iges_from_cpt_preliminary,
+                "prebuild_method_changed": self._on_prebuild_method_changed,
+                "interpretation_region_changed": self._on_interpretation_region_changed,
+                "interpretation_status_changed": self._on_interpretation_status_changed,
+                "approved_for_training_changed": self._on_approved_for_training_changed,
+                "save_training_example": self._save_training_example,
+                "show_training_diff": self._show_training_diff,
+                "update_adaptive_profile": self._update_adaptive_profile,
+                "reset_adaptive_profile": self._reset_adaptive_profile,
                 "calc_cpt": self.calculate_cpt_params,
                 "edit_ige_cpt": self._edit_selected_ige_cpt_params,
                 "apply_calc": lambda: self._redraw(),
@@ -2166,6 +2759,14 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
                 self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
                 self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
+                if getattr(self.ribbon_view, "prebuild_method_var", None):
+                    self.ribbon_view.prebuild_method_var.set(str(self.prebuild_method))
+                if getattr(self.ribbon_view, "interpretation_region_var", None):
+                    self.ribbon_view.interpretation_region_var.set(str(self.interpretation_region))
+                if getattr(self.ribbon_view, "interpretation_status_var", None):
+                    self.ribbon_view.interpretation_status_var.set(self._interpretation_status_ui_label())
+                if getattr(self.ribbon_view, "approved_for_training_var", None):
+                    self.ribbon_view.approved_for_training_var.set(bool(self.approved_for_training))
             except Exception:
                 pass
             ribbon.pack_forget()
@@ -2442,6 +3043,7 @@ class GeoCanvasEditor(tk.Tk):
         self.is_gxl = (self.geo_path.suffix.lower() == ".gxl")
         self.loaded_path = str(self.geo_path)
         self.project_path = None
+        self._is_debug_fixture_session = False
         self.load_and_render()
         try:
             _log_event(self.usage_logger, "OPEN", file=str(self.geo_path))
@@ -9336,6 +9938,7 @@ class GeoCanvasEditor(tk.Tk):
         had_geo_kind_in_state = "geo_kind" in dict(getattr(project, "state", {}) or {})
         normalized_state = self._normalized_project_state(project)
         self._restore(normalized_state)
+        self._is_debug_fixture_session = bool(getattr(self, "_is_debug_fixture_session", False))
         if src_ext in {"geo", "ge0"} and not had_geo_kind_in_state:
             self.geo_kind = "K2"
             if any(getattr(t, "incl", None) not in (None, []) for t in (getattr(self, "tests", []) or [])):
@@ -9362,6 +9965,13 @@ class GeoCanvasEditor(tk.Tk):
     def new_project_file(self):
         if not self._confirm_discard_if_dirty():
             return
+        self._is_debug_fixture_session = False
+        self.interpretation_region = str(getattr(self, "preferred_home_region", "Общий") or "Общий")
+        try:
+            if getattr(self, "ribbon_view", None):
+                self.ribbon_view.interpretation_region_var.set(str(self.interpretation_region))
+        except Exception:
+            pass
 
         dlg = tk.Toplevel(self)
         dlg.title("Создать проект")

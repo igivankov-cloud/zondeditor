@@ -138,6 +138,45 @@ def test_debug_protocol_text_contains_n_and_n_points_labels():
     assert "Комментарий по Rf" in text
 
 
+def test_debug_protocol_contains_training_block():
+    samples = _samples_from_fixture("test_1_basic_stable.json")
+    text = build_debug_protocol_text(
+        project_name="Тест training",
+        profile_id="DEFAULT_CURRENT",
+        samples=samples,
+        calc_options={
+            "interpretation_status": "completed",
+            "approved_for_training": True,
+            "training_info": {
+                "method": "Пользовательский",
+                "region": "ХМАО",
+                "current_context_hash": "ctx1",
+                "prebuild_context_hash": "ctx0",
+                "context_matches": False,
+                "training_eligible": False,
+                "training_block_reason": "context_changed_after_prebuild",
+                "used_trained_profile": True,
+                "profile_state": "medium",
+                "examples_count": 3,
+                "profile_source": "обученный",
+                "saved_training_example": True,
+                "case_eligibility": {"eligible": False, "reasons": ["test reason"]},
+                "examples_filter": {"total": 5, "valid": 2, "rejected": 3, "reason_counts": {"invalid_data_flags": 2}},
+            }
+        },
+    )
+    assert "Блок адаптации/обучения" in text
+    assert "Метод интерпретации: Пользовательский" in text
+    assert "Примеров у профиля: 3" in text
+    assert "Статус интерпретации: completed" in text
+    assert "Допуск в обучение: да" in text
+    assert "Регион интерпретации: ХМАО" in text
+    assert "Контекст совпадает с prebuild: нет" in text
+    assert "Причина блокировки training: context_changed_after_prebuild" in text
+    assert "Текущий кейс пригоден для обучения: нет" in text
+    assert "Примеров валидных: 2" in text
+
+
 def test_excluded_disabled_or_invalid_soundings_not_used_in_samples():
     f = _load_fixture("test_1_basic_stable.json")
     snap = f["snapshot"]

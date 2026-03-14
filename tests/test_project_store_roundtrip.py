@@ -29,6 +29,16 @@ def test_project_store_roundtrip_preserves_state_and_settings(tmp_path: Path):
             "step_m": 0.05,
             "depth_start": 0.0,
             "show_graphs": False,
+            "interpretation_status": "completed",
+            "approved_for_training": True,
+            "interpretation_revision": 3,
+            "training_example_version": 2,
+            "training_snapshot_hash": "abc123",
+            "interpretation_region": "ХМАО",
+            "preferred_home_region": "ЯНАО",
+            "prebuild_context_hash": "ctx123",
+            "training_eligible": False,
+            "training_block_reason": "context_changed_after_prebuild",
         },
         ops=[{"op": "noop"}],
     )
@@ -44,4 +54,12 @@ def test_project_store_roundtrip_preserves_state_and_settings(tmp_path: Path):
     assert loaded.state["geo_kind"] == "K4"
     assert loaded.state["common_params"]["cone_kn"] == "50"
     assert loaded.state["step_m"] == 0.05
+    assert loaded.state["interpretation_status"] == "completed"
+    assert loaded.state["approved_for_training"] is True
+    assert loaded.state["interpretation_revision"] == 3
+    assert loaded.state["training_example_version"] == 2
+    assert loaded.state["interpretation_region"] == "ХМАО"
+    assert loaded.state["preferred_home_region"] == "ЯНАО"
+    assert loaded.state["prebuild_context_hash"] == "ctx123"
+    assert loaded.state["training_eligible"] is False
     assert source_bytes == b"abc"
