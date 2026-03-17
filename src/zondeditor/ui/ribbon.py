@@ -4,8 +4,8 @@ from __future__ import annotations
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
 # - _apply_compact_ribbon_height: L107–L120 — ограничение высоты Notebook по эталону вкладки «Параметры».
 # - _build_layers_tab: L282–L301 — область ИГЭ с внутренним вертикальным скроллом и компактной высотой карточек.
-# - _build_calc_tab: L303–L336 — вкладка «Расчёт» в ленте содержит только параметры и актуальные подписи нормативки.
-# - _on_tab_changed/current_tab_title: L355–L366 — уведомление редактора о смене вкладки и чтение активной вкладки.
+# - _build_calc_tab: L303–L325 — вкладка «Расчёт» в ленте содержит фиксированные подписи нормативки без dropdown.
+# - _on_tab_changed/current_tab_title: L344–L355 — уведомление редактора о смене вкладки и чтение активной вкладки.
 # === FILE MAP END ===
 
 
@@ -49,7 +49,7 @@ class RibbonView(ttk.Frame):
         self._add_ige_btn = None
         self._ige_order: list[str] = []
         self.calc_cpt_method_var = tk.StringVar(value="СП 446.1325800.2019 (с Изм. № 1), приложение Ж")
-        self.calc_transition_method_var = tk.StringVar(value="СП 22.13330.2016 (с Изм. № 1–5), пп. 5.3.16–5.3.17")
+        self.calc_transition_method_var = tk.StringVar(value="СП 22.13330.2016 (с Изм. № 1–5), п. 5.3.17")
         self.calc_allow_normative_lt6_var = tk.BooleanVar(value=False)
         self.calc_legacy_sandy_loam_var = tk.BooleanVar(value=False)
         self.calc_fill_preliminary_var = tk.BooleanVar(value=False)
@@ -308,32 +308,21 @@ class RibbonView(ttk.Frame):
         params.pack(fill="x", expand=False)
 
         ttk.Label(params, text="Расчёт по результатам зондирования:").grid(row=0, column=0, sticky="w")
-        self.calc_cpt_method_combo = ttk.Combobox(
+        ttk.Label(
             params,
-            state="readonly",
-            textvariable=self.calc_cpt_method_var,
-            values=[
-                "СП 446.1325800.2019 (с Изм. № 1), приложение Ж",
-                "СНиП 2.02.01-83* (legacy / историческая ссылка), п. 12.4 — для опор мостов",
-            ],
-            width=44,
-        )
-        self.calc_cpt_method_combo.grid(row=0, column=1, sticky="w", padx=(6, 0))
-        self.calc_cpt_method_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("calc_option_changed", lambda *_: None)("cpt_method", self.calc_cpt_method_var.get()))
+            text="СП 446.1325800.2019 (с Изм. № 1), приложение Ж",
+            foreground="#1f2b3a",
+        ).grid(row=0, column=1, sticky="w", padx=(6, 0))
 
         ttk.Label(params, text="Переход к нормативным / расчётным значениям:").grid(row=1, column=0, sticky="w", pady=(4, 0))
-        self.calc_transition_method_combo = ttk.Combobox(
+        ttk.Label(
             params,
-            state="readonly",
-            textvariable=self.calc_transition_method_var,
-            values=["СП 22.13330.2016 (с Изм. № 1–5), пп. 5.3.16–5.3.17"],
-            width=44,
-        )
-        self.calc_transition_method_combo.grid(row=1, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
-        self.calc_transition_method_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("calc_option_changed", lambda *_: None)("transition_method", self.calc_transition_method_var.get()))
+            text="СП 22.13330.2016 (с Изм. № 1–5), п. 5.3.17",
+            foreground="#1f2b3a",
+        ).grid(row=1, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
 
-        ttk.Checkbutton(params, text="Рассчитывать нормативные значения при N < 6", variable=self.calc_allow_normative_lt6_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_normative_lt6", bool(self.calc_allow_normative_lt6_var.get()))).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        ttk.Checkbutton(params, text="Рассчитывать супесь по старой редакции СП 446", variable=self.calc_legacy_sandy_loam_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("use_legacy_sandy_loam_sp446", bool(self.calc_legacy_sandy_loam_var.get()))).grid(row=3, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        ttk.Checkbutton(params, text="Рассчитывать нормативные значения при n < 6 (см. ГОСТ 20522-2012, п. 4.10)", variable=self.calc_allow_normative_lt6_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_normative_lt6", bool(self.calc_allow_normative_lt6_var.get()))).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(params, text="Рассчитать супесь по редакции СП 446.1325800.2019 до Изм. № 1", variable=self.calc_legacy_sandy_loam_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("use_legacy_sandy_loam_sp446", bool(self.calc_legacy_sandy_loam_var.get()))).grid(row=3, column=0, columnspan=2, sticky="w", pady=(2, 0))
         ttk.Checkbutton(params, text="Разрешить предварительный расчёт насыпного по материалу", variable=self.calc_fill_preliminary_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_fill_preliminary", bool(self.calc_fill_preliminary_var.get()))).grid(row=4, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
     def _build_protocol_tab(self):

@@ -661,7 +661,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
                 self.ribbon_view.set_layer_edit_mode(True)
                 self.ribbon_view.calc_cpt_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).cpt_method or "СП 446.1325800.2019 (с Изм. № 1), приложение Ж"))
-                self.ribbon_view.calc_transition_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).transition_method or "СП 22.13330.2016 (с Изм. № 1–5), пп. 5.3.16–5.3.17"))
+                self.ribbon_view.calc_transition_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).transition_method or "СП 22.13330.2016 (с Изм. № 1–5), п. 5.3.17"))
                 self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
                 self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
                 self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
@@ -1408,7 +1408,7 @@ class GeoCanvasEditor(tk.Tk):
         if key == "cpt_method":
             self.calc_tab_state.cpt_method = str(value or "СП 446.1325800.2019 (с Изм. № 1), приложение Ж")
         elif key == "transition_method":
-            self.calc_tab_state.transition_method = str(value or "СП 22.13330.2016 (с Изм. № 1–5), пп. 5.3.16–5.3.17")
+            self.calc_tab_state.transition_method = str(value or "СП 22.13330.2016 (с Изм. № 1–5), п. 5.3.17")
         elif key == "allow_normative_lt6":
             self.calc_tab_state.allow_normative_lt6 = bool(value)
         elif key == "use_legacy_sandy_loam_sp446":
@@ -1940,7 +1940,7 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view.set_layer_edit_mode(True)
             try:
                 self.ribbon_view.calc_cpt_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).cpt_method or "СП 446.1325800.2019 (с Изм. № 1), приложение Ж"))
-                self.ribbon_view.calc_transition_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).transition_method or "СП 22.13330.2016 (с Изм. № 1–5), пп. 5.3.16–5.3.17"))
+                self.ribbon_view.calc_transition_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).transition_method or "СП 22.13330.2016 (с Изм. № 1–5), п. 5.3.17"))
                 self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
                 self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
                 self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
