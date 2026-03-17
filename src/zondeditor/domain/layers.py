@@ -175,36 +175,39 @@ def layer_from_dict(data: dict[str, Any]) -> Layer:
 def build_default_layers(depth_top_m: float, depth_bot_m: float) -> list[Layer]:
     top = snap_depth(float(depth_top_m))
     bot = snap_depth(float(depth_bot_m))
-    min_total = MIN_LAYER_THICKNESS_M * 2.0
+    min_total = MIN_LAYER_THICKNESS_M * 3.0
     if bot < top + min_total:
         bot = top + min_total
-    mid = snap_depth((top + bot) * 0.5)
-    if mid < top + MIN_LAYER_THICKNESS_M:
-        mid = top + MIN_LAYER_THICKNESS_M
-    if mid > bot - MIN_LAYER_THICKNESS_M:
-        mid = bot - MIN_LAYER_THICKNESS_M
-    top_soil = SoilType.SANDY_LOAM
-    bot_soil = SoilType.SAND
-    return [
-        Layer(
-            top_m=top,
-            bot_m=mid,
-            ige_id="ИГЭ-1",
-            soil_type=top_soil,
-            calc_mode=calc_mode_for_soil(top_soil),
-            style=dict(SOIL_STYLE.get(top_soil, {})),
-            ige_num=1,
-        ),
-        Layer(
-            top_m=mid,
-            bot_m=bot,
-            ige_id="ИГЭ-2",
-            soil_type=bot_soil,
-            calc_mode=calc_mode_for_soil(bot_soil),
-            style=dict(SOIL_STYLE.get(bot_soil, {})),
-            ige_num=2,
-        ),
-    ]
+
+    span = bot - top
+    b1 = snap_depth(top + span / 3.0)
+    b2 = snap_depth(top + (2.0 * span) / 3.0)
+
+    if b1 < top + MIN_LAYER_THICKNESS_M:
+        b1 = top + MIN_LAYER_THICKNESS_M
+    if b2 < b1 + MIN_LAYER_THICKNESS_M:
+        b2 = b1 + MIN_LAYER_THICKNESS_M
+    if b2 > bot - MIN_LAYER_THICKNESS_M:
+        b2 = bot - MIN_LAYER_THICKNESS_M
+        if b1 > b2 - MIN_LAYER_THICKNESS_M:
+            b1 = b2 - MIN_LAYER_THICKNESS_M
+
+    soils = (SoilType.LOAM, SoilType.SAND, SoilType.CLAY)
+    bounds = ((top, b1), (b1, b2), (b2, bot))
+    out: list[Layer] = []
+    for idx, ((a, b), soil) in enumerate(zip(bounds, soils), start=1):
+        out.append(
+            Layer(
+                top_m=float(a),
+                bot_m=float(b),
+                ige_id=f"ИГЭ-{idx}",
+                soil_type=soil,
+                calc_mode=calc_mode_for_soil(soil),
+                style=dict(SOIL_STYLE.get(soil, {})),
+                ige_num=idx,
+            )
+        )
+    return out
 
 
 def normalize_layers(layers: list[Layer]) -> list[Layer]:

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 # === FILE MAP BEGIN ===
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
-# - _build_layers_tab: L282–L301 — область ИГЭ в верхней ленте (компактная высота + вертикальный скролл).
-# - _build_dynamic_ige_fields: L454–L500 — динамические поля карточек ИГЭ, включая признак «аллювиальный».
-# - _build_ige_column: L502–L548 — компактная геометрия карточки ИГЭ (рамка/паддинги/высота).
-# - _build_calc_tab: L303–L326 — фиксированные подписи нормативки без dropdown во вкладке «Расчёт».
-# - _on_tab_changed/current_tab_title: L344–L355 — уведомление редактора о смене вкладки и чтение активной вкладки.
+# - _apply_compact_ribbon_height: L107–L120 — компактная высота ленты с небольшим запасом для карточек ИГЭ.
+# - _build_layers_tab: L283–L302 — область ИГЭ в верхней ленте (высота + вертикальный скролл).
+# - _build_calc_tab: L304–L327 — фиксированные подписи нормативки без dropdown во вкладке «Расчёт».
+# - _build_dynamic_ige_fields: L455–L501 — динамические поля карточек ИГЭ, включая признак «аллювиальный».
+# - _build_ige_column: L503–L549 — компактная геометрия карточки ИГЭ (рамка/паддинги/высота).
+# - _on_tab_changed/current_tab_title: L345–L356 — уведомление редактора о смене вкладки и чтение активной вкладки.
 # === FILE MAP END ===
 
 
@@ -111,10 +112,10 @@ class RibbonView(ttk.Frame):
             return
         try:
             self.update_idletasks()
-            target_h = int(params_tab.winfo_reqheight())
+            target_h = int(params_tab.winfo_reqheight()) + 14
         except Exception:
             return
-        target_h = max(110, min(target_h, 180))
+        target_h = max(124, min(target_h, 192))
         try:
             self.tabs.configure(height=target_h)
         except Exception:
@@ -286,7 +287,7 @@ class RibbonView(ttk.Frame):
 
         host = ttk.Frame(tab)
         host.pack(fill="both", expand=True)
-        self._ige_canvas = tk.Canvas(host, height=150, highlightthickness=0, bd=0)
+        self._ige_canvas = tk.Canvas(host, height=154, highlightthickness=0, bd=0)
         self._ige_canvas.pack(side="left", fill="both", expand=True)
         self._ige_vscroll = ttk.Scrollbar(host, orient="vertical", command=self._ige_canvas.yview)
         self._ige_vscroll.pack(side="right", fill="y")
@@ -315,7 +316,7 @@ class RibbonView(ttk.Frame):
             foreground="#1f2b3a",
         ).grid(row=0, column=1, sticky="w", padx=(6, 0))
 
-        ttk.Label(params, text="Переход к нормативным / расчётным значениям:").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Label(params, text="Переход от нормативных к расчётным значениям:").grid(row=1, column=0, sticky="w", pady=(4, 0))
         ttk.Label(
             params,
             text="СП 22.13330.2016 (с Изм. № 1–5), п. 5.3.17",
@@ -506,7 +507,7 @@ class RibbonView(ttk.Frame):
         card = tk.Frame(parent, padx=2, pady=1, bd=0, highlightthickness=1, highlightbackground="#d4d8de", highlightcolor="#d4d8de")
         card.pack(side="left", fill="y", padx=(0, max(2, gap)))
         try:
-            card.configure(width=card_w, height=156)
+            card.configure(width=card_w, height=158)
             card.pack_propagate(False)
         except Exception:
             pass
