@@ -2,10 +2,10 @@
 # Auto-generated from tools/_ui_extract/GeoCanvasEditor.py (Step19)
 # === FILE MAP BEGIN ===
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
-# - __init__: L136–L266 — стартовая инициализация, включая дефолтный реестр 3 ИГЭ (суглинок/песок/глина).
-# - _ensure_default_iges: L1337–L1354 — предзаполнение ИГЭ для нового проекта при пустом реестре.
-# - _build_ui: L1740–L2190 — сборка root layout и контейнеров рабочей области.
-# - _sync_workspace_visibility: L2195–L2241 — переключение между основной областью зондирования и calc workspace.
+# - _extract_base_ige_num/_used_base_ige_ordinals: L1120–L1139 — поиск базовых имён ИГЭ-N для выбора следующего свободного номера.
+# - _next_free_ige_ordinal/_next_free_ige_id: L1141–L1340 — генерация ближайшего свободного базового имени ИГЭ.
+# - _add_unassigned_ige_from_ribbon: L1371–L1383 — добавление нового ИГЭ с пустым типом грунта.
+# - _rename_ige_from_ribbon: L1635–L1670 — переименование ИГЭ с проверкой уникальности и обновлением ссылок в слоях.
 # === FILE MAP END ===
 
 from __future__ import annotations
@@ -1117,14 +1117,29 @@ class GeoCanvasEditor(tk.Tk):
             ord_num = self._ige_id_to_num(ige_id)
         return max(1, ord_num), str(ige_id or "")
 
-    def _next_free_ige_ordinal(self) -> int:
+    def _extract_base_ige_num(self, raw_name: str) -> int | None:
+        name = str(raw_name or "").strip()
+        m = re.fullmatch(r"ИГЭ-(\d+)", name)
+        if not m:
+            return None
+        try:
+            n = int(m.group(1))
+        except Exception:
+            return None
+        return n if n > 0 else None
+
+    def _used_base_ige_ordinals(self) -> set[int]:
         used: set[int] = set()
         for ige_id in (self.ige_registry or {}).keys():
             ent = self._ensure_ige_entry(str(ige_id or ""))
-            try:
-                used.add(max(1, int(ent.get("ordinal", self._ige_id_to_num(ige_id)))))
-            except Exception:
-                used.add(self._ige_id_to_num(ige_id))
+            for candidate in (str(ent.get("label", "") or "").strip(), str(ige_id or "").strip()):
+                num = self._extract_base_ige_num(candidate)
+                if num is not None:
+                    used.add(int(num))
+        return used
+
+    def _next_free_ige_ordinal(self) -> int:
+        used = self._used_base_ige_ordinals()
         n = 1
         while n in used:
             n += 1
@@ -1360,7 +1375,7 @@ class GeoCanvasEditor(tk.Tk):
         self._push_undo()
         new_ord = self._next_free_ige_ordinal()
         new_ige_id = self._next_free_ige_id()
-        self.ige_registry[new_ige_id] = self._ensure_ige_cpt_fields({"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {})), "label": self._ige_default_label(new_ord), "ordinal": int(new_ord)})
+        self.ige_registry[new_ige_id] = self._ensure_ige_cpt_fields({"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}, "label": self._ige_default_label(new_ord), "ordinal": int(new_ord)})
         self._sync_layers_panel()
         self.schedule_graph_redraw()
         if getattr(self, "ribbon_view", None):
@@ -1621,18 +1636,40 @@ class GeoCanvasEditor(tk.Tk):
         old_key = str(old_id or "").strip()
         if not old_key or old_key not in (self.ige_registry or {}):
             return
-        lbl = str(new_label or "").strip()
         ent = self._ensure_ige_entry(old_key)
-        current_lbl = str(ent.get("label", old_key) or old_key).strip()
+        lbl = str(new_label or "").strip()
         if not lbl:
             try:
                 lbl = self._ige_default_label(int(ent.get("ordinal", self._ige_id_to_num(old_key)) or self._ige_id_to_num(old_key)))
             except Exception:
                 lbl = old_key
-        if lbl == current_lbl:
+        if lbl == old_key:
+            if str(ent.get("label", old_key) or old_key).strip() != lbl:
+                self._push_undo()
+                ent["label"] = str(lbl)
+                self._sync_layers_panel()
+                self.schedule_graph_redraw()
             return
+        if lbl in (self.ige_registry or {}):
+            messagebox.showwarning("Переименование ИГЭ", f"ИГЭ с именем «{lbl}» уже существует.")
+            return
+
         self._push_undo()
-        ent["label"] = str(lbl)
+        ent_obj = self.ige_registry.pop(old_key)
+        ent_obj["label"] = str(lbl)
+        self.ige_registry[str(lbl)] = ent_obj
+
+        for t in (self.tests or []):
+            for lyr in self._ensure_test_layers(t):
+                if str(getattr(lyr, "ige_id", "") or "").strip() == old_key:
+                    lyr.ige_id = str(lbl)
+                    lyr.ige_num = self._ige_id_to_num(str(lbl))
+
+        if getattr(self, "ribbon_view", None):
+            try:
+                self.ribbon_view.layer_ige_var.set(str(lbl))
+            except Exception:
+                pass
         self._sync_layers_panel()
         self.schedule_graph_redraw()
 

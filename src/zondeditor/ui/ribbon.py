@@ -2,12 +2,9 @@ from __future__ import annotations
 
 # === FILE MAP BEGIN ===
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
-# - _apply_compact_ribbon_height: L107–L120 — компактная высота ленты с небольшим запасом для карточек ИГЭ.
-# - _build_layers_tab: L283–L302 — область ИГЭ в верхней ленте (высота + вертикальный скролл).
-# - _build_calc_tab: L304–L327 — фиксированные подписи нормативки без dropdown во вкладке «Расчёт».
-# - _build_dynamic_ige_fields: L455–L501 — динамические поля карточек ИГЭ, включая признак «аллювиальный».
-# - _build_ige_column: L503–L549 — компактная геометрия карточки ИГЭ (рамка/паддинги/высота).
-# - _on_tab_changed/current_tab_title: L345–L356 — уведомление редактора о смене вкладки и чтение активной вкладки.
+# - _set_combo_placeholder: L437–L456 — placeholder-логика ComboBox (поддержка пустого значения без автоподстановки).
+# - _build_dynamic_ige_fields: L459–L507 — динамические поля карточек ИГЭ, включая признак «аллювиальный».
+# - _build_ige_column: L509–L555 — сборка карточки ИГЭ; тип грунта может оставаться пустым для нового ИГЭ.
 # === FILE MAP END ===
 
 
@@ -434,10 +431,13 @@ class RibbonView(ttk.Frame):
         if callable(cmd):
             cmd(str(ige_id or "").strip(), str(new_label or "").strip())
 
-    def _set_combo_placeholder(self, cb: ttk.Combobox, var: tk.StringVar, default_value: str):
+    def _set_combo_placeholder(self, cb: ttk.Combobox, var: tk.StringVar, default_value: str | None = None):
         if not str(var.get() or "").strip():
-            var.set(default_value)
-            cb._user_selected = False
+            if str(default_value or "").strip():
+                var.set(str(default_value))
+                cb._user_selected = False
+            else:
+                cb._user_selected = False
         else:
             cb._user_selected = True
 
@@ -455,6 +455,8 @@ class RibbonView(ttk.Frame):
 
     def _build_dynamic_ige_fields(self, parent, ige_id: str, row: dict):
         soil = str(row.get("soil", "") or "").lower()
+        if not soil.strip():
+            return
         if "пес" in soil and "супес" not in soil:
             sand_kind = tk.StringVar(value=str(row.get("sand_kind", "") or ""))
             cb_kind = ttk.Combobox(parent, state="readonly", width=16, values=["гравелистый", "крупный", "средней крупности", "мелкий", "пылеватый"], textvariable=sand_kind)
@@ -531,7 +533,7 @@ class RibbonView(ttk.Frame):
         soil_var = tk.StringVar(value=str(row.get("soil", "") or ""))
         cb_soil = ttk.Combobox(body, state="readonly", width=18, values=list(soil_values or []), textvariable=soil_var)
         cb_soil.grid(row=0, column=0, sticky="ew")
-        self._set_combo_placeholder(cb_soil, soil_var, "супесь")
+        self._set_combo_placeholder(cb_soil, soil_var, None)
         cb_soil.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, sv=soil_var: self.commands.get("edit_ige", lambda *_: None)(ig, sv.get(), ""))
 
         dyn = ttk.Frame(body)
