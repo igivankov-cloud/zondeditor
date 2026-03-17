@@ -112,10 +112,10 @@ class RibbonView(ttk.Frame):
             return
         try:
             self.update_idletasks()
-            target_h = int(params_tab.winfo_reqheight()) + 14
+            target_h = int(params_tab.winfo_reqheight()) + 26
         except Exception:
             return
-        target_h = max(124, min(target_h, 192))
+        target_h = max(138, min(target_h, 208))
         try:
             self.tabs.configure(height=target_h)
         except Exception:
