@@ -2,10 +2,10 @@
 # Auto-generated from tools/_ui_extract/GeoCanvasEditor.py (Step19)
 # === FILE MAP BEGIN ===
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
-# - _build_ui: L1737–L2188 — сборка root layout и создание отдельного calc workspace под лентой.
-# - _sync_calc_table: L1475–L1506 — заполнение таблиц результатов расчёта (основная область + резервная цель).
-# - _sync_workspace_visibility: L2192–L2238 — переключение между основной областью зондирования и calc workspace.
-# - _build_calc_workspace: L2240–L2268 — кнопки расчёта и таблица результатов в нижнем рабочем поле.
+# - _build_ui: L1738–L2188 — сборка root layout и создание отдельного calc workspace под лентой.
+# - _sync_calc_table: L1476–L1507 — заполнение таблиц результатов расчёта (основная область + резервная цель).
+# - _sync_workspace_visibility: L2193–L2239 — переключение между основной областью зондирования и calc workspace.
+# - _build_calc_workspace: L2241–L2269 — кнопки расчёта и таблица результатов в нижнем рабочем поле.
 # === FILE MAP END ===
 
 from __future__ import annotations
@@ -660,8 +660,8 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.set_display_sort_mode(str(self.display_sort_mode))
                 self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
                 self.ribbon_view.set_layer_edit_mode(True)
-                self.ribbon_view.calc_cpt_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).cpt_method or "СП 446.1325800.2019, приложение Ж"))
-                self.ribbon_view.calc_transition_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).transition_method or "СП 22.13330.2016 (п. 5.3.17)"))
+                self.ribbon_view.calc_cpt_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).cpt_method or "СП 446.1325800.2019 (с Изм. № 1), приложение Ж"))
+                self.ribbon_view.calc_transition_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).transition_method or "СП 22.13330.2016 (с Изм. № 1–5), пп. 5.3.16–5.3.17"))
                 self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
                 self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
                 self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
@@ -1406,9 +1406,9 @@ class GeoCanvasEditor(tk.Tk):
         if not key:
             return
         if key == "cpt_method":
-            self.calc_tab_state.cpt_method = str(value or "СП 446.1325800.2019, приложение Ж")
+            self.calc_tab_state.cpt_method = str(value or "СП 446.1325800.2019 (с Изм. № 1), приложение Ж")
         elif key == "transition_method":
-            self.calc_tab_state.transition_method = str(value or "СП 22.13330.2016 (п. 5.3.17)")
+            self.calc_tab_state.transition_method = str(value or "СП 22.13330.2016 (с Изм. № 1–5), пп. 5.3.16–5.3.17")
         elif key == "allow_normative_lt6":
             self.calc_tab_state.allow_normative_lt6 = bool(value)
         elif key == "use_legacy_sandy_loam_sp446":
@@ -1939,8 +1939,8 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view.set_display_sort_mode(str(getattr(self, "display_sort_mode", "date")))
             self.ribbon_view.set_layer_edit_mode(True)
             try:
-                self.ribbon_view.calc_cpt_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).cpt_method or "СП 446.1325800.2019, приложение Ж"))
-                self.ribbon_view.calc_transition_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).transition_method or "СП 22.13330.2016 (п. 5.3.17)"))
+                self.ribbon_view.calc_cpt_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).cpt_method or "СП 446.1325800.2019 (с Изм. № 1), приложение Ж"))
+                self.ribbon_view.calc_transition_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).transition_method or "СП 22.13330.2016 (с Изм. № 1–5), пп. 5.3.16–5.3.17"))
                 self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
                 self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
                 self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
@@ -8477,7 +8477,7 @@ class GeoCanvasEditor(tk.Tk):
         gwl_scale_var = tk.DoubleVar(value=float(gwl_curr) if gwl_curr not in (None, "") else 0.0)
 
         ttk.Label(frm, text="Методика:").pack(anchor="w")
-        ttk.Radiobutton(frm, text="СП 446.1325800.2019 (Приложение Ж)", variable=method_var, value=METHOD_SP446).pack(anchor="w")
+        ttk.Radiobutton(frm, text="СП 446.1325800.2019 (с Изм. № 1), приложение Ж", variable=method_var, value=METHOD_SP446).pack(anchor="w")
         ttk.Radiobutton(frm, text="СП 11-105-97 (Приложение И)", variable=method_var, value=METHOD_SP11).pack(anchor="w")
         ttk.Label(frm, text="Пески: alluvial = да (фиксировано)", foreground="#3d5f99").pack(anchor="w", pady=(6, 0))
 
