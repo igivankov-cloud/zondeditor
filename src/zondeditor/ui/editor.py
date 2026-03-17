@@ -1,5 +1,13 @@
 # src/zondeditor/ui/editor.py
 # Auto-generated from tools/_ui_extract/GeoCanvasEditor.py (Step19)
+# === FILE MAP BEGIN ===
+# FILE MAP (обновляй при правках; указывай строки Lx–Ly)
+# - _extract_base_ige_num/_used_base_ige_ordinals: L1120–L1139 — поиск базовых имён ИГЭ-N для выбора следующего свободного номера.
+# - _next_free_ige_ordinal/_next_free_ige_id: L1141–L1340 — генерация ближайшего свободного базового имени ИГЭ.
+# - _add_unassigned_ige_from_ribbon: L1371–L1383 — добавление нового ИГЭ с пустым типом грунта.
+# - _rename_ige_from_ribbon: L1635–L1670 — переименование ИГЭ с проверкой уникальности и обновлением ссылок в слоях.
+# === FILE MAP END ===
+
 from __future__ import annotations
 
 import tkinter as tk
@@ -248,8 +256,9 @@ class GeoCanvasEditor(tk.Tk):
         self._editor_just_opened = False
         self._inline_edit_active = False
         self.ige_registry: dict[str, dict[str, object]] = {
-            "ИГЭ-1": {"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {}))},
-            "ИГЭ-2": {"soil_type": SoilType.SAND.value, "calc_mode": calc_mode_for_soil(SoilType.SAND).value, "style": dict(SOIL_STYLE.get(SoilType.SAND, {}))},
+            "ИГЭ-1": {"soil_type": SoilType.LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.LOAM, {})), "label": "ИГЭ-1", "ordinal": 1},
+            "ИГЭ-2": {"soil_type": SoilType.SAND.value, "calc_mode": calc_mode_for_soil(SoilType.SAND).value, "style": dict(SOIL_STYLE.get(SoilType.SAND, {})), "label": "ИГЭ-2", "ordinal": 2},
+            "ИГЭ-3": {"soil_type": SoilType.CLAY.value, "calc_mode": calc_mode_for_soil(SoilType.CLAY).value, "style": dict(SOIL_STYLE.get(SoilType.CLAY, {})), "label": "ИГЭ-3", "ordinal": 3},
         }
         self.layer_store = LayerStore()
         self._debug_layers_overlay = bool(os.environ.get("ZONDEDITOR_DEBUG_LAYERS") == "1")
@@ -652,8 +661,8 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.set_display_sort_mode(str(self.display_sort_mode))
                 self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
                 self.ribbon_view.set_layer_edit_mode(True)
-                self.ribbon_view.calc_cpt_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).cpt_method or "СП 446.1325800.2019, приложение Ж"))
-                self.ribbon_view.calc_transition_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).transition_method or "СП 22.13330.2016 (п. 5.3.17)"))
+                self.ribbon_view.calc_cpt_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).cpt_method or "СП 446.1325800.2019 (с Изм. № 1), приложение Ж"))
+                self.ribbon_view.calc_transition_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).transition_method or "СП 22.13330.2016 (с Изм. № 1–5), п. 5.3.17"))
                 self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
                 self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
                 self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
@@ -1108,14 +1117,29 @@ class GeoCanvasEditor(tk.Tk):
             ord_num = self._ige_id_to_num(ige_id)
         return max(1, ord_num), str(ige_id or "")
 
-    def _next_free_ige_ordinal(self) -> int:
+    def _extract_base_ige_num(self, raw_name: str) -> int | None:
+        name = str(raw_name or "").strip()
+        m = re.fullmatch(r"ИГЭ-(\d+)", name)
+        if not m:
+            return None
+        try:
+            n = int(m.group(1))
+        except Exception:
+            return None
+        return n if n > 0 else None
+
+    def _used_base_ige_ordinals(self) -> set[int]:
         used: set[int] = set()
         for ige_id in (self.ige_registry or {}).keys():
             ent = self._ensure_ige_entry(str(ige_id or ""))
-            try:
-                used.add(max(1, int(ent.get("ordinal", self._ige_id_to_num(ige_id)))))
-            except Exception:
-                used.add(self._ige_id_to_num(ige_id))
+            for candidate in (str(ent.get("label", "") or "").strip(), str(ige_id or "").strip()):
+                num = self._extract_base_ige_num(candidate)
+                if num is not None:
+                    used.add(int(num))
+        return used
+
+    def _next_free_ige_ordinal(self) -> int:
+        used = self._used_base_ige_ordinals()
         n = 1
         while n in used:
             n += 1
@@ -1339,8 +1363,9 @@ class GeoCanvasEditor(tk.Tk):
         if has_layer_ige:
             return
         self.ige_registry = {
-            "ИГЭ-1": {"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {})), "label": "ИГЭ-1", "ordinal": 1},
+            "ИГЭ-1": {"soil_type": SoilType.LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.LOAM, {})), "label": "ИГЭ-1", "ordinal": 1},
             "ИГЭ-2": {"soil_type": SoilType.SAND.value, "calc_mode": calc_mode_for_soil(SoilType.SAND).value, "style": dict(SOIL_STYLE.get(SoilType.SAND, {})), "label": "ИГЭ-2", "ordinal": 2},
+            "ИГЭ-3": {"soil_type": SoilType.CLAY.value, "calc_mode": calc_mode_for_soil(SoilType.CLAY).value, "style": dict(SOIL_STYLE.get(SoilType.CLAY, {})), "label": "ИГЭ-3", "ordinal": 3},
         }
 
     def _add_unassigned_ige_from_ribbon(self):
@@ -1350,7 +1375,7 @@ class GeoCanvasEditor(tk.Tk):
         self._push_undo()
         new_ord = self._next_free_ige_ordinal()
         new_ige_id = self._next_free_ige_id()
-        self.ige_registry[new_ige_id] = self._ensure_ige_cpt_fields({"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {})), "label": self._ige_default_label(new_ord), "ordinal": int(new_ord)})
+        self.ige_registry[new_ige_id] = self._ensure_ige_cpt_fields({"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}, "label": self._ige_default_label(new_ord), "ordinal": int(new_ord)})
         self._sync_layers_panel()
         self.schedule_graph_redraw()
         if getattr(self, "ribbon_view", None):
@@ -1398,9 +1423,9 @@ class GeoCanvasEditor(tk.Tk):
         if not key:
             return
         if key == "cpt_method":
-            self.calc_tab_state.cpt_method = str(value or "СП 446.1325800.2019, приложение Ж")
+            self.calc_tab_state.cpt_method = str(value or "СП 446.1325800.2019 (с Изм. № 1), приложение Ж")
         elif key == "transition_method":
-            self.calc_tab_state.transition_method = str(value or "СП 22.13330.2016 (п. 5.3.17)")
+            self.calc_tab_state.transition_method = str(value or "СП 22.13330.2016 (с Изм. № 1–5), п. 5.3.17")
         elif key == "allow_normative_lt6":
             self.calc_tab_state.allow_normative_lt6 = bool(value)
         elif key == "use_legacy_sandy_loam_sp446":
@@ -1466,12 +1491,10 @@ class GeoCanvasEditor(tk.Tk):
         self._set_status(f"Расчёт: подготовлено ИГЭ {len(self.calc_rows or [])}")
 
     def _sync_calc_table(self):
-        rv = getattr(self, "ribbon_view", None)
-        tree = getattr(rv, "calc_tree", None) if rv is not None else None
-        if tree is None:
+        trees = self._calc_trees()
+        if not trees:
             return
-        for iid in tree.get_children():
-            tree.delete(iid)
+        rows_to_insert = []
         for row in list(self.calc_rows or []):
             intervals = row.get("intervals") or []
             interval_txt = ""
@@ -1479,7 +1502,7 @@ class GeoCanvasEditor(tk.Tk):
                 a = min(float(x[1]) for x in intervals)
                 b = max(float(x[2]) for x in intervals)
                 interval_txt = f"{a:.2f}-{b:.2f}"
-            tree.insert("", "end", values=(
+            rows_to_insert.append((
                 row.get("ige_id", ""),
                 row.get("soil_type", ""),
                 row.get("fill_subtype", ""),
@@ -1494,6 +1517,11 @@ class GeoCanvasEditor(tk.Tk):
                 "" if row.get("c") is None else row.get("c"),
                 row.get("warning", ""),
             ))
+        for tree in trees:
+            for iid in tree.get_children():
+                tree.delete(iid)
+            for values in rows_to_insert:
+                tree.insert("", "end", values=values)
 
     def _show_calc_sample_dialog(self):
         if not (self.calc_samples or {}):
@@ -1608,18 +1636,40 @@ class GeoCanvasEditor(tk.Tk):
         old_key = str(old_id or "").strip()
         if not old_key or old_key not in (self.ige_registry or {}):
             return
-        lbl = str(new_label or "").strip()
         ent = self._ensure_ige_entry(old_key)
-        current_lbl = str(ent.get("label", old_key) or old_key).strip()
+        lbl = str(new_label or "").strip()
         if not lbl:
             try:
                 lbl = self._ige_default_label(int(ent.get("ordinal", self._ige_id_to_num(old_key)) or self._ige_id_to_num(old_key)))
             except Exception:
                 lbl = old_key
-        if lbl == current_lbl:
+        if lbl == old_key:
+            if str(ent.get("label", old_key) or old_key).strip() != lbl:
+                self._push_undo()
+                ent["label"] = str(lbl)
+                self._sync_layers_panel()
+                self.schedule_graph_redraw()
             return
+        if lbl in (self.ige_registry or {}):
+            messagebox.showwarning("Переименование ИГЭ", f"ИГЭ с именем «{lbl}» уже существует.")
+            return
+
         self._push_undo()
-        ent["label"] = str(lbl)
+        ent_obj = self.ige_registry.pop(old_key)
+        ent_obj["label"] = str(lbl)
+        self.ige_registry[str(lbl)] = ent_obj
+
+        for t in (self.tests or []):
+            for lyr in self._ensure_test_layers(t):
+                if str(getattr(lyr, "ige_id", "") or "").strip() == old_key:
+                    lyr.ige_id = str(lbl)
+                    lyr.ige_num = self._ige_id_to_num(str(lbl))
+
+        if getattr(self, "ribbon_view", None):
+            try:
+                self.ribbon_view.layer_ige_var.set(str(lbl))
+            except Exception:
+                pass
         self._sync_layers_panel()
         self.schedule_graph_redraw()
 
@@ -1915,6 +1965,7 @@ class GeoCanvasEditor(tk.Tk):
                 "calc_show_sample": self._show_calc_sample_dialog,
                 "calc_show_excluded": self._show_calc_excluded_dialog,
                 "calc_make_protocol": self._make_calc_protocol,
+                "ribbon_tab_changed": self._on_ribbon_tab_changed,
             }
             self.ribbon_view = RibbonView(self, commands=commands, icon_font=_pick_icon_font(11))
             self.ribbon_view.pack(side="top", fill="x", before=ribbon)
@@ -1927,19 +1978,26 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view.set_display_sort_mode(str(getattr(self, "display_sort_mode", "date")))
             self.ribbon_view.set_layer_edit_mode(True)
             try:
-                self.ribbon_view.calc_cpt_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).cpt_method or "СП 446.1325800.2019, приложение Ж"))
-                self.ribbon_view.calc_transition_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).transition_method or "СП 22.13330.2016 (п. 5.3.17)"))
+                self.ribbon_view.calc_cpt_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).cpt_method or "СП 446.1325800.2019 (с Изм. № 1), приложение Ж"))
+                self.ribbon_view.calc_transition_method_var.set(str(getattr(self, "calc_tab_state", CalculationTabState()).transition_method or "СП 22.13330.2016 (с Изм. № 1–5), п. 5.3.17"))
                 self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
                 self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
                 self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
             except Exception:
                 pass
             ribbon.pack_forget()
+            self.after_idle(self._sync_workspace_visibility)
         # ========= Main canvas (fixed header) =========
         mid = ttk.Frame(self)
         mid.pack(side="top", fill="both", expand=True)
 
+        self.main_workspace = mid
         self.mid = mid  # host for table + hscroll (between table and footer)
+
+        self.calc_workspace = ttk.Frame(self)
+        self._build_calc_workspace(self.calc_workspace)
+        self.calc_workspace.pack(side="top", fill="both", expand=True)
+        self.calc_workspace.pack_forget()
 
         # Верхняя фиксированная шапка
         self.hcanvas = tk.Canvas(mid, background="white", highlightthickness=0, height=120)
@@ -2168,6 +2226,98 @@ class GeoCanvasEditor(tk.Tk):
         # hscroll живёт ВНУТРИ mid (между таблицей и нижними статус/подвал)
         self.hscroll_frame.pack(side="bottom", fill="x")
         self.hscroll_frame.pack_forget()
+    def _on_ribbon_tab_changed(self, tab_title: str = ""):
+        self._sync_workspace_visibility(tab_title)
+
+    def _sync_workspace_visibility(self, tab_title: str = ""):
+        rv = getattr(self, "ribbon_view", None)
+        if not tab_title and rv is not None:
+            try:
+                tab_title = rv.current_tab_title()
+            except Exception:
+                tab_title = ""
+        is_calc_tab = str(tab_title or "").strip() == "Расчёт"
+
+        workspace = getattr(self, "main_workspace", None)
+        if workspace is not None:
+            if is_calc_tab:
+                if workspace.winfo_manager():
+                    workspace.pack_forget()
+            else:
+                if not workspace.winfo_manager():
+                    workspace.pack(side="top", fill="both", expand=True)
+
+        calc_workspace = getattr(self, "calc_workspace", None)
+        if calc_workspace is not None:
+            if is_calc_tab:
+                if not calc_workspace.winfo_manager():
+                    calc_workspace.pack(side="top", fill="both", expand=True)
+            else:
+                if calc_workspace.winfo_manager():
+                    calc_workspace.pack_forget()
+
+        footer = getattr(self, "footer", None)
+        if footer is not None:
+            if is_calc_tab:
+                if footer.winfo_manager():
+                    footer.pack_forget()
+            else:
+                if not footer.winfo_manager():
+                    footer.pack(side="bottom", fill="x")
+
+        status = getattr(self, "status", None)
+        if status is not None:
+            if is_calc_tab:
+                if status.winfo_manager():
+                    status.pack_forget()
+            else:
+                if not status.winfo_manager():
+                    if footer is not None and footer.winfo_manager():
+                        status.pack(side="bottom", fill="x", before=footer)
+                    else:
+                        status.pack(side="bottom", fill="x")
+
+    def _build_calc_workspace(self, parent):
+        top = ttk.Frame(parent, padding=(12, 8, 12, 4))
+        top.pack(side="top", fill="x")
+        ttk.Button(top, text="Рассчитать", command=self._run_calc_pipeline).pack(side="left", padx=(0, 6))
+        ttk.Button(top, text="Пересобрать выборки", command=self._rebuild_calc_samples).pack(side="left", padx=6)
+        ttk.Button(top, text="Показать выборку ИГЭ", command=self._show_calc_sample_dialog).pack(side="left", padx=6)
+        ttk.Button(top, text="Показать исключённые точки", command=self._show_calc_excluded_dialog).pack(side="left", padx=6)
+
+        table_host = ttk.Frame(parent, padding=(12, 0, 12, 8))
+        table_host.pack(side="top", fill="both", expand=True)
+        cols = ("ige", "soil", "subtype", "method", "status", "n", "qc_avg", "V", "interval", "E", "phi", "c", "warning")
+        self.calc_tree_main = ttk.Treeview(table_host, columns=cols, show="headings")
+        heads = {
+            "ige": "ИГЭ", "soil": "тип", "subtype": "subtype", "method": "метод", "status": "статус", "n": "n",
+            "qc_avg": "qc_avg", "V": "V", "interval": "интервал", "E": "E", "phi": "φ", "c": "c", "warning": "предупреждение"
+        }
+        for c in cols:
+            self.calc_tree_main.heading(c, text=heads[c])
+            self.calc_tree_main.column(c, width=90, anchor="center", stretch=False)
+        self.calc_tree_main.column("warning", width=240, anchor="w", stretch=False)
+
+        xscroll = ttk.Scrollbar(table_host, orient="horizontal", command=self.calc_tree_main.xview)
+        yscroll = ttk.Scrollbar(table_host, orient="vertical", command=self.calc_tree_main.yview)
+        self.calc_tree_main.configure(xscrollcommand=xscroll.set, yscrollcommand=yscroll.set)
+        self.calc_tree_main.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+        xscroll.grid(row=1, column=0, sticky="ew")
+        table_host.columnconfigure(0, weight=1)
+        table_host.rowconfigure(0, weight=1)
+
+    def _calc_trees(self):
+        trees = []
+        main_tree = getattr(self, "calc_tree_main", None)
+        if main_tree is not None:
+            trees.append(main_tree)
+        rv = getattr(self, "ribbon_view", None)
+        rv_tree = getattr(rv, "calc_tree", None) if rv is not None else None
+        if rv_tree is not None:
+            trees.append(rv_tree)
+        return trees
+
     def _update_window_title(self):
         obj = self.object_name.strip() if getattr(self, "object_name", "") else ""
         obj = obj or "(без названия)"
@@ -8366,7 +8516,7 @@ class GeoCanvasEditor(tk.Tk):
         gwl_scale_var = tk.DoubleVar(value=float(gwl_curr) if gwl_curr not in (None, "") else 0.0)
 
         ttk.Label(frm, text="Методика:").pack(anchor="w")
-        ttk.Radiobutton(frm, text="СП 446.1325800.2019 (Приложение Ж)", variable=method_var, value=METHOD_SP446).pack(anchor="w")
+        ttk.Radiobutton(frm, text="СП 446.1325800.2019 (с Изм. № 1), приложение Ж", variable=method_var, value=METHOD_SP446).pack(anchor="w")
         ttk.Radiobutton(frm, text="СП 11-105-97 (Приложение И)", variable=method_var, value=METHOD_SP11).pack(anchor="w")
         ttk.Label(frm, text="Пески: alluvial = да (фиксировано)", foreground="#3d5f99").pack(anchor="w", pady=(6, 0))
 

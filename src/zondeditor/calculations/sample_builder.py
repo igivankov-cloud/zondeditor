@@ -12,6 +12,9 @@ from .statistics import calc_stats
 from .validation import validate_inputs
 
 
+OPTIONAL_SAND_CLASSIFIERS = {"sand_water_saturation", "density_state"}
+
+
 def _iter_points(test: Any):
     depth = list(getattr(test, "depth", []) or [])
     qc = list(getattr(test, "qc", []) or [])
@@ -56,6 +59,8 @@ def _build_ige_model(ige_id: str, ent: dict[str, Any], profile_id: str) -> IGEMo
 def _missing_by_required_fields(required_fields: list[str], *, stats: IGECalcStats, ige: IGEModel) -> list[str]:
     missing: list[str] = []
     for rf in required_fields or []:
+        if rf in OPTIONAL_SAND_CLASSIFIERS:
+            continue
         if rf == "qc_mpa" and stats.qc_avg_mpa is None:
             missing.append(rf)
         elif rf == "avg_depth_m" and stats.avg_depth_m is None:

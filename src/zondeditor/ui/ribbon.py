@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+# === FILE MAP BEGIN ===
+# FILE MAP (обновляй при правках; указывай строки Lx–Ly)
+# - _apply_compact_ribbon_height: L109–L126 — вычисление высоты верхней ленты по фактической высоте вкладки «ИГЭ».
+# - _build_layers_tab/_sync_ige_canvas: L289–L303, L332–L345 — область ИГЭ без вертикального скролла и с высотой по содержимому.
+# - _set_combo_placeholder/_build_dynamic_ige_fields/_build_ige_column: L440–L555 — логика карточек ИГЭ (в т.ч. пустой тип для нового ИГЭ).
+# === FILE MAP END ===
+
+
 import tkinter as tk
 from tkinter import ttk, simpledialog
 
@@ -39,8 +47,8 @@ class RibbonView(ttk.Frame):
         self._ige_soil_values: list[str] = []
         self._add_ige_btn = None
         self._ige_order: list[str] = []
-        self.calc_cpt_method_var = tk.StringVar(value="СП 446.1325800.2019, приложение Ж")
-        self.calc_transition_method_var = tk.StringVar(value="СП 22.13330.2016 (п. 5.3.17)")
+        self.calc_cpt_method_var = tk.StringVar(value="СП 446.1325800.2019 (с Изм. № 1), приложение Ж")
+        self.calc_transition_method_var = tk.StringVar(value="СП 22.13330.2016 (с Изм. № 1–5), п. 5.3.17")
         self.calc_allow_normative_lt6_var = tk.BooleanVar(value=False)
         self.calc_legacy_sandy_loam_var = tk.BooleanVar(value=False)
         self.calc_fill_preliminary_var = tk.BooleanVar(value=False)
@@ -59,14 +67,16 @@ class RibbonView(ttk.Frame):
 
         self.tabs = ttk.Notebook(self)
         self.tabs.pack(side="top", fill="x", padx=2, pady=(0, 2))
+        self.tabs.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
         self._build_file_tab()
         self._build_params_tab()
+        self._build_processing_tab()
         self._build_view_tab()
         self._build_layers_tab()
         self._build_calc_tab()
         self._build_protocol_tab()
-        self._build_processing_tab()
+        self.after_idle(self._apply_compact_ribbon_height)
 
     def _add_qat_btn(self, parent, key: str, text: str, tip: str):
         btn = ttk.Button(parent, text=text, width=3, command=self.commands.get(key))
@@ -92,6 +102,29 @@ class RibbonView(ttk.Frame):
         btn.grid(row=row, column=col, sticky="ew", padx=2, pady=1)
         ToolTip(btn, tip)
         self._buttons[key] = btn
+
+    def _apply_compact_ribbon_height(self):
+        params_tab = getattr(self, "_params_tab", None)
+        if params_tab is None:
+            return
+        try:
+            self.update_idletasks()
+            params_h = int(params_tab.winfo_reqheight()) + 10
+        except Exception:
+            return
+        ige_h = 0
+        try:
+            ige_host = getattr(self, "_ige_columns_frame", None)
+            if ige_host is not None:
+                ige_h = int(ige_host.winfo_reqheight()) + 14
+        except Exception:
+            ige_h = 0
+        target_h = max(params_h, ige_h, 130)
+        target_h = min(target_h, 196)
+        try:
+            self.tabs.configure(height=target_h)
+        except Exception:
+            pass
 
     def _build_file_tab(self):
         tab = ttk.Frame(self.tabs, padding=2)
@@ -130,6 +163,7 @@ class RibbonView(ttk.Frame):
     def _build_params_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Параметры")
+        self._params_tab = tab
 
         common = ttk.LabelFrame(tab, text="Общие параметры прибора и зонда", padding=4)
         common.pack(side="top", fill="x")
@@ -258,8 +292,8 @@ class RibbonView(ttk.Frame):
 
         host = ttk.Frame(tab)
         host.pack(fill="x", expand=False)
-        self._ige_canvas = tk.Canvas(host, height=190, highlightthickness=0, bd=0)
-        self._ige_canvas.pack(side="top", fill="x", expand=True)
+        self._ige_canvas = tk.Canvas(host, height=154, highlightthickness=0, bd=0)
+        self._ige_canvas.pack(side="left", fill="x", expand=True)
 
         self._ige_columns_frame = ttk.Frame(self._ige_canvas)
         self._ige_window_id = self._ige_canvas.create_window((0, 0), window=self._ige_columns_frame, anchor="nw")
@@ -278,52 +312,22 @@ class RibbonView(ttk.Frame):
         params.pack(fill="x", expand=False)
 
         ttk.Label(params, text="Расчёт по результатам зондирования:").grid(row=0, column=0, sticky="w")
-        self.calc_cpt_method_combo = ttk.Combobox(
+        ttk.Label(
             params,
-            state="readonly",
-            textvariable=self.calc_cpt_method_var,
-            values=[
-                "СП 446.1325800.2019, приложение Ж",
-                "СНиП 2.02.01-83* (п. 12.4) — для опор мостов",
-            ],
-            width=56,
-        )
-        self.calc_cpt_method_combo.grid(row=0, column=1, sticky="w", padx=(6, 0))
-        self.calc_cpt_method_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("calc_option_changed", lambda *_: None)("cpt_method", self.calc_cpt_method_var.get()))
+            text="СП 446.1325800.2019 (с Изм. № 1), приложение Ж",
+            foreground="#1f2b3a",
+        ).grid(row=0, column=1, sticky="w", padx=(6, 0))
 
-        ttk.Label(params, text="Переход к нормативным / расчётным значениям:").grid(row=1, column=0, sticky="w", pady=(4, 0))
-        self.calc_transition_method_combo = ttk.Combobox(
+        ttk.Label(params, text="Переход от нормативных к расчётным значениям:").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Label(
             params,
-            state="readonly",
-            textvariable=self.calc_transition_method_var,
-            values=["СП 22.13330.2016 (п. 5.3.17)"],
-            width=56,
-        )
-        self.calc_transition_method_combo.grid(row=1, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
-        self.calc_transition_method_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("calc_option_changed", lambda *_: None)("transition_method", self.calc_transition_method_var.get()))
+            text="СП 22.13330.2016 (с Изм. № 1–5), п. 5.3.17",
+            foreground="#1f2b3a",
+        ).grid(row=1, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
 
-        ttk.Checkbutton(params, text="Рассчитывать нормативные значения при N < 6", variable=self.calc_allow_normative_lt6_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_normative_lt6", bool(self.calc_allow_normative_lt6_var.get()))).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        ttk.Checkbutton(params, text="Рассчитывать супесь по старой редакции СП 446", variable=self.calc_legacy_sandy_loam_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("use_legacy_sandy_loam_sp446", bool(self.calc_legacy_sandy_loam_var.get()))).grid(row=3, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        ttk.Checkbutton(params, text="Рассчитывать нормативные значения при n < 6 (см. ГОСТ 20522-2012, п. 4.10)", variable=self.calc_allow_normative_lt6_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_normative_lt6", bool(self.calc_allow_normative_lt6_var.get()))).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(params, text="Рассчитать супесь по редакции СП 446.1325800.2019 до Изм. № 1", variable=self.calc_legacy_sandy_loam_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("use_legacy_sandy_loam_sp446", bool(self.calc_legacy_sandy_loam_var.get()))).grid(row=3, column=0, columnspan=2, sticky="w", pady=(2, 0))
         ttk.Checkbutton(params, text="Разрешить предварительный расчёт насыпного по материалу", variable=self.calc_fill_preliminary_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_fill_preliminary", bool(self.calc_fill_preliminary_var.get()))).grid(row=4, column=0, columnspan=2, sticky="w", pady=(2, 0))
-
-        btns = ttk.Frame(tab)
-        btns.pack(fill="x", pady=(6, 4))
-        ttk.Button(btns, text="Рассчитать", command=self.commands.get("calc_run")).pack(side="left", padx=(0, 4))
-        ttk.Button(btns, text="Пересобрать выборки", command=self.commands.get("calc_rebuild_samples")).pack(side="left", padx=4)
-        ttk.Button(btns, text="Показать выборку ИГЭ", command=self.commands.get("calc_show_sample")).pack(side="left", padx=4)
-        ttk.Button(btns, text="Показать исключённые точки", command=self.commands.get("calc_show_excluded")).pack(side="left", padx=4)
-
-        cols = ("ige", "soil", "subtype", "method", "status", "n", "qc_avg", "V", "interval", "E", "phi", "c", "warning")
-        self.calc_tree = ttk.Treeview(tab, columns=cols, show="headings", height=8)
-        heads = {
-            "ige": "ИГЭ", "soil": "тип", "subtype": "subtype", "method": "метод", "status": "статус", "n": "n",
-            "qc_avg": "qc_avg", "V": "V", "interval": "интервал", "E": "E", "phi": "φ", "c": "c", "warning": "предупреждение"
-        }
-        for c in cols:
-            self.calc_tree.heading(c, text=heads[c])
-            self.calc_tree.column(c, width=90, anchor="center")
-        self.calc_tree.column("warning", width=240, anchor="w")
-        self.calc_tree.pack(fill="both", expand=True)
 
     def _build_protocol_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
@@ -335,11 +339,27 @@ class RibbonView(ttk.Frame):
         if cnv is None:
             return
         try:
+            req_h = int(self._ige_columns_frame.winfo_reqheight())
+            if req_h > 0:
+                cnv.configure(height=req_h + 2)
             cnv.configure(scrollregion=cnv.bbox("all"))
             width = max(int(cnv.winfo_width()), int(self._ige_columns_frame.winfo_reqwidth()))
             cnv.itemconfigure(self._ige_window_id, width=width)
         except Exception:
             pass
+
+    def _on_tab_changed(self, _event=None):
+        self._apply_compact_ribbon_height()
+        cb = self.commands.get("ribbon_tab_changed")
+        if callable(cb):
+            cb(self.current_tab_title())
+
+    def current_tab_title(self) -> str:
+        try:
+            tab_id = self.tabs.select()
+            return str(self.tabs.tab(tab_id, "text") or "")
+        except Exception:
+            return ""
 
     def _on_ige_wheel_x(self, event):
         try:
@@ -419,10 +439,13 @@ class RibbonView(ttk.Frame):
         if callable(cmd):
             cmd(str(ige_id or "").strip(), str(new_label or "").strip())
 
-    def _set_combo_placeholder(self, cb: ttk.Combobox, var: tk.StringVar, default_value: str):
+    def _set_combo_placeholder(self, cb: ttk.Combobox, var: tk.StringVar, default_value: str | None = None):
         if not str(var.get() or "").strip():
-            var.set(default_value)
-            cb._user_selected = False
+            if str(default_value or "").strip():
+                var.set(str(default_value))
+                cb._user_selected = False
+            else:
+                cb._user_selected = False
         else:
             cb._user_selected = True
 
@@ -440,24 +463,26 @@ class RibbonView(ttk.Frame):
 
     def _build_dynamic_ige_fields(self, parent, ige_id: str, row: dict):
         soil = str(row.get("soil", "") or "").lower()
+        if not soil.strip():
+            return
         if "пес" in soil and "супес" not in soil:
             sand_kind = tk.StringVar(value=str(row.get("sand_kind", "") or ""))
-            cb_kind = ttk.Combobox(parent, state="readonly", width=18, values=["гравелистый", "крупный", "средней крупности", "мелкий", "пылеватый"], textvariable=sand_kind)
+            cb_kind = ttk.Combobox(parent, state="readonly", width=16, values=["гравелистый", "крупный", "средней крупности", "мелкий", "пылеватый"], textvariable=sand_kind)
             cb_kind.grid(row=0, column=0, sticky="ew")
             self._set_combo_placeholder(cb_kind, sand_kind, "средней крупности")
 
             sat = tk.StringVar(value=str(row.get("sand_water_saturation", "") or ""))
-            cb_sat = ttk.Combobox(parent, state="readonly", width=18, values=["малой степени", "влажный", "водонасыщенный"], textvariable=sat)
-            cb_sat.grid(row=1, column=0, sticky="ew", pady=(2, 0))
+            cb_sat = ttk.Combobox(parent, state="readonly", width=16, values=["малой степени", "влажный", "водонасыщенный"], textvariable=sat)
+            cb_sat.grid(row=1, column=0, sticky="ew", pady=(0, 0))
             self._set_combo_placeholder(cb_sat, sat, "влажный")
 
             dens = tk.StringVar(value=str(row.get("density_state", "") or ""))
-            cb_den = ttk.Combobox(parent, state="readonly", width=18, values=["рыхлый", "средней плотности", "плотный"], textvariable=dens)
-            cb_den.grid(row=2, column=0, sticky="ew", pady=(2, 0))
+            cb_den = ttk.Combobox(parent, state="readonly", width=16, values=["рыхлый", "средней плотности", "плотный"], textvariable=dens)
+            cb_den.grid(row=2, column=0, sticky="ew", pady=(0, 0))
             self._set_combo_placeholder(cb_den, dens, "средней плотности")
 
             alluvial = tk.BooleanVar(value=bool(row.get("sand_is_alluvial", False)))
-            ttk.Checkbutton(parent, text="аллювиальный", variable=alluvial, command=lambda ig=ige_id, vv=alluvial: self._change_ige_field(ig, "sand_is_alluvial", bool(vv.get()))).grid(row=3, column=0, sticky="w", pady=(2, 0))
+            ttk.Checkbutton(parent, text="аллювиальный", variable=alluvial, command=lambda ig=ige_id, vv=alluvial: self._change_ige_field(ig, "sand_is_alluvial", bool(vv.get()))).grid(row=3, column=0, sticky="w", pady=(0, 0))
 
             cb_kind.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=sand_kind: self._change_ige_field(ig, "sand_kind", vv.get()))
             cb_sat.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=sat: self._change_ige_field(ig, "sand_water_saturation", vv.get()))
@@ -489,18 +514,17 @@ class RibbonView(ttk.Frame):
     def _build_ige_column(self, parent, row: dict, soil_values: list[str], can_delete: bool):
         ige_id = str(row.get("ige_id", "") or "")
         card_w, gap, border_w = self._ige_card_metrics()
-        card = ttk.Frame(parent, padding=(4, 3), relief="solid", borderwidth=border_w)
+        card = tk.Frame(parent, padx=2, pady=1, bd=0, highlightthickness=1, highlightbackground="#d4d8de", highlightcolor="#d4d8de")
         card.pack(side="left", fill="y", padx=(0, max(2, gap)))
         try:
-            card.configure(width=card_w, height=176)
-            card.pack_propagate(False)
+            card.configure(width=card_w)
         except Exception:
             pass
 
         hdr = ttk.Frame(card)
         hdr.pack(fill="x")
         hdr.columnconfigure(0, weight=1)
-        hdr.rowconfigure(0, minsize=24)
+        hdr.rowconfigure(0, minsize=22)
         lbl_txt = str(row.get("label", ige_id) or ige_id)
         lbl_btn = ttk.Button(hdr, text=lbl_txt, style="IGEHdr.TButton", command=lambda ig=ige_id, txt=lbl_txt: self._edit_ige_label(ig, txt))
         lbl_btn.grid(row=0, column=0, sticky="ew")
@@ -512,16 +536,16 @@ class RibbonView(ttk.Frame):
             btn_del.configure(state="disabled")
 
         body = ttk.Frame(card)
-        body.pack(fill="both", expand=True, pady=(3, 0))
+        body.pack(fill="both", expand=True, pady=(1, 0))
         body.columnconfigure(0, weight=1)
         soil_var = tk.StringVar(value=str(row.get("soil", "") or ""))
         cb_soil = ttk.Combobox(body, state="readonly", width=18, values=list(soil_values or []), textvariable=soil_var)
         cb_soil.grid(row=0, column=0, sticky="ew")
-        self._set_combo_placeholder(cb_soil, soil_var, "супесь")
+        self._set_combo_placeholder(cb_soil, soil_var, None)
         cb_soil.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, sv=soil_var: self.commands.get("edit_ige", lambda *_: None)(ig, sv.get(), ""))
 
         dyn = ttk.Frame(body)
-        dyn.grid(row=1, column=0, sticky="ew", pady=(3, 0))
+        dyn.grid(row=1, column=0, sticky="ew", pady=(1, 0))
         dyn.columnconfigure(0, weight=1)
         self._build_dynamic_ige_fields(dyn, ige_id, row)
 
