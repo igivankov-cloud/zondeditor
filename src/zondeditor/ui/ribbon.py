@@ -2,9 +2,9 @@ from __future__ import annotations
 
 # === FILE MAP BEGIN ===
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
-# - _set_combo_placeholder: L437–L456 — placeholder-логика ComboBox (поддержка пустого значения без автоподстановки).
-# - _build_dynamic_ige_fields: L459–L507 — динамические поля карточек ИГЭ, включая признак «аллювиальный».
-# - _build_ige_column: L509–L555 — сборка карточки ИГЭ; тип грунта может оставаться пустым для нового ИГЭ.
+# - _apply_compact_ribbon_height: L109–L126 — вычисление высоты верхней ленты по фактической высоте вкладки «ИГЭ».
+# - _build_layers_tab/_sync_ige_canvas: L289–L303, L332–L345 — область ИГЭ без вертикального скролла и с высотой по содержимому.
+# - _set_combo_placeholder/_build_dynamic_ige_fields/_build_ige_column: L440–L555 — логика карточек ИГЭ (в т.ч. пустой тип для нового ИГЭ).
 # === FILE MAP END ===
 
 
@@ -109,10 +109,18 @@ class RibbonView(ttk.Frame):
             return
         try:
             self.update_idletasks()
-            target_h = int(params_tab.winfo_reqheight()) + 26
+            params_h = int(params_tab.winfo_reqheight()) + 10
         except Exception:
             return
-        target_h = max(138, min(target_h, 208))
+        ige_h = 0
+        try:
+            ige_host = getattr(self, "_ige_columns_frame", None)
+            if ige_host is not None:
+                ige_h = int(ige_host.winfo_reqheight()) + 14
+        except Exception:
+            ige_h = 0
+        target_h = max(params_h, ige_h, 130)
+        target_h = min(target_h, 196)
         try:
             self.tabs.configure(height=target_h)
         except Exception:
@@ -283,12 +291,9 @@ class RibbonView(ttk.Frame):
         self.tabs.add(tab, text="ИГЭ")
 
         host = ttk.Frame(tab)
-        host.pack(fill="both", expand=True)
+        host.pack(fill="x", expand=False)
         self._ige_canvas = tk.Canvas(host, height=154, highlightthickness=0, bd=0)
-        self._ige_canvas.pack(side="left", fill="both", expand=True)
-        self._ige_vscroll = ttk.Scrollbar(host, orient="vertical", command=self._ige_canvas.yview)
-        self._ige_vscroll.pack(side="right", fill="y")
-        self._ige_canvas.configure(yscrollcommand=self._ige_vscroll.set)
+        self._ige_canvas.pack(side="left", fill="x", expand=True)
 
         self._ige_columns_frame = ttk.Frame(self._ige_canvas)
         self._ige_window_id = self._ige_canvas.create_window((0, 0), window=self._ige_columns_frame, anchor="nw")
@@ -334,6 +339,9 @@ class RibbonView(ttk.Frame):
         if cnv is None:
             return
         try:
+            req_h = int(self._ige_columns_frame.winfo_reqheight())
+            if req_h > 0:
+                cnv.configure(height=req_h + 2)
             cnv.configure(scrollregion=cnv.bbox("all"))
             width = max(int(cnv.winfo_width()), int(self._ige_columns_frame.winfo_reqwidth()))
             cnv.itemconfigure(self._ige_window_id, width=width)
