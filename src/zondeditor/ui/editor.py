@@ -2,10 +2,10 @@
 # Auto-generated from tools/_ui_extract/GeoCanvasEditor.py (Step19)
 # === FILE MAP BEGIN ===
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
-# - _build_ui: L1738–L2188 — сборка root layout и создание отдельного calc workspace под лентой.
-# - _sync_calc_table: L1476–L1507 — заполнение таблиц результатов расчёта (основная область + резервная цель).
-# - _sync_workspace_visibility: L2193–L2239 — переключение между основной областью зондирования и calc workspace.
-# - _build_calc_workspace: L2241–L2269 — кнопки расчёта и таблица результатов в нижнем рабочем поле.
+# - __init__: L136–L266 — стартовая инициализация, включая дефолтный реестр 3 ИГЭ (суглинок/песок/глина).
+# - _ensure_default_iges: L1337–L1354 — предзаполнение ИГЭ для нового проекта при пустом реестре.
+# - _build_ui: L1740–L2190 — сборка root layout и контейнеров рабочей области.
+# - _sync_workspace_visibility: L2195–L2241 — переключение между основной областью зондирования и calc workspace.
 # === FILE MAP END ===
 
 from __future__ import annotations
@@ -256,8 +256,9 @@ class GeoCanvasEditor(tk.Tk):
         self._editor_just_opened = False
         self._inline_edit_active = False
         self.ige_registry: dict[str, dict[str, object]] = {
-            "ИГЭ-1": {"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {}))},
-            "ИГЭ-2": {"soil_type": SoilType.SAND.value, "calc_mode": calc_mode_for_soil(SoilType.SAND).value, "style": dict(SOIL_STYLE.get(SoilType.SAND, {}))},
+            "ИГЭ-1": {"soil_type": SoilType.LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.LOAM, {})), "label": "ИГЭ-1", "ordinal": 1},
+            "ИГЭ-2": {"soil_type": SoilType.SAND.value, "calc_mode": calc_mode_for_soil(SoilType.SAND).value, "style": dict(SOIL_STYLE.get(SoilType.SAND, {})), "label": "ИГЭ-2", "ordinal": 2},
+            "ИГЭ-3": {"soil_type": SoilType.CLAY.value, "calc_mode": calc_mode_for_soil(SoilType.CLAY).value, "style": dict(SOIL_STYLE.get(SoilType.CLAY, {})), "label": "ИГЭ-3", "ordinal": 3},
         }
         self.layer_store = LayerStore()
         self._debug_layers_overlay = bool(os.environ.get("ZONDEDITOR_DEBUG_LAYERS") == "1")
@@ -1347,8 +1348,9 @@ class GeoCanvasEditor(tk.Tk):
         if has_layer_ige:
             return
         self.ige_registry = {
-            "ИГЭ-1": {"soil_type": SoilType.SANDY_LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.SANDY_LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.SANDY_LOAM, {})), "label": "ИГЭ-1", "ordinal": 1},
+            "ИГЭ-1": {"soil_type": SoilType.LOAM.value, "calc_mode": calc_mode_for_soil(SoilType.LOAM).value, "style": dict(SOIL_STYLE.get(SoilType.LOAM, {})), "label": "ИГЭ-1", "ordinal": 1},
             "ИГЭ-2": {"soil_type": SoilType.SAND.value, "calc_mode": calc_mode_for_soil(SoilType.SAND).value, "style": dict(SOIL_STYLE.get(SoilType.SAND, {})), "label": "ИГЭ-2", "ordinal": 2},
+            "ИГЭ-3": {"soil_type": SoilType.CLAY.value, "calc_mode": calc_mode_for_soil(SoilType.CLAY).value, "style": dict(SOIL_STYLE.get(SoilType.CLAY, {})), "label": "ИГЭ-3", "ordinal": 3},
         }
 
     def _add_unassigned_ige_from_ribbon(self):

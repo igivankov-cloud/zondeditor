@@ -2,9 +2,10 @@ from __future__ import annotations
 
 # === FILE MAP BEGIN ===
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
-# - _apply_compact_ribbon_height: L107–L120 — ограничение высоты Notebook по эталону вкладки «Параметры».
-# - _build_layers_tab: L282–L301 — область ИГЭ с внутренним вертикальным скроллом и компактной высотой карточек.
-# - _build_calc_tab: L303–L325 — вкладка «Расчёт» в ленте содержит фиксированные подписи нормативки без dropdown.
+# - _build_layers_tab: L282–L301 — область ИГЭ в верхней ленте (компактная высота + вертикальный скролл).
+# - _build_dynamic_ige_fields: L454–L500 — динамические поля карточек ИГЭ, включая признак «аллювиальный».
+# - _build_ige_column: L502–L548 — компактная геометрия карточки ИГЭ (рамка/паддинги/высота).
+# - _build_calc_tab: L303–L326 — фиксированные подписи нормативки без dropdown во вкладке «Расчёт».
 # - _on_tab_changed/current_tab_title: L344–L355 — уведомление редактора о смене вкладки и чтение активной вкладки.
 # === FILE MAP END ===
 
@@ -285,7 +286,7 @@ class RibbonView(ttk.Frame):
 
         host = ttk.Frame(tab)
         host.pack(fill="both", expand=True)
-        self._ige_canvas = tk.Canvas(host, height=146, highlightthickness=0, bd=0)
+        self._ige_canvas = tk.Canvas(host, height=150, highlightthickness=0, bd=0)
         self._ige_canvas.pack(side="left", fill="both", expand=True)
         self._ige_vscroll = ttk.Scrollbar(host, orient="vertical", command=self._ige_canvas.yview)
         self._ige_vscroll.pack(side="right", fill="y")
@@ -461,16 +462,16 @@ class RibbonView(ttk.Frame):
 
             sat = tk.StringVar(value=str(row.get("sand_water_saturation", "") or ""))
             cb_sat = ttk.Combobox(parent, state="readonly", width=16, values=["малой степени", "влажный", "водонасыщенный"], textvariable=sat)
-            cb_sat.grid(row=1, column=0, sticky="ew", pady=(1, 0))
+            cb_sat.grid(row=1, column=0, sticky="ew", pady=(0, 0))
             self._set_combo_placeholder(cb_sat, sat, "влажный")
 
             dens = tk.StringVar(value=str(row.get("density_state", "") or ""))
             cb_den = ttk.Combobox(parent, state="readonly", width=16, values=["рыхлый", "средней плотности", "плотный"], textvariable=dens)
-            cb_den.grid(row=2, column=0, sticky="ew", pady=(1, 0))
+            cb_den.grid(row=2, column=0, sticky="ew", pady=(0, 0))
             self._set_combo_placeholder(cb_den, dens, "средней плотности")
 
             alluvial = tk.BooleanVar(value=bool(row.get("sand_is_alluvial", False)))
-            ttk.Checkbutton(parent, text="аллювиальный", variable=alluvial, command=lambda ig=ige_id, vv=alluvial: self._change_ige_field(ig, "sand_is_alluvial", bool(vv.get()))).grid(row=3, column=0, sticky="w", pady=(1, 0))
+            ttk.Checkbutton(parent, text="аллювиальный", variable=alluvial, command=lambda ig=ige_id, vv=alluvial: self._change_ige_field(ig, "sand_is_alluvial", bool(vv.get()))).grid(row=3, column=0, sticky="w", pady=(0, 0))
 
             cb_kind.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=sand_kind: self._change_ige_field(ig, "sand_kind", vv.get()))
             cb_sat.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=sat: self._change_ige_field(ig, "sand_water_saturation", vv.get()))
@@ -502,10 +503,10 @@ class RibbonView(ttk.Frame):
     def _build_ige_column(self, parent, row: dict, soil_values: list[str], can_delete: bool):
         ige_id = str(row.get("ige_id", "") or "")
         card_w, gap, border_w = self._ige_card_metrics()
-        card = tk.Frame(parent, padx=3, pady=2, bd=0, highlightthickness=1, highlightbackground="#d4d8de", highlightcolor="#d4d8de")
+        card = tk.Frame(parent, padx=2, pady=1, bd=0, highlightthickness=1, highlightbackground="#d4d8de", highlightcolor="#d4d8de")
         card.pack(side="left", fill="y", padx=(0, max(2, gap)))
         try:
-            card.configure(width=card_w, height=162)
+            card.configure(width=card_w, height=156)
             card.pack_propagate(False)
         except Exception:
             pass
@@ -513,7 +514,7 @@ class RibbonView(ttk.Frame):
         hdr = ttk.Frame(card)
         hdr.pack(fill="x")
         hdr.columnconfigure(0, weight=1)
-        hdr.rowconfigure(0, minsize=24)
+        hdr.rowconfigure(0, minsize=22)
         lbl_txt = str(row.get("label", ige_id) or ige_id)
         lbl_btn = ttk.Button(hdr, text=lbl_txt, style="IGEHdr.TButton", command=lambda ig=ige_id, txt=lbl_txt: self._edit_ige_label(ig, txt))
         lbl_btn.grid(row=0, column=0, sticky="ew")
@@ -525,7 +526,7 @@ class RibbonView(ttk.Frame):
             btn_del.configure(state="disabled")
 
         body = ttk.Frame(card)
-        body.pack(fill="both", expand=True, pady=(2, 0))
+        body.pack(fill="both", expand=True, pady=(1, 0))
         body.columnconfigure(0, weight=1)
         soil_var = tk.StringVar(value=str(row.get("soil", "") or ""))
         cb_soil = ttk.Combobox(body, state="readonly", width=18, values=list(soil_values or []), textvariable=soil_var)
@@ -534,7 +535,7 @@ class RibbonView(ttk.Frame):
         cb_soil.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, sv=soil_var: self.commands.get("edit_ige", lambda *_: None)(ig, sv.get(), ""))
 
         dyn = ttk.Frame(body)
-        dyn.grid(row=1, column=0, sticky="ew", pady=(2, 0))
+        dyn.grid(row=1, column=0, sticky="ew", pady=(1, 0))
         dyn.columnconfigure(0, weight=1)
         self._build_dynamic_ige_fields(dyn, ige_id, row)
 
