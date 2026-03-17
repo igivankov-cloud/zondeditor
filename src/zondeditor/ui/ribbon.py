@@ -4,8 +4,8 @@ from __future__ import annotations
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
 # - _apply_compact_ribbon_height: L107–L120 — ограничение высоты Notebook по эталону вкладки «Параметры».
 # - _build_layers_tab: L282–L301 — область ИГЭ с внутренним вертикальным скроллом без увеличения высоты ленты.
-# - _build_calc_tab: L303–L378 — компактная вкладка «Расчёт» в scrollable-контейнере + горизонтальный скролл таблицы.
-# - _on_tab_changed/current_tab_title: L395–L406 — уведомление редактора о смене вкладки и чтение активной вкладки.
+# - _build_calc_tab: L303–L336 — вкладка «Расчёт» в ленте содержит только параметры расчёта.
+# - _on_tab_changed/current_tab_title: L355–L366 — уведомление редактора о смене вкладки и чтение активной вкладки.
 # === FILE MAP END ===
 
 
@@ -72,11 +72,11 @@ class RibbonView(ttk.Frame):
 
         self._build_file_tab()
         self._build_params_tab()
+        self._build_processing_tab()
         self._build_view_tab()
         self._build_layers_tab()
         self._build_calc_tab()
         self._build_protocol_tab()
-        self._build_processing_tab()
         self.after_idle(self._apply_compact_ribbon_height)
 
     def _add_qat_btn(self, parent, key: str, text: str, tip: str):
@@ -301,26 +301,10 @@ class RibbonView(ttk.Frame):
         self._ige_canvas.bind("<Button-5>", lambda _e: self._on_ige_wheel_x_linux(1))
 
     def _build_calc_tab(self):
-        tab = ttk.Frame(self.tabs, padding=0)
+        tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Расчёт")
 
-        body = ttk.Frame(tab, padding=4)
-        body.pack(side="left", fill="both", expand=True)
-        yscroll = ttk.Scrollbar(tab, orient="vertical")
-        yscroll.pack(side="right", fill="y")
-
-        calc_canvas = tk.Canvas(body, highlightthickness=0, bd=0)
-        calc_canvas.pack(side="left", fill="both", expand=True)
-        yscroll.configure(command=calc_canvas.yview)
-        calc_canvas.configure(yscrollcommand=yscroll.set)
-
-        content = ttk.Frame(calc_canvas)
-        content_win = calc_canvas.create_window((0, 0), window=content, anchor="nw")
-
-        content.bind("<Configure>", lambda _e: calc_canvas.configure(scrollregion=calc_canvas.bbox("all")))
-        calc_canvas.bind("<Configure>", lambda e: calc_canvas.itemconfigure(content_win, width=e.width))
-
-        params = ttk.LabelFrame(content, text="Параметры расчёта", padding=6)
+        params = ttk.LabelFrame(tab, text="Параметры расчёта", padding=6)
         params.pack(fill="x", expand=False)
 
         ttk.Label(params, text="Расчёт по результатам зондирования:").grid(row=0, column=0, sticky="w")
@@ -352,30 +336,6 @@ class RibbonView(ttk.Frame):
         ttk.Checkbutton(params, text="Рассчитывать супесь по старой редакции СП 446", variable=self.calc_legacy_sandy_loam_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("use_legacy_sandy_loam_sp446", bool(self.calc_legacy_sandy_loam_var.get()))).grid(row=3, column=0, columnspan=2, sticky="w", pady=(2, 0))
         ttk.Checkbutton(params, text="Разрешить предварительный расчёт насыпного по материалу", variable=self.calc_fill_preliminary_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_fill_preliminary", bool(self.calc_fill_preliminary_var.get()))).grid(row=4, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
-        btns = ttk.Frame(content)
-        btns.pack(fill="x", pady=(6, 4))
-        ttk.Button(btns, text="Рассчитать", command=self.commands.get("calc_run")).pack(side="left", padx=(0, 4))
-        ttk.Button(btns, text="Пересобрать выборки", command=self.commands.get("calc_rebuild_samples")).pack(side="left", padx=4)
-        ttk.Button(btns, text="Показать выборку ИГЭ", command=self.commands.get("calc_show_sample")).pack(side="left", padx=4)
-        ttk.Button(btns, text="Показать исключённые точки", command=self.commands.get("calc_show_excluded")).pack(side="left", padx=4)
-
-        table_wrap = ttk.Frame(content)
-        table_wrap.pack(fill="both", expand=True)
-        cols = ("ige", "soil", "subtype", "method", "status", "n", "qc_avg", "V", "interval", "E", "phi", "c", "warning")
-        self.calc_tree = ttk.Treeview(table_wrap, columns=cols, show="headings", height=6)
-        heads = {
-            "ige": "ИГЭ", "soil": "тип", "subtype": "subtype", "method": "метод", "status": "статус", "n": "n",
-            "qc_avg": "qc_avg", "V": "V", "interval": "интервал", "E": "E", "phi": "φ", "c": "c", "warning": "предупреждение"
-        }
-        for c in cols:
-            self.calc_tree.heading(c, text=heads[c])
-            self.calc_tree.column(c, width=90, anchor="center", stretch=False)
-        self.calc_tree.column("warning", width=240, anchor="w", stretch=False)
-
-        calc_xscroll = ttk.Scrollbar(table_wrap, orient="horizontal", command=self.calc_tree.xview)
-        self.calc_tree.configure(xscrollcommand=calc_xscroll.set)
-        self.calc_tree.pack(fill="both", expand=True)
-        calc_xscroll.pack(fill="x")
     def _build_protocol_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Протокол")

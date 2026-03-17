@@ -2,9 +2,10 @@
 # Auto-generated from tools/_ui_extract/GeoCanvasEditor.py (Step19)
 # === FILE MAP BEGIN ===
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
-# - _build_ui: L1734–L2180 — сборка root layout; подключение RibbonView и контейнеров рабочей области.
-# - _on_ribbon_tab_changed: L2181–L2182 — обработчик события смены вкладки ленты.
-# - _sync_workspace_visibility: L2184–L2222 — изоляция вкладки «Расчёт»: скрывает общую рабочую область/подвал вне расчётного UI.
+# - _build_ui: L1737–L2188 — сборка root layout и создание отдельного calc workspace под лентой.
+# - _sync_calc_table: L1475–L1506 — заполнение таблиц результатов расчёта (основная область + резервная цель).
+# - _sync_workspace_visibility: L2192–L2238 — переключение между основной областью зондирования и calc workspace.
+# - _build_calc_workspace: L2240–L2268 — кнопки расчёта и таблица результатов в нижнем рабочем поле.
 # === FILE MAP END ===
 
 from __future__ import annotations
@@ -1473,12 +1474,10 @@ class GeoCanvasEditor(tk.Tk):
         self._set_status(f"Расчёт: подготовлено ИГЭ {len(self.calc_rows or [])}")
 
     def _sync_calc_table(self):
-        rv = getattr(self, "ribbon_view", None)
-        tree = getattr(rv, "calc_tree", None) if rv is not None else None
-        if tree is None:
+        trees = self._calc_trees()
+        if not trees:
             return
-        for iid in tree.get_children():
-            tree.delete(iid)
+        rows_to_insert = []
         for row in list(self.calc_rows or []):
             intervals = row.get("intervals") or []
             interval_txt = ""
@@ -1486,7 +1485,7 @@ class GeoCanvasEditor(tk.Tk):
                 a = min(float(x[1]) for x in intervals)
                 b = max(float(x[2]) for x in intervals)
                 interval_txt = f"{a:.2f}-{b:.2f}"
-            tree.insert("", "end", values=(
+            rows_to_insert.append((
                 row.get("ige_id", ""),
                 row.get("soil_type", ""),
                 row.get("fill_subtype", ""),
@@ -1501,6 +1500,11 @@ class GeoCanvasEditor(tk.Tk):
                 "" if row.get("c") is None else row.get("c"),
                 row.get("warning", ""),
             ))
+        for tree in trees:
+            for iid in tree.get_children():
+                tree.delete(iid)
+            for values in rows_to_insert:
+                tree.insert("", "end", values=values)
 
     def _show_calc_sample_dialog(self):
         if not (self.calc_samples or {}):
@@ -1951,6 +1955,11 @@ class GeoCanvasEditor(tk.Tk):
         self.main_workspace = mid
         self.mid = mid  # host for table + hscroll (between table and footer)
 
+        self.calc_workspace = ttk.Frame(self)
+        self._build_calc_workspace(self.calc_workspace)
+        self.calc_workspace.pack(side="top", fill="both", expand=True)
+        self.calc_workspace.pack_forget()
+
         # Верхняя фиксированная шапка
         self.hcanvas = tk.Canvas(mid, background="white", highlightthickness=0, height=120)
         self.hcanvas.pack(side="top", fill="x")
@@ -2199,6 +2208,15 @@ class GeoCanvasEditor(tk.Tk):
                 if not workspace.winfo_manager():
                     workspace.pack(side="top", fill="both", expand=True)
 
+        calc_workspace = getattr(self, "calc_workspace", None)
+        if calc_workspace is not None:
+            if is_calc_tab:
+                if not calc_workspace.winfo_manager():
+                    calc_workspace.pack(side="top", fill="both", expand=True)
+            else:
+                if calc_workspace.winfo_manager():
+                    calc_workspace.pack_forget()
+
         footer = getattr(self, "footer", None)
         if footer is not None:
             if is_calc_tab:
@@ -2219,6 +2237,47 @@ class GeoCanvasEditor(tk.Tk):
                         status.pack(side="bottom", fill="x", before=footer)
                     else:
                         status.pack(side="bottom", fill="x")
+
+    def _build_calc_workspace(self, parent):
+        top = ttk.Frame(parent, padding=(12, 8, 12, 4))
+        top.pack(side="top", fill="x")
+        ttk.Button(top, text="Рассчитать", command=self._run_calc_pipeline).pack(side="left", padx=(0, 6))
+        ttk.Button(top, text="Пересобрать выборки", command=self._rebuild_calc_samples).pack(side="left", padx=6)
+        ttk.Button(top, text="Показать выборку ИГЭ", command=self._show_calc_sample_dialog).pack(side="left", padx=6)
+        ttk.Button(top, text="Показать исключённые точки", command=self._show_calc_excluded_dialog).pack(side="left", padx=6)
+
+        table_host = ttk.Frame(parent, padding=(12, 0, 12, 8))
+        table_host.pack(side="top", fill="both", expand=True)
+        cols = ("ige", "soil", "subtype", "method", "status", "n", "qc_avg", "V", "interval", "E", "phi", "c", "warning")
+        self.calc_tree_main = ttk.Treeview(table_host, columns=cols, show="headings")
+        heads = {
+            "ige": "ИГЭ", "soil": "тип", "subtype": "subtype", "method": "метод", "status": "статус", "n": "n",
+            "qc_avg": "qc_avg", "V": "V", "interval": "интервал", "E": "E", "phi": "φ", "c": "c", "warning": "предупреждение"
+        }
+        for c in cols:
+            self.calc_tree_main.heading(c, text=heads[c])
+            self.calc_tree_main.column(c, width=90, anchor="center", stretch=False)
+        self.calc_tree_main.column("warning", width=240, anchor="w", stretch=False)
+
+        xscroll = ttk.Scrollbar(table_host, orient="horizontal", command=self.calc_tree_main.xview)
+        yscroll = ttk.Scrollbar(table_host, orient="vertical", command=self.calc_tree_main.yview)
+        self.calc_tree_main.configure(xscrollcommand=xscroll.set, yscrollcommand=yscroll.set)
+        self.calc_tree_main.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+        xscroll.grid(row=1, column=0, sticky="ew")
+        table_host.columnconfigure(0, weight=1)
+        table_host.rowconfigure(0, weight=1)
+
+    def _calc_trees(self):
+        trees = []
+        main_tree = getattr(self, "calc_tree_main", None)
+        if main_tree is not None:
+            trees.append(main_tree)
+        rv = getattr(self, "ribbon_view", None)
+        rv_tree = getattr(rv, "calc_tree", None) if rv is not None else None
+        if rv_tree is not None:
+            trees.append(rv_tree)
+        return trees
 
     def _update_window_title(self):
         obj = self.object_name.strip() if getattr(self, "object_name", "") else ""
