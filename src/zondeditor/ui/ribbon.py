@@ -507,8 +507,7 @@ class RibbonView(ttk.Frame):
         card = tk.Frame(parent, padx=2, pady=1, bd=0, highlightthickness=1, highlightbackground="#d4d8de", highlightcolor="#d4d8de")
         card.pack(side="left", fill="y", padx=(0, max(2, gap)))
         try:
-            card.configure(width=card_w, height=158)
-            card.pack_propagate(False)
+            card.configure(width=card_w)
         except Exception:
             pass
 
