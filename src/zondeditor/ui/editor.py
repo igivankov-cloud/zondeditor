@@ -1,5 +1,12 @@
 # src/zondeditor/ui/editor.py
 # Auto-generated from tools/_ui_extract/GeoCanvasEditor.py (Step19)
+# === FILE MAP BEGIN ===
+# FILE MAP (обновляй при правках; указывай строки Lx–Ly)
+# - _build_ui: L1734–L2180 — сборка root layout; подключение RibbonView и контейнеров рабочей области.
+# - _on_ribbon_tab_changed: L2181–L2182 — обработчик события смены вкладки ленты.
+# - _sync_workspace_visibility: L2184–L2222 — изоляция вкладки «Расчёт»: скрывает общую рабочую область/подвал вне расчётного UI.
+# === FILE MAP END ===
+
 from __future__ import annotations
 
 import tkinter as tk
@@ -1915,6 +1922,7 @@ class GeoCanvasEditor(tk.Tk):
                 "calc_show_sample": self._show_calc_sample_dialog,
                 "calc_show_excluded": self._show_calc_excluded_dialog,
                 "calc_make_protocol": self._make_calc_protocol,
+                "ribbon_tab_changed": self._on_ribbon_tab_changed,
             }
             self.ribbon_view = RibbonView(self, commands=commands, icon_font=_pick_icon_font(11))
             self.ribbon_view.pack(side="top", fill="x", before=ribbon)
@@ -1935,10 +1943,12 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
             ribbon.pack_forget()
+            self.after_idle(self._sync_workspace_visibility)
         # ========= Main canvas (fixed header) =========
         mid = ttk.Frame(self)
         mid.pack(side="top", fill="both", expand=True)
 
+        self.main_workspace = mid
         self.mid = mid  # host for table + hscroll (between table and footer)
 
         # Верхняя фиксированная шапка
@@ -2168,6 +2178,48 @@ class GeoCanvasEditor(tk.Tk):
         # hscroll живёт ВНУТРИ mid (между таблицей и нижними статус/подвал)
         self.hscroll_frame.pack(side="bottom", fill="x")
         self.hscroll_frame.pack_forget()
+    def _on_ribbon_tab_changed(self, tab_title: str = ""):
+        self._sync_workspace_visibility(tab_title)
+
+    def _sync_workspace_visibility(self, tab_title: str = ""):
+        rv = getattr(self, "ribbon_view", None)
+        if not tab_title and rv is not None:
+            try:
+                tab_title = rv.current_tab_title()
+            except Exception:
+                tab_title = ""
+        is_calc_tab = str(tab_title or "").strip() == "Расчёт"
+
+        workspace = getattr(self, "main_workspace", None)
+        if workspace is not None:
+            if is_calc_tab:
+                if workspace.winfo_manager():
+                    workspace.pack_forget()
+            else:
+                if not workspace.winfo_manager():
+                    workspace.pack(side="top", fill="both", expand=True)
+
+        footer = getattr(self, "footer", None)
+        if footer is not None:
+            if is_calc_tab:
+                if footer.winfo_manager():
+                    footer.pack_forget()
+            else:
+                if not footer.winfo_manager():
+                    footer.pack(side="bottom", fill="x")
+
+        status = getattr(self, "status", None)
+        if status is not None:
+            if is_calc_tab:
+                if status.winfo_manager():
+                    status.pack_forget()
+            else:
+                if not status.winfo_manager():
+                    if footer is not None and footer.winfo_manager():
+                        status.pack(side="bottom", fill="x", before=footer)
+                    else:
+                        status.pack(side="bottom", fill="x")
+
     def _update_window_title(self):
         obj = self.object_name.strip() if getattr(self, "object_name", "") else ""
         obj = obj or "(без названия)"

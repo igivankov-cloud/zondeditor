@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+# === FILE MAP BEGIN ===
+# FILE MAP (обновляй при правках; указывай строки Lx–Ly)
+# - _build_calc_tab: L282–L357 — компактная вкладка «Расчёт» (параметры, кнопки, таблица + горизонтальный скролл).
+# - _on_tab_changed: L359–L363 — уведомление редактора о смене вкладки ленты.
+# - current_tab_title: L364–L370 — безопасное чтение текущей вкладки Notebook.
+# === FILE MAP END ===
+
+
 import tkinter as tk
 from tkinter import ttk, simpledialog
 
@@ -59,6 +67,7 @@ class RibbonView(ttk.Frame):
 
         self.tabs = ttk.Notebook(self)
         self.tabs.pack(side="top", fill="x", padx=2, pady=(0, 2))
+        self.tabs.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
         self._build_file_tab()
         self._build_params_tab()
@@ -286,7 +295,7 @@ class RibbonView(ttk.Frame):
                 "СП 446.1325800.2019, приложение Ж",
                 "СНиП 2.02.01-83* (п. 12.4) — для опор мостов",
             ],
-            width=56,
+            width=44,
         )
         self.calc_cpt_method_combo.grid(row=0, column=1, sticky="w", padx=(6, 0))
         self.calc_cpt_method_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("calc_option_changed", lambda *_: None)("cpt_method", self.calc_cpt_method_var.get()))
@@ -297,7 +306,7 @@ class RibbonView(ttk.Frame):
             state="readonly",
             textvariable=self.calc_transition_method_var,
             values=["СП 22.13330.2016 (п. 5.3.17)"],
-            width=56,
+            width=44,
         )
         self.calc_transition_method_combo.grid(row=1, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
         self.calc_transition_method_combo.bind("<<ComboboxSelected>>", lambda _e: self.commands.get("calc_option_changed", lambda *_: None)("transition_method", self.calc_transition_method_var.get()))
@@ -313,17 +322,23 @@ class RibbonView(ttk.Frame):
         ttk.Button(btns, text="Показать выборку ИГЭ", command=self.commands.get("calc_show_sample")).pack(side="left", padx=4)
         ttk.Button(btns, text="Показать исключённые точки", command=self.commands.get("calc_show_excluded")).pack(side="left", padx=4)
 
+        table_wrap = ttk.Frame(tab)
+        table_wrap.pack(fill="both", expand=True)
         cols = ("ige", "soil", "subtype", "method", "status", "n", "qc_avg", "V", "interval", "E", "phi", "c", "warning")
-        self.calc_tree = ttk.Treeview(tab, columns=cols, show="headings", height=8)
+        self.calc_tree = ttk.Treeview(table_wrap, columns=cols, show="headings", height=8)
         heads = {
             "ige": "ИГЭ", "soil": "тип", "subtype": "subtype", "method": "метод", "status": "статус", "n": "n",
             "qc_avg": "qc_avg", "V": "V", "interval": "интервал", "E": "E", "phi": "φ", "c": "c", "warning": "предупреждение"
         }
         for c in cols:
             self.calc_tree.heading(c, text=heads[c])
-            self.calc_tree.column(c, width=90, anchor="center")
-        self.calc_tree.column("warning", width=240, anchor="w")
+            self.calc_tree.column(c, width=90, anchor="center", stretch=False)
+        self.calc_tree.column("warning", width=240, anchor="w", stretch=False)
+
+        calc_xscroll = ttk.Scrollbar(table_wrap, orient="horizontal", command=self.calc_tree.xview)
+        self.calc_tree.configure(xscrollcommand=calc_xscroll.set)
         self.calc_tree.pack(fill="both", expand=True)
+        calc_xscroll.pack(fill="x")
 
     def _build_protocol_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
@@ -340,6 +355,18 @@ class RibbonView(ttk.Frame):
             cnv.itemconfigure(self._ige_window_id, width=width)
         except Exception:
             pass
+
+    def _on_tab_changed(self, _event=None):
+        cb = self.commands.get("ribbon_tab_changed")
+        if callable(cb):
+            cb(self.current_tab_title())
+
+    def current_tab_title(self) -> str:
+        try:
+            tab_id = self.tabs.select()
+            return str(self.tabs.tab(tab_id, "text") or "")
+        except Exception:
+            return ""
 
     def _on_ige_wheel_x(self, event):
         try:
