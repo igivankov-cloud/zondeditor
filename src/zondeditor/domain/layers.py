@@ -38,18 +38,18 @@ VALID_SOILS = {
 }
 
 SOIL_STYLE: dict[SoilType, dict[str, str]] = {
-    SoilType.CLAY: {"color": "#b67a52", "hatch": "diag_dense", "hatch_color": "#000000"},
-    SoilType.LOAM: {"color": "#c89b6d", "hatch": "diag_sparse", "hatch_color": "#000000"},
-    SoilType.SANDY_LOAM: {"color": "#d8b88a", "hatch": "diag_sparse", "hatch_color": "#000000"},
-    SoilType.SAND: {"color": "#f0d76a", "hatch": "dot", "hatch_color": "#000000"},
-    SoilType.PEAT: {"color": "#8f8f8f", "hatch": "cross", "hatch_color": "#000000"},
-    SoilType.GRAVEL: {"color": "#c7c3ba", "hatch": "cross", "hatch_color": "#000000"},
-    SoilType.GRAVELLY_SAND: {"color": "#d8cc98", "hatch": "cross", "hatch_color": "#000000"},
-    SoilType.FILL: {"color": "#bda48b", "hatch": "diag_dense", "hatch_color": "#000000"},
-    SoilType.ARGILLITE: {"color": "#9e4f43", "hatch": "diag_dense", "hatch_color": "#000000"},
-    SoilType.SANDSTONE: {"color": "#c58f62", "hatch": "diag_sparse", "hatch_color": "#000000"},
+    # Цвет подложки слоёв; активная штриховка теперь берётся из domain.hatching.
+    SoilType.CLAY: {"color": "#ffffff"},
+    SoilType.LOAM: {"color": "#ffffff"},
+    SoilType.SANDY_LOAM: {"color": "#ffffff"},
+    SoilType.SAND: {"color": "#ffffff"},
+    SoilType.PEAT: {"color": "#ffffff"},
+    SoilType.GRAVEL: {"color": "#ffffff"},
+    SoilType.GRAVELLY_SAND: {"color": "#ffffff"},
+    SoilType.FILL: {"color": "#ffffff"},
+    SoilType.ARGILLITE: {"color": "#ffffff"},
+    SoilType.SANDSTONE: {"color": "#ffffff"},
 }
-
 DEFAULT_LAYER_STYLE = SOIL_STYLE
 
 

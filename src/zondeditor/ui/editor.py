@@ -6,6 +6,7 @@
 # - _next_free_ige_ordinal/_next_free_ige_id: L1141–L1340 — генерация ближайшего свободного базового имени ИГЭ.
 # - _add_unassigned_ige_from_ribbon: L1371–L1383 — добавление нового ИГЭ с пустым типом грунта.
 # - _rename_ige_from_ribbon: L1635–L1670 — переименование ИГЭ с проверкой уникальности и обновлением ссылок в слоях.
+# - hatching integration: _draw_layer_hatch/_draw_layers_overlay_for_test — применение встроенной библиотеки hatch-паттернов.
 # === FILE MAP END ===
 
 from __future__ import annotations
@@ -74,7 +75,8 @@ from src.zondeditor.domain.layers import (
 
 from src.zondeditor.ui.consts import *
 from src.zondeditor.ui.helpers import _apply_win11_style, _setup_shared_logger, _validate_nonneg_float_key, _check_license_or_exit, _parse_depth_float, _try_parse_dt, _pick_icon_font, _validate_tid_key, _validate_depth_0_4_key, _format_date_ru, _format_time_ru, _canvas_view_bbox, _validate_hh_key, _validate_mm_key, _parse_cell_int, _max_zero_run, _noise_around, _interp_with_noise, _resource_path, _open_logs_folder
-from src.zondeditor.ui.soil_hatches import draw_hatch, soil_code_from_value
+from src.zondeditor.domain.hatching import resolve_hatch_pattern
+from src.zondeditor.ui.render.hatch_renderer import render_hatch_pattern
 from src.zondeditor.ui.widgets import ToolTip, CalendarDialog
 from src.zondeditor.ui.ribbon import RibbonView
 from src.zondeditor.project import Project, ProjectSettings, SourceInfo, load_project, save_project
@@ -4992,14 +4994,18 @@ class GeoCanvasEditor(tk.Tk):
         return y0 + (y1 - y0) * ratio
 
 
-    def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, soil_code: str, tags):
-        # Выбор штриховки по типу грунта централизован в ui/soil_hatches.py.
-        draw_hatch(
+    def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, soil_type: str, tags):
+        # Единая система: встроенные PAT-derived шаблоны из domain.hatching.
+        pattern = resolve_hatch_pattern(str(soil_type or ""))
+        if pattern is None:
+            # Безопасный fallback: нейтральный фон без старых условных штриховок.
+            return
+        render_hatch_pattern(
             self.canvas,
             (float(x0), float(y0), float(x1), float(y1)),
-            soil_code=str(soil_code or ""),
-            scale_info={"layer_height_px": float(y1 - y0)},
+            pattern,
             tags=tags,
+            scale_info={"layer_height_px": float(y1 - y0)},
         )
 
     def _draw_layers_overlay_for_test(self, ti: int, plot_rect, depth_to_y, tags):
@@ -5049,8 +5055,8 @@ class GeoCanvasEditor(tk.Tk):
             ent = self._ensure_ige_entry(ige_id, fallback_soil=lyr.soil_type.value, fallback_mode=lyr.calc_mode.value)
             # Штриховки черные на белом фоне: цвет фона фиксирован и не зависит от style.
             self.canvas.create_rectangle(x0, ty0, x1, ty1, fill="#ffffff", outline="", tags=tags)
-            soil_code = soil_code_from_value(str(getattr(lyr.soil_type, "value", "") or ent.get("soil_type") or ""))
-            self._draw_layer_hatch(x0, ty0, x1, ty1, soil_code=soil_code, tags=tags)
+            soil_type = str(getattr(lyr.soil_type, "value", "") or ent.get("soil_type") or "")
+            self._draw_layer_hatch(x0, ty0, x1, ty1, soil_type=soil_type, tags=tags)
             self._layer_plot_hitbox.append({"kind": "interval", "ti": ti, "ige_id": ige_id, "top": float(lt), "bot": float(lb), "bbox": (x0, ty0, x1, ty1)})
             label_spans.append({
                 "x0": x0,
