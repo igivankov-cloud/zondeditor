@@ -72,8 +72,8 @@ BUILTIN_HATCH_PATTERNS: dict[str, HatchPattern] = {
         lines=[
             _line(angle_deg=0.0, x0=0.0, y0=0.1, dx=0.0, dy=0.2, pattern=[]),
             _line(angle_deg=0.0, x0=-0.005, y0=0.0, dx=0.34641, dy=0.2, pattern=[0.01, -0.128564]),
-            _line(angle_deg=60.0, x0=0.0, y0=0.0, dx=0.34641, dy=0.2, pattern=[0.11547, -0.46188, 0.11547]),
-            _line(angle_deg=120.0, x0=0.0, y0=0.0, dx=0.34641, dy=0.2, pattern=[0.11547, -0.46188, 0.11547]),
+            _line(angle_deg=60.0, x0=0.0, y0=0.0, dx=0.34641, dy=0.2, pattern=[0.11547, -0.57735]),
+            _line(angle_deg=120.0, x0=0.0, y0=0.0, dx=0.34641, dy=0.2, pattern=[0.11547, -0.57735]),
         ],
     ),
     "pesok_g": HatchPattern(

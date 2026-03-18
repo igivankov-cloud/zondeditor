@@ -92,6 +92,15 @@ def test_renderer_draws_lines_for_pattern():
     assert canvas.lines
 
 
+
+
+def test_pesch_diagonals_use_single_short_segment_per_cycle():
+    pesch = BUILTIN_HATCH_PATTERNS["pesch"]
+    diagonal_lines = [line for line in pesch.lines if line.angle_deg in (60.0, 120.0)]
+    assert len(diagonal_lines) == 2
+    for line in diagonal_lines:
+        assert line.pattern == [0.11547, -0.57735]
+
 def test_renderer_smoke_for_all_builtin_patterns_and_layer_scales():
     for pattern in BUILTIN_HATCH_PATTERNS.values():
         thin_canvas = DummyCanvas()
