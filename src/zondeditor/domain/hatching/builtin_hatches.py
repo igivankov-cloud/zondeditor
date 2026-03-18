@@ -40,7 +40,7 @@ BUILTIN_HATCH_PATTERNS: dict[str, HatchPattern] = {
         name="glina",
         title="Глина",
         source_file="glina.pat",
-        lines=[_line(angle_deg=0.0, x0=0.0, y0=0.1, dx=0.0, dy=0.2, pattern=[])],
+        lines=[_line(angle_deg=0.0, x0=0.0, y0=0.0375, dx=0.0, dy=0.075, pattern=[])],
     ),
     "gravel": HatchPattern(
         name="gravel",
@@ -130,13 +130,13 @@ BUILTIN_HATCH_PATTERNS: dict[str, HatchPattern] = {
         name="sugl",
         title="Суглинок",
         source_file="sugl.pat",
-        lines=[_line(angle_deg=60.0, x0=0.0, y0=0.0, dx=0.0, dy=0.15, pattern=[1.0])],
+        lines=[_line(angle_deg=120.0, x0=0.0, y0=0.0, dx=0.0, dy=0.15, pattern=[1.0])],
     ),
     "supes": HatchPattern(
         name="supes",
         title="Супесь",
         source_file="supes.pat",
-        lines=[_line(angle_deg=60.0, x0=-0.066025, y0=0.0, dx=-0.05, dy=0.15, pattern=[0.2, -0.06])],
+        lines=[_line(angle_deg=120.0, x0=0.066025, y0=0.0, dx=0.05, dy=0.15, pattern=[0.2, -0.06])],
     ),
     "tehno": HatchPattern(
         name="tehno",

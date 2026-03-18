@@ -1,10 +1,12 @@
+import math
+
 from src.zondeditor.domain.hatching import (
     BUILTIN_HATCH_PATTERNS,
     SOIL_TYPE_TO_HATCH,
     resolve_hatch_pattern,
 )
 from src.zondeditor.ui.render.hatch_preview import draw_hatch_preview_grid, iter_builtin_preview_patterns
-from src.zondeditor.ui.render.hatch_renderer import render_hatch_pattern
+from src.zondeditor.ui.render.hatch_renderer import HATCH_UNIT_PX, render_hatch_pattern
 
 
 class DummyCanvas:
@@ -21,6 +23,28 @@ class DummyCanvas:
 
     def create_text(self, *args, **kwargs):
         self.texts.append((args, kwargs))
+
+
+def _long_lines(canvas: DummyCanvas):
+    out = []
+    for args, _kwargs in canvas.lines:
+        if len(args) != 4:
+            continue
+        x0, y0, x1, y1 = [float(v) for v in args]
+        ln = math.hypot(x1 - x0, y1 - y0)
+        if ln >= 10.0:
+            out.append((x0, y0, x1, y1))
+    return out
+
+
+def _projected_spacings(lines, *, angle_deg: float):
+    if not lines:
+        return []
+    a = math.radians(angle_deg)
+    vx, vy = math.cos(a), math.sin(a)
+    nx, ny = -vy, vx
+    vals = sorted({round((x0 * nx) + (y0 * ny), 3) for x0, y0, _x1, _y1 in lines})
+    return [round(vals[i + 1] - vals[i], 3) for i in range(len(vals) - 1) if (vals[i + 1] - vals[i]) > 0.5]
 
 
 def test_builtin_catalog_contains_required_patterns():
@@ -105,3 +129,43 @@ def test_preview_grid_draws_labels_and_boxes():
     assert bbox[3] > bbox[1]
     assert len(canvas.rectangles) >= len(iter_builtin_preview_patterns())
     assert len(canvas.texts) >= len(iter_builtin_preview_patterns())
+
+
+def test_hatch_scale_is_constant_for_thin_and_thick_glina_layers():
+    p = BUILTIN_HATCH_PATTERNS["glina"]
+    thin = DummyCanvas()
+    thick = DummyCanvas()
+    render_hatch_pattern(thin, (0.0, 0.0, 140.0, 24.0), p, tags=("thin",), scale_info={"layer_height_px": 24.0})
+    render_hatch_pattern(thick, (0.0, 0.0, 140.0, 160.0), p, tags=("thick",), scale_info={"layer_height_px": 160.0})
+    thin_sp = _projected_spacings(_long_lines(thin), angle_deg=0.0)
+    thick_sp = _projected_spacings(_long_lines(thick), angle_deg=0.0)
+    assert thin_sp
+    assert thick_sp
+    assert abs(thin_sp[0] - thick_sp[0]) <= 0.01
+    assert abs(thin_sp[0] - (0.075 * HATCH_UNIT_PX)) <= 0.05
+
+
+def test_glina_sugl_supes_share_visual_step_and_sugl_supes_are_mirrored():
+    glina = BUILTIN_HATCH_PATTERNS["glina"]
+    sugl = BUILTIN_HATCH_PATTERNS["sugl"]
+    supes = BUILTIN_HATCH_PATTERNS["supes"]
+    assert glina.lines[0].dy == 0.075
+    assert sugl.lines[0].dy == supes.lines[0].dy == 0.15
+    assert glina.lines[0].angle_deg == 0.0
+    assert sugl.lines[0].angle_deg == 120.0
+    assert supes.lines[0].angle_deg == 120.0
+
+
+def test_sugl_supes_keep_same_density_across_layer_heights():
+    for name in ("sugl", "supes"):
+        p = BUILTIN_HATCH_PATTERNS[name]
+        thin = DummyCanvas()
+        thick = DummyCanvas()
+        render_hatch_pattern(thin, (0.0, 0.0, 140.0, 28.0), p, tags=("thin",), scale_info={"layer_height_px": 28.0})
+        render_hatch_pattern(thick, (0.0, 0.0, 140.0, 180.0), p, tags=("thick",), scale_info={"layer_height_px": 180.0})
+        thin_sp = _projected_spacings(_long_lines(thin), angle_deg=120.0)
+        thick_sp = _projected_spacings(_long_lines(thick), angle_deg=120.0)
+        assert thin_sp
+        assert thick_sp
+        assert abs(thin_sp[0] - thick_sp[0]) <= 0.01
+        assert abs(thin_sp[0] - thin_sp[-1]) <= 0.01

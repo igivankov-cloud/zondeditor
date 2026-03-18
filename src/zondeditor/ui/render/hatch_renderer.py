@@ -6,6 +6,9 @@ from typing import Any
 from src.zondeditor.domain.hatching import HatchLine, HatchPattern
 
 
+HATCH_UNIT_PX = 80.0
+
+
 def _line_rect_intersections(px: float, py: float, vx: float, vy: float, rect: tuple[float, float, float, float]) -> tuple[float, float] | None:
     x0, y0, x1, y1 = rect
     pts: list[float] = []
@@ -61,9 +64,10 @@ def render_hatch_line(canvas: Any, rect: tuple[float, float, float, float], line
     nx = -vy
     ny = vx
 
-    # базовая точка и сдвиг между параллельными линиями
-    p0x = x0 + float(line.x0) * unit_px
-    p0y = y0 + float(line.y0) * unit_px
+    # базовая точка паттерна привязана к глобальным координатам canvas,
+    # чтобы слой только клиппировал штриховку, а не масштабировал/сдвигал её заново.
+    p0x = float(line.x0) * unit_px
+    p0y = float(line.y0) * unit_px
     ox = float(line.dx) * unit_px
     oy = float(line.dy) * unit_px
 
@@ -100,14 +104,9 @@ def render_hatch_pattern(canvas: Any, rect: tuple[float, float, float, float], p
     x0, y0, x1, y1 = [float(v) for v in rect]
     if x1 <= x0 or y1 <= y0:
         return
-    h = max(1.0, y1 - y0)
-    factor = max(0.6, min(1.8, h / 64.0))
-    if scale_info and scale_info.get("layer_height_px"):
-        try:
-            factor = max(0.6, min(1.8, float(scale_info["layer_height_px"]) / 64.0))
-        except Exception:
-            pass
-    unit_px = 80.0 * factor
+    # Масштаб паттерна постоянный для всех слоёв.
+    # rect используется только как область клиппинга.
+    unit_px = HATCH_UNIT_PX
 
     for line in (pattern.lines or []):
         render_hatch_line(canvas, (x0, y0, x1, y1), line, unit_px=unit_px, tags=tags)
