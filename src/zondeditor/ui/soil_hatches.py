@@ -5,7 +5,7 @@ from typing import Any, Callable
 Renderer = Callable[[Any, tuple[float, float, float, float], dict[str, float], Any], None]
 
 # Таблица соответствия: код грунта -> функция отрисовки штриховки.
-# Для расширения добавьте новый soil_code в SOIL_CODE_TO_RENDERER.
+# Для расширения добавьте новый soil_code в SOIL_CODE_TO_RENDERER и реализацию рендера ниже.
 SOIL_CODE_TO_RENDERER: dict[str, str] = {
     "SiL": "_draw_sugl",
     "Si": "_draw_supes",
@@ -19,7 +19,7 @@ SOIL_CODE_TO_RENDERER: dict[str, str] = {
     "Sandstone": "_draw_sandstone",
 }
 
-# Карта алиасов/текущих наименований проекта в фиксированные soil_code.
+# Карта текущих project soil_type (строки) в фиксированные soil_code.
 SOIL_TYPE_TO_CODE: dict[str, str] = {
     "суглинок": "SiL",
     "супесь": "Si",
@@ -61,7 +61,7 @@ def _px(v: float, s: dict[str, float], *, min_px: float = 1.0) -> float:
 
 def _diag_segment(x0: float, y0: float, x1: float, y1: float, b: float, slope: int) -> tuple[float, float, float, float] | None:
     pts: list[tuple[float, float]] = []
-    if slope > 0:
+    if slope > 0:  # y = x + b
         yy = x0 + b
         if y0 <= yy <= y1:
             pts.append((x0, yy))
@@ -74,7 +74,7 @@ def _diag_segment(x0: float, y0: float, x1: float, y1: float, b: float, slope: i
         xx = y1 - b
         if x0 <= xx <= x1:
             pts.append((xx, y1))
-    else:
+    else:  # y = -x + b
         yy = -x0 + b
         if y0 <= yy <= y1:
             pts.append((x0, yy))
@@ -96,8 +96,10 @@ def _diag_segment(x0: float, y0: float, x1: float, y1: float, b: float, slope: i
     return None
 
 
-def _draw_diag_family(canvas: Any, bbox: tuple[float, float, float, float], *, step: float, slope: int, tags: Any) -> None:
+# --- Повторно используемые низкоуровневые примитивы ---
+def draw_diagonal_lines(canvas: Any, bbox: tuple[float, float, float, float], *, step: float, slope: int, tags: Any) -> list[tuple[float, float, float, float]]:
     x0, y0, x1, y1 = bbox
+    segs: list[tuple[float, float, float, float]] = []
     if slope > 0:
         offs = range(int(y0 - x1), int(y1 - x0 + step), int(step))
     else:
@@ -106,34 +108,110 @@ def _draw_diag_family(canvas: Any, bbox: tuple[float, float, float, float], *, s
         seg = _diag_segment(x0, y0, x1, y1, float(b), slope)
         if seg:
             canvas.create_line(*seg, fill="#000000", width=1, tags=tags)
+            segs.append(seg)
+    return segs
 
 
-def _draw_sugl(canvas: Any, bbox: tuple[float, float, float, float], s: dict[str, float], tags: Any) -> None:
+def draw_small_dots(canvas: Any, bbox: tuple[float, float, float, float], *, step: float, dot_size: float, tags: Any) -> None:
     x0, y0, x1, y1 = bbox
-    step = _px(9, s)
-    cross_len = _px(4, s)
-    cross_step = _px(12, s)
-    _draw_diag_family(canvas, bbox, step=step, slope=+1, tags=tags)
-    for yy in range(int(y0), int(y1 + step), int(step)):
-        for xx in range(int(x0), int(x1 + cross_step), int(cross_step)):
+    row = 0
+    half = max(0.5, dot_size * 0.5)
+    for yy in range(int(y0 + step * 0.5), int(y1), int(step)):
+        shift = step * 0.5 if (row % 2) else 0.0
+        for xx in range(int(x0 + step * 0.5 + shift), int(x1), int(step)):
+            canvas.create_rectangle(xx - half, yy - half, xx + half, yy + half, fill="#000000", outline="#000000", width=1, tags=tags)
+        row += 1
+
+
+def draw_open_circles(canvas: Any, bbox: tuple[float, float, float, float], *, step: float, diameter: float, tags: Any) -> None:
+    x0, y0, x1, y1 = bbox
+    row = 0
+    r = max(1.0, diameter * 0.5)
+    for yy in range(int(y0 + step * 0.5), int(y1), int(step)):
+        shift = step * 0.5 if (row % 2) else 0.0
+        for xx in range(int(x0 + step * 0.5 + shift), int(x1), int(step)):
+            canvas.create_oval(xx - r, yy - r, xx + r, yy + r, outline="#000000", width=1, tags=tags)
+        row += 1
+
+
+def draw_short_marks_on_lines(
+    canvas: Any,
+    line_segments: list[tuple[float, float, float, float]],
+    *,
+    mark_len: float,
+    step_along: float,
+    angle_mode: str,
+    tags: Any,
+) -> None:
+    for x0, y0, x1, y1 in line_segments:
+        dx = x1 - x0
+        dy = y1 - y0
+        ln = (dx * dx + dy * dy) ** 0.5
+        if ln < 1.0:
+            continue
+        ux = dx / ln
+        uy = dy / ln
+        nx = -uy
+        ny = ux
+        dist = step_along
+        while dist < ln:
+            cx = x0 + ux * dist
+            cy = y0 + uy * dist
+            if angle_mode == "perp":
+                vx, vy = nx, ny
+            else:
+                vx, vy = ux, uy
+            hl = mark_len * 0.5
+            canvas.create_line(cx - vx * hl, cy - vy * hl, cx + vx * hl, cy + vy * hl, fill="#000000", width=1, tags=tags)
+            dist += step_along
+
+
+def draw_bracket_pattern(canvas: Any, bbox: tuple[float, float, float, float], *, line_step: float, bracket_h: float, x_step: float, tags: Any) -> None:
+    x0, y0, x1, y1 = bbox
+    row = 0
+    for yy in range(int(y0 + line_step * 0.5), int(y1), int(line_step)):
+        y = float(yy)
+        canvas.create_line(x0, y, x1, y, fill="#000000", width=1, tags=tags)
+        up = (row % 2 == 0)
+        shift = x_step * 0.5 if (row % 2) else 0.0
+        for xx in range(int(x0 + shift), int(x1), int(x_step)):
             x = float(xx)
-            y = float(yy + (x - x0))
-            if y0 <= y <= y1 and x0 <= x <= x1:
-                canvas.create_line(x - cross_len * 0.5, y + cross_len * 0.5, x + cross_len * 0.5, y - cross_len * 0.5, fill="#000000", width=1, tags=tags)
+            if up:
+                top = y - bracket_h
+                bot = y
+                cap_y = top
+            else:
+                top = y
+                bot = y + bracket_h
+                cap_y = bot
+            canvas.create_line(x, top, x, bot, fill="#000000", width=1, tags=tags)
+            canvas.create_line(x, cap_y, x + bracket_h, cap_y, fill="#000000", width=1, tags=tags)
+        row += 1
+
+
+def draw_cross_marks(canvas: Any, bbox: tuple[float, float, float, float], *, step: float, size: float, tags: Any) -> None:
+    x0, y0, x1, y1 = bbox
+    half = size * 0.5
+    row = 0
+    for yy in range(int(y0 + step * 0.5), int(y1), int(step)):
+        shift = step * 0.5 if (row % 2) else 0.0
+        for xx in range(int(x0 + step * 0.5 + shift), int(x1), int(step)):
+            canvas.create_line(xx - half, yy - half, xx + half, yy + half, fill="#000000", width=1, tags=tags)
+            canvas.create_line(xx - half, yy + half, xx + half, yy - half, fill="#000000", width=1, tags=tags)
+        row += 1
+
+
+# --- Паттерны грунтов ---
+def _draw_sugl(canvas: Any, bbox: tuple[float, float, float, float], s: dict[str, float], tags: Any) -> None:
+    # Суглинок: диагонали (развернуты относительно старой реализации) + короткие поперечные штрихи.
+    segs = draw_diagonal_lines(canvas, bbox, step=_px(9, s), slope=-1, tags=tags)
+    draw_short_marks_on_lines(canvas, segs, mark_len=_px(4, s), step_along=_px(12, s), angle_mode="perp", tags=tags)
 
 
 def _draw_supes(canvas: Any, bbox: tuple[float, float, float, float], s: dict[str, float], tags: Any) -> None:
-    x0, y0, x1, y1 = bbox
-    step = _px(11, s)
-    dash_len = _px(3.5, s)
-    dash_step = _px(18, s)
-    _draw_diag_family(canvas, bbox, step=step, slope=+1, tags=tags)
-    for yy in range(int(y0), int(y1 + step), int(step)):
-        for xx in range(int(x0), int(x1 + dash_step), int(dash_step)):
-            x = float(xx)
-            y = float(yy + (x - x0))
-            if y0 <= y <= y1 and x0 <= x <= x1:
-                canvas.create_line(x - dash_len * 0.5, y - dash_len * 0.5, x + dash_len * 0.5, y + dash_len * 0.5, fill="#000000", width=1, tags=tags)
+    # Супесь: более редкие диагонали (в ту же сторону, что и суглинок) + короткие штрихи вдоль линии.
+    segs = draw_diagonal_lines(canvas, bbox, step=_px(11, s), slope=-1, tags=tags)
+    draw_short_marks_on_lines(canvas, segs, mark_len=_px(3.5, s), step_along=_px(18, s), angle_mode="along", tags=tags)
 
 
 def _draw_clay(canvas: Any, bbox: tuple[float, float, float, float], s: dict[str, float], tags: Any) -> None:
@@ -144,65 +222,28 @@ def _draw_clay(canvas: Any, bbox: tuple[float, float, float, float], s: dict[str
 
 
 def _draw_sand(canvas: Any, bbox: tuple[float, float, float, float], s: dict[str, float], tags: Any) -> None:
-    x0, y0, x1, y1 = bbox
-    step = _px(8, s)
-    r = _px(1.2, s)
-    row = 0
-    for yy in range(int(y0 + step * 0.5), int(y1), int(step)):
-        shift = step * 0.5 if (row % 2) else 0
-        for xx in range(int(x0 + step * 0.5 + shift), int(x1), int(step)):
-            canvas.create_oval(xx - r, yy - r, xx + r, yy + r, fill="#000000", outline="#000000", width=1, tags=tags)
-        row += 1
+    # Очень мелкая зернистая фактура (не кружки).
+    draw_small_dots(canvas, bbox, step=_px(8, s), dot_size=_px(1.0, s, min_px=0.8), tags=tags)
 
 
 def _draw_peat(canvas: Any, bbox: tuple[float, float, float, float], s: dict[str, float], tags: Any) -> None:
-    x0, y0, x1, y1 = bbox
-    h_step = _px(12, s)
-    bracket = _px(7, s)
-    x_step = _px(16, s)
-    for yy in range(int(y0 + h_step * 0.5), int(y1), int(h_step)):
-        canvas.create_line(x0, float(yy), x1, float(yy), fill="#000000", width=1, tags=tags)
-    row = 0
-    for yy in range(int(y0 + h_step * 0.5), int(y1), int(h_step)):
-        up = (row % 2 == 0)
-        shift = x_step * 0.5 if (row % 2) else 0
-        for xx in range(int(x0 + shift), int(x1), int(x_step)):
-            top = yy - bracket if up else yy
-            bot = yy if up else yy + bracket
-            canvas.create_line(xx, top, xx, bot, fill="#000000", width=1, tags=tags)
-            canvas.create_line(xx, top if up else bot, xx + bracket, top if up else bot, fill="#000000", width=1, tags=tags)
-        row += 1
+    # Торф: горизонтальные слои + регулярные П/скобки с чередованием вверх/вниз.
+    draw_bracket_pattern(canvas, bbox, line_step=_px(12, s), bracket_h=_px(7, s), x_step=_px(16, s), tags=tags)
 
 
 def _draw_fill(canvas: Any, bbox: tuple[float, float, float, float], s: dict[str, float], tags: Any) -> None:
-    step = _px(12, s)
-    _draw_diag_family(canvas, bbox, step=step, slope=+1, tags=tags)
-    _draw_diag_family(canvas, bbox, step=step, slope=-1, tags=tags)
+    draw_diagonal_lines(canvas, bbox, step=_px(12, s), slope=+1, tags=tags)
+    draw_diagonal_lines(canvas, bbox, step=_px(12, s), slope=-1, tags=tags)
 
 
 def _draw_gravel(canvas: Any, bbox: tuple[float, float, float, float], s: dict[str, float], tags: Any) -> None:
-    x0, y0, x1, y1 = bbox
-    step = _px(15, s)
-    r = _px(2.5, s)
-    row = 0
-    for yy in range(int(y0 + step * 0.5), int(y1), int(step)):
-        shift = step * 0.5 if (row % 2) else 0
-        for xx in range(int(x0 + step * 0.5 + shift), int(x1), int(step)):
-            canvas.create_oval(xx - r, yy - r, xx + r, yy + r, outline="#000000", width=1, tags=tags)
-        row += 1
+    draw_open_circles(canvas, bbox, step=_px(15, s), diameter=_px(5, s), tags=tags)
 
 
 def _draw_sand_gravel(canvas: Any, bbox: tuple[float, float, float, float], s: dict[str, float], tags: Any) -> None:
-    _draw_sand(canvas, bbox, s, tags)
-    x0, y0, x1, y1 = bbox
-    step = _px(19, s)
-    r = _px(2.5, s)
-    row = 0
-    for yy in range(int(y0 + step * 0.5), int(y1), int(step)):
-        shift = step * 0.5 if (row % 2) else 0
-        for xx in range(int(x0 + step * 0.5 + shift), int(x1), int(step)):
-            canvas.create_oval(xx - r, yy - r, xx + r, yy + r, outline="#000000", width=1, tags=tags)
-        row += 1
+    # Песчаный фон мельче + более редкие пустые кружки гравия.
+    draw_small_dots(canvas, bbox, step=_px(8, s), dot_size=_px(1.0, s, min_px=0.8), tags=tags)
+    draw_open_circles(canvas, bbox, step=_px(19, s), diameter=_px(5, s), tags=tags)
 
 
 def _draw_argillite(canvas: Any, bbox: tuple[float, float, float, float], s: dict[str, float], tags: Any) -> None:
@@ -210,40 +251,33 @@ def _draw_argillite(canvas: Any, bbox: tuple[float, float, float, float], s: dic
     h_step = _px(12, s)
     d_len = _px(7, s)
     x_step = _px(24, s)
+    row = 0
+    # Штрихи сидят непосредственно на горизонтальных линиях, и идут шахматкой.
     for yy in range(int(y0), int(y1 + h_step), int(h_step)):
-        canvas.create_line(x0, float(yy), x1, float(yy), fill="#000000", width=1, tags=tags)
-    for yy in range(int(y0 + h_step * 0.5), int(y1), int(h_step)):
-        for xx in range(int(x0 + x_step * 0.5), int(x1), int(x_step)):
-            canvas.create_line(xx - d_len * 0.5, yy + d_len * 0.5, xx + d_len * 0.5, yy - d_len * 0.5, fill="#000000", width=1, tags=tags)
+        y = float(yy)
+        canvas.create_line(x0, y, x1, y, fill="#000000", width=1, tags=tags)
+        shift = x_step * 0.5 if (row % 2) else 0.0
+        for xx in range(int(x0 + x_step * 0.5 + shift), int(x1), int(x_step)):
+            canvas.create_line(xx - d_len * 0.5, y - d_len * 0.5, xx + d_len * 0.5, y + d_len * 0.5, fill="#000000", width=1, tags=tags)
+        row += 1
 
 
 def _draw_sandstone(canvas: Any, bbox: tuple[float, float, float, float], s: dict[str, float], tags: Any) -> None:
+    # Песчаник: спокойная слоистость + мелкая точечная текстура + редкие диагональные кресты.
     x0, y0, x1, y1 = bbox
     h_step = _px(14, s)
-    dot_step = _px(10, s)
-    cross_step = _px(34, s)
-    cross = _px(9, s)
-    r = _px(1.0, s)
     for yy in range(int(y0), int(y1 + h_step), int(h_step)):
         canvas.create_line(x0, float(yy), x1, float(yy), fill="#000000", width=1, tags=tags)
-    row = 0
-    for yy in range(int(y0 + dot_step * 0.5), int(y1), int(dot_step)):
-        shift = dot_step * 0.5 if (row % 2) else 0
-        for xx in range(int(x0 + dot_step * 0.5 + shift), int(x1), int(dot_step)):
-            canvas.create_oval(xx - r, yy - r, xx + r, yy + r, fill="#000000", outline="#000000", width=1, tags=tags)
-        row += 1
-    for yy in range(int(y0 + cross_step * 0.5), int(y1), int(cross_step)):
-        for xx in range(int(x0 + cross_step * 0.5), int(x1), int(cross_step)):
-            canvas.create_line(xx - cross * 0.5, yy - cross * 0.5, xx + cross * 0.5, yy + cross * 0.5, fill="#000000", width=1, tags=tags)
-            canvas.create_line(xx - cross * 0.5, yy + cross * 0.5, xx + cross * 0.5, yy - cross * 0.5, fill="#000000", width=1, tags=tags)
+    draw_small_dots(canvas, bbox, step=_px(10, s), dot_size=_px(0.9, s, min_px=0.7), tags=tags)
+    draw_cross_marks(canvas, bbox, step=_px(34, s), size=_px(9, s), tags=tags)
 
 
 def _draw_fallback(canvas: Any, bbox: tuple[float, float, float, float], s: dict[str, float], tags: Any) -> None:
-    _draw_diag_family(canvas, bbox, step=_px(14, s), slope=+1, tags=tags)
+    draw_diagonal_lines(canvas, bbox, step=_px(14, s), slope=+1, tags=tags)
 
 
 def draw_hatch(canvas: Any, bbox: tuple[float, float, float, float], soil_code: str, scale_info: dict[str, Any] | None, tags: Any) -> None:
-    """Единый интерфейс отрисовки штриховки слоя: draw_hatch(canvas, bbox, soil_code, scale_info)."""
+    """Единый интерфейс отрисовки штриховки: draw_hatch(canvas, bbox, soil_code, scale_info)."""
     s = _norm_scale(scale_info, bbox)
     key = str(soil_code or "")
     name = SOIL_CODE_TO_RENDERER.get(key)
