@@ -3,110 +3,174 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from src.zondeditor.domain.hatching import HatchLine, HatchPattern
+from src.zondeditor.domain.hatching import (
+    DEFAULT_HATCH_USAGE,
+    HatchLine,
+    HatchPattern,
+    clip_segment_to_rect,
+    clock_basis,
+    local_to_world,
+    resolve_hatch_render_scale,
+)
 
 
 HATCH_UNIT_PX = 80.0
 
 
-def _line_rect_intersections(px: float, py: float, vx: float, vy: float, rect: tuple[float, float, float, float]) -> tuple[float, float] | None:
+def _draw_point(canvas: Any, x: float, y: float, color: str, thickness_mm: float, scale: float, tags: Any) -> int:
+    dot_r_px = max(1, int(round(max(0.15, thickness_mm if thickness_mm > 0 else 0.15) * scale * 0.35)))
+    canvas.create_oval(x - dot_r_px, y - dot_r_px, x + dot_r_px, y + dot_r_px, fill=color, outline=color, tags=tags)
+    return 1
+
+
+def _rect_to_world(rect: tuple[float, float, float, float], scale: float) -> tuple[float, float, float, float]:
+    x0, y0, x1, y1 = [float(v) for v in rect]
+    return (x0 / scale, -y1 / scale, x1 / scale, -y0 / scale)
+
+
+def _expand_world_rect(rect: tuple[float, float, float, float], margin: float) -> tuple[float, float, float, float]:
     x0, y0, x1, y1 = rect
-    pts: list[float] = []
-    eps = 1e-9
-    if abs(vx) > eps:
-        for xx in (x0, x1):
-            t = (xx - px) / vx
-            yy = py + t * vy
-            if y0 - 1e-6 <= yy <= y1 + 1e-6:
-                pts.append(t)
-    if abs(vy) > eps:
-        for yy in (y0, y1):
-            t = (yy - py) / vy
-            xx = px + t * vx
-            if x0 - 1e-6 <= xx <= x1 + 1e-6:
-                pts.append(t)
-    if len(pts) < 2:
-        return None
-    pts.sort()
-    return (pts[0], pts[-1])
+    pad = max(0.0, float(margin))
+    return (x0 - pad, y0 - pad, x1 + pad, y1 + pad)
 
 
-def _draw_patterned_segment(canvas: Any, px: float, py: float, vx: float, vy: float, t0: float, t1: float, pattern_px: list[float], tags: Any) -> None:
-    if not pattern_px:
-        canvas.create_line(px + t0 * vx, py + t0 * vy, px + t1 * vx, py + t1 * vy, fill="#000000", width=1, tags=tags)
-        return
-
-    total = sum(abs(x) for x in pattern_px)
-    if total <= 1e-6:
-        canvas.create_line(px + t0 * vx, py + t0 * vy, px + t1 * vx, py + t1 * vy, fill="#000000", width=1, tags=tags)
-        return
-
-    pos = t0
-    idx = 0
-    guard = 0
-    while pos < t1 and guard < 400:
-        seg = max(0.5, abs(pattern_px[idx % len(pattern_px)]))
-        nxt = min(t1, pos + seg)
-        if pattern_px[idx % len(pattern_px)] > 0:
-            canvas.create_line(px + pos * vx, py + pos * vy, px + nxt * vx, py + nxt * vy, fill="#000000", width=1, tags=tags)
-        pos = nxt
-        idx += 1
-        guard += 1
-
-
-def render_hatch_line(canvas: Any, rect: tuple[float, float, float, float], line: HatchLine, *, unit_px: float, tags: Any) -> None:
+def _project_rect_to_axis(rect: tuple[float, float, float, float], ax: float, ay: float) -> tuple[float, float]:
     x0, y0, x1, y1 = rect
-    a = math.radians(float(line.angle_deg))
-    vx = math.cos(a)
-    vy = math.sin(a)
+    vals = [
+        x0 * ax + y0 * ay,
+        x0 * ax + y1 * ay,
+        x1 * ax + y0 * ay,
+        x1 * ax + y1 * ay,
+    ]
+    return (min(vals), max(vals))
 
-    # нормаль к направлению штриховки
-    nx = -vy
-    ny = vx
 
-    # базовая точка паттерна привязана к глобальным координатам canvas,
-    # чтобы слой только клиппировал штриховку, а не масштабировал/сдвигал её заново.
-    p0x = float(line.x0) * unit_px
-    p0y = float(line.y0) * unit_px
-    ox = float(line.dx) * unit_px
-    oy = float(line.dy) * unit_px
-
-    off_proj = ox * nx + oy * ny
-    if abs(off_proj) < 1e-6:
-        off_proj = max(4.0, 0.12 * unit_px)
-        ox, oy = nx * off_proj, ny * off_proj
-
-    corners = [(x0, y0), (x0, y1), (x1, y0), (x1, y1)]
-    cs = [cx * nx + cy * ny for cx, cy in corners]
-    cmin, cmax = min(cs), max(cs)
-
-    c0 = p0x * nx + p0y * ny
-    k0 = int(math.floor((cmin - c0) / off_proj)) - 2
-    k1 = int(math.ceil((cmax - c0) / off_proj)) + 2
-
-    pattern_px = [float(v) * unit_px for v in (line.pattern or [])]
-
-    if abs(k1 - k0) > 500:
+def _stable_k_range(base_x: float, base_y: float, step_x: float, step_y: float, nx: float, ny: float, generation_rect_world: tuple[float, float, float, float]) -> range:
+    off_proj = step_x * nx + step_y * ny
+    if abs(off_proj) < 1e-9:
+        return range(0, 1)
+    rect_min, rect_max = _project_rect_to_axis(generation_rect_world, nx, ny)
+    base_proj = base_x * nx + base_y * ny
+    k0 = int(math.floor((rect_min - base_proj) / off_proj)) - 2
+    k1 = int(math.ceil((rect_max - base_proj) / off_proj)) + 2
+    if k1 < k0:
+        k0, k1 = k1, k0
+    if (k1 - k0) > 5000:
         mid = (k0 + k1) // 2
-        k0, k1 = mid - 250, mid + 250
+        k0, k1 = mid - 2500, mid + 2500
+    return range(k0, k1 + 1)
 
-    for k in range(min(k0, k1), max(k0, k1) + 1):
-        px = p0x + k * ox
-        py = p0y + k * oy
-        ts = _line_rect_intersections(px, py, vx, vy, rect)
-        if not ts:
+
+def _draw_pattern_sequence(canvas: Any, px: float, py: float, ux: float, uy: float, t1: float, t2: float, line: HatchLine, scale: float, tags: Any) -> int:
+    parts = []
+    total = 0.0
+    for seg in line.segments or ():
+        if seg.kind == 'Точка':
+            gap = max(1e-9, float(seg.gap))
+            parts.append(('Точка', 0.0, gap))
+            total += gap
+        else:
+            dash = max(0.0, float(seg.dash))
+            gap = max(0.0, float(seg.gap))
+            parts.append(('Штрих', dash, gap))
+            total += max(1e-9, dash + gap)
+
+    line_px = max(1, int(round(max(0.0, line.thickness_mm) * scale)))
+    if not parts or total <= 1e-9:
+        canvas.create_line(px + t1 * ux * scale, py - t1 * uy * scale, px + t2 * ux * scale, py - t2 * uy * scale, fill=line.color, width=line_px, tags=tags)
+        return 1
+
+    # Важный инвариант: phase sequence считается по абсолютному параметру t
+    # вдоль бесконечной линии от стабильного anchor (px, py), а не от начала clipped-сегмента.
+    drawn = 0
+    n_start = math.floor(t1 / total) - 1
+    n_end = math.ceil(t2 / total) + 1
+    for n in range(n_start, n_end + 1):
+        cursor = n * total
+        for kind, dash, gap in parts:
+            if kind == 'Точка':
+                t = cursor
+                if t1 <= t <= t2:
+                    drawn += _draw_point(canvas, px + t * ux * scale, py - t * uy * scale, line.color, line.thickness_mm, scale, tags)
+                cursor += gap
+            else:
+                a = cursor
+                b = cursor + dash
+                if b >= t1 and a <= t2 and b > a:
+                    sa = max(t1, a)
+                    sb = min(t2, b)
+                    if sb > sa:
+                        canvas.create_line(px + sa * ux * scale, py - sa * uy * scale, px + sb * ux * scale, py - sb * uy * scale, fill=line.color, width=line_px, tags=tags)
+                        drawn += 1
+                cursor += dash + gap
+    return drawn
+
+
+def render_hatch_line(
+    canvas: Any,
+    rect: tuple[float, float, float, float],
+    line: HatchLine,
+    *,
+    unit_px: float,
+    tags: Any,
+    logical_rect: tuple[float, float, float, float] | None = None,
+) -> None:
+    if not line.enabled:
+        return
+    x0, y0, x1, y1 = rect
+    scale = float(unit_px)
+    if x1 <= x0 or y1 <= y0:
+        return
+
+    angle = float(line.angle_deg)
+    ex, ey = clock_basis(angle)
+    ux, uy = ex
+    nx, ny = ey
+
+    # Стабильный anchor/origin паттерна задаётся только JSON-параметрами строки.
+    base_x, base_y = local_to_world(angle, float(line.x), float(line.y))
+    step_x, step_y = local_to_world(angle, float(line.dx), float(line.dy))
+
+    draw_rect_world = _rect_to_world(rect, scale)
+    source_rect = logical_rect if logical_rect is not None else rect
+    logical_rect_world = _rect_to_world(source_rect, scale)
+    logical_diag = math.hypot(logical_rect_world[2] - logical_rect_world[0], logical_rect_world[3] - logical_rect_world[1])
+    generation_rect_world = _expand_world_rect(logical_rect_world, max(2.0, logical_diag * 0.5))
+
+    k_values = _stable_k_range(base_x, base_y, step_x, step_y, nx, ny, generation_rect_world)
+    half_len = max(
+        math.hypot(generation_rect_world[2] - generation_rect_world[0], generation_rect_world[3] - generation_rect_world[1]),
+        math.hypot(draw_rect_world[2] - draw_rect_world[0], draw_rect_world[3] - draw_rect_world[1]),
+    ) * 2.5
+
+    for k in k_values:
+        px = base_x + k * step_x
+        py = base_y + k * step_y
+
+        # Бесконечная линия строится от стабильного anchor семейства, потом только клиппируется draw rect'ом.
+        x_start = px - ux * half_len
+        y_start = py - uy * half_len
+        x_end = px + ux * half_len
+        y_end = py + uy * half_len
+        clipped = clip_segment_to_rect(x_start, y_start, x_end, y_end, *draw_rect_world)
+        if not clipped:
             continue
-        t_start, t_end = ts
-        _draw_patterned_segment(canvas, px, py, vx, vy, t_start, t_end, pattern_px, tags)
+        cx1, cy1, cx2, cy2 = clipped
+        t1 = (cx1 - px) * ux + (cy1 - py) * uy
+        t2 = (cx2 - px) * ux + (cy2 - py) * uy
+        if t2 < t1:
+            t1, t2 = t2, t1
+        _draw_pattern_sequence(canvas, px * scale, -py * scale, ux, uy, t1, t2, line, scale, tags)
 
 
-def render_hatch_pattern(canvas: Any, rect: tuple[float, float, float, float], pattern: HatchPattern, *, tags: Any, scale_info: dict[str, float] | None = None) -> None:
+def render_hatch_pattern(canvas: Any, rect: tuple[float, float, float, float], pattern: HatchPattern, *, tags: Any, scale_info: dict[str, float | str | tuple[float, float, float, float]] | None = None) -> None:
     x0, y0, x1, y1 = [float(v) for v in rect]
     if x1 <= x0 or y1 <= y0:
         return
-    # Масштаб паттерна постоянный для всех слоёв.
-    # rect используется только как область клиппинга.
-    unit_px = HATCH_UNIT_PX
-
-    for line in (pattern.lines or []):
-        render_hatch_line(canvas, (x0, y0, x1, y1), line, unit_px=unit_px, tags=tags)
+    info = dict(scale_info or {})
+    usage = str(info.get('usage') or DEFAULT_HATCH_USAGE)
+    logical_rect_raw = info.get('logical_rect')
+    logical_rect = tuple(float(v) for v in logical_rect_raw) if isinstance(logical_rect_raw, (tuple, list)) and len(logical_rect_raw) == 4 else None
+    render_scale = resolve_hatch_render_scale(pattern, usage=usage, base_unit_px=HATCH_UNIT_PX)
+    for line in pattern.lines:
+        render_hatch_line(canvas, (x0, y0, x1, y1), line, unit_px=render_scale.effective_unit_px, tags=tags, logical_rect=logical_rect)
