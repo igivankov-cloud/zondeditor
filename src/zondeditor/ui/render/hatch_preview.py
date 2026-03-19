@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-from src.zondeditor.domain.hatching import HatchPattern, load_registered_hatch
+from src.zondeditor.domain.hatching import HATCH_USAGE_EDITOR_COLLAPSED, HatchPattern, load_registered_hatch
 from src.zondeditor.ui.render.hatch_renderer import render_hatch_pattern
 
 PREVIEW_SOILS: tuple[str, ...] = (
@@ -33,6 +33,6 @@ def draw_hatch_preview_grid(canvas: Any, *, x0: float = 0.0, y0: float = 0.0, ce
         by1 = by0 + cell_h - padding
         canvas.create_rectangle(bx0, by0, bx1, by1, fill='#ffffff', outline='#cfcfcf', width=1, tags=tags)
         canvas.create_text(bx0 + 6, by0 + 6, anchor='nw', text=f'{pattern.name} — {pattern.title}', fill='#202020', font=('Segoe UI', 8, 'bold'), tags=tags)
-        render_hatch_pattern(canvas, (bx0 + 6, by0 + 24, bx1 - 6, by1 - 6), pattern, tags=tags, scale_info={'layer_height_px': float(max(1.0, (by1 - by0) - 30.0))})
+        render_hatch_pattern(canvas, (bx0 + 6, by0 + 24, bx1 - 6, by1 - 6), pattern, tags=tags, scale_info={'usage': HATCH_USAGE_EDITOR_COLLAPSED, 'layer_height_px': float(max(1.0, (by1 - by0) - 30.0))})
     rows = ((len(pats) - 1) // cols) + 1
     return (x0, y0, x0 + cols * cell_w - padding, y0 + rows * cell_h - padding)

@@ -3,7 +3,15 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from src.zondeditor.domain.hatching import HatchLine, HatchPattern, clip_segment_to_rect, clock_basis, local_to_world
+from src.zondeditor.domain.hatching import (
+    DEFAULT_HATCH_USAGE,
+    HatchLine,
+    HatchPattern,
+    clip_segment_to_rect,
+    clock_basis,
+    local_to_world,
+    resolve_hatch_render_scale,
+)
 
 
 HATCH_UNIT_PX = 80.0
@@ -99,13 +107,15 @@ def render_hatch_line(canvas: Any, rect: tuple[float, float, float, float], line
         t2 = (cx2 - px) * ux + (cy2 - py) * uy
         if t2 < t1:
             t1, t2 = t2, t1
-        _draw_pattern_sequence(canvas, 0.0 + px * scale, 0.0 - py * scale, ux, uy, t1, t2, line, scale, tags)
+        _draw_pattern_sequence(canvas, px * scale, -py * scale, ux, uy, t1, t2, line, scale, tags)
 
 
-def render_hatch_pattern(canvas: Any, rect: tuple[float, float, float, float], pattern: HatchPattern, *, tags: Any, scale_info: dict[str, float] | None = None) -> None:
+def render_hatch_pattern(canvas: Any, rect: tuple[float, float, float, float], pattern: HatchPattern, *, tags: Any, scale_info: dict[str, float | str] | None = None) -> None:
     x0, y0, x1, y1 = [float(v) for v in rect]
     if x1 <= x0 or y1 <= y0:
         return
-    unit_px = HATCH_UNIT_PX / max(1e-9, float(pattern.scale or 1.0))
+    info = dict(scale_info or {})
+    usage = str(info.get('usage') or DEFAULT_HATCH_USAGE)
+    render_scale = resolve_hatch_render_scale(pattern, usage=usage, base_unit_px=HATCH_UNIT_PX)
     for line in pattern.lines:
-        render_hatch_line(canvas, (x0, y0, x1, y1), line, unit_px=unit_px, tags=tags)
+        render_hatch_line(canvas, (x0, y0, x1, y1), line, unit_px=render_scale.effective_unit_px, tags=tags)
