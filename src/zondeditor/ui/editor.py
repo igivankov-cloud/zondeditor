@@ -4916,7 +4916,24 @@ class GeoCanvasEditor(tk.Tk):
         ids = sorted(self.ige_registry.keys(), key=self._ige_id_to_num)
         return [(ige_id, self._experience_column_ige_display(ige_id)) for ige_id in ids]
 
-    def _pick_existing_ige_for_column(self, *, parent=None, title: str = "Выбор ИГЭ") -> str | None:
+    def _center_toplevel(self, win, *, parent=None):
+        host = parent or self
+        try:
+            host.update_idletasks()
+            win.update_idletasks()
+            px = int(host.winfo_rootx())
+            py = int(host.winfo_rooty())
+            pw = int(max(1, host.winfo_width()))
+            ph = int(max(1, host.winfo_height()))
+            ww = int(max(1, win.winfo_reqwidth()))
+            wh = int(max(1, win.winfo_reqheight()))
+            x = px + max(0, (pw - ww) // 2)
+            y = py + max(0, (ph - wh) // 2)
+            win.geometry(f"+{x}+{y}")
+        except Exception:
+            pass
+
+    def _pick_existing_ige_for_column(self, *, parent=None, title: str = "Выбор ИГЭ", current_ige_id: str | None = None) -> str | None:
         choices = self._experience_column_ige_choices()
         if not choices:
             messagebox.showinfo(
@@ -4935,26 +4952,28 @@ class GeoCanvasEditor(tk.Tk):
         frm = ttk.Frame(win, padding=12)
         frm.pack(fill="both", expand=True)
         ttk.Label(frm, text="Выберите существующий ИГЭ:").pack(anchor="w")
-        selected_var = tk.StringVar(value=choices[0][1])
-        cb = ttk.Combobox(frm, state="readonly", values=[display for _id, display in choices], textvariable=selected_var, width=28)
-        cb.pack(fill="x", pady=(8, 0))
+        btn_col = ttk.Frame(frm)
+        btn_col.pack(fill="both", expand=True, pady=(8, 0))
 
-        def _ok():
-            display = str(selected_var.get() or "")
-            holder["value"] = next((ige_id for ige_id, label in choices if label == display), None)
+        def _pick(ige_id: str):
+            holder["value"] = str(ige_id or "").strip() or None
             win.destroy()
 
         def _cancel():
             holder["value"] = None
             win.destroy()
 
+        for ige_id, display in choices:
+            text = display
+            if str(current_ige_id or "").strip() == str(ige_id):
+                text = f"✓ {display}"
+            ttk.Button(btn_col, text=text, command=lambda ig=ige_id: _pick(ig)).pack(fill="x", pady=2)
+
         btns = ttk.Frame(frm)
         btns.pack(fill="x", pady=(12, 0))
         ttk.Button(btns, text="Отмена", command=_cancel).pack(side="right")
-        ttk.Button(btns, text="ОК", command=_ok).pack(side="right", padx=(0, 8))
-        cb.bind("<Return>", lambda _e: _ok())
-        cb.bind("<Escape>", lambda _e: _cancel())
-        cb.focus_set()
+        self._center_toplevel(win, parent=parent or self)
+        win.bind("<Escape>", lambda _e: _cancel())
         win.wait_window()
         return holder["value"]
 
@@ -6069,12 +6088,6 @@ class GeoCanvasEditor(tk.Tk):
                     return display
             return ige_id or "ИГЭ-1"
 
-        def _display_to_ige_id(display_value: str) -> str:
-            for value, display in _available_ige_values():
-                if display == display_value:
-                    return value
-            return str(display_value or "").split("(", 1)[0].strip()
-
         def _set_working_column(new_column: ExperienceColumn):
             nonlocal working_column
             working_column = new_column
@@ -6144,7 +6157,8 @@ class GeoCanvasEditor(tk.Tk):
         def _apply_ige_change(row_index: int):
             if not (0 <= row_index < len(working_column.intervals)):
                 return
-            ige_id = _display_to_ige_id(rows[row_index]["ige_var"].get())
+            current = self._column_interval_ige_id(working_column.intervals[row_index])
+            ige_id = self._pick_existing_ige_for_column(parent=win, title="Выбор ИГЭ для интервала", current_ige_id=current)
             if not ige_id:
                 _sync_rows_from_column()
                 return
@@ -6159,21 +6173,19 @@ class GeoCanvasEditor(tk.Tk):
             ttk.Label(table, text="От").grid(row=0, column=0, sticky="w", padx=(0, 8))
             ttk.Label(table, text="До").grid(row=0, column=1, sticky="w", padx=(0, 8))
             ttk.Label(table, text="ИГЭ").grid(row=0, column=2, sticky="w", padx=(0, 8))
-            values = [display for _value, display in _available_ige_values()]
             vcmd = (self.register(_validate_depth_input), "%P")
             for idx, row in enumerate(rows, start=1):
                 grid_row = (idx * 2) - 1
                 row["from_entry"] = ttk.Entry(table, textvariable=row["from_var"], width=10, validate="key", validatecommand=vcmd)
                 row["to_entry"] = ttk.Entry(table, textvariable=row["to_var"], width=10, validate="key", validatecommand=vcmd)
-                row["ige_combo"] = ttk.Combobox(table, textvariable=row["ige_var"], values=values, state="readonly", width=18)
+                row["ige_btn"] = ttk.Button(table, textvariable=row["ige_var"], width=24, command=lambda i=idx - 1: _apply_ige_change(i))
                 row["from_entry"].grid(row=grid_row, column=0, sticky="we", padx=(0, 8), pady=2)
                 row["to_entry"].grid(row=grid_row, column=1, sticky="we", padx=(0, 8), pady=2)
-                row["ige_combo"].grid(row=grid_row, column=2, sticky="we", padx=(0, 8), pady=2)
+                row["ige_btn"].grid(row=grid_row, column=2, sticky="we", padx=(0, 8), pady=2)
                 row["from_entry"].bind("<FocusOut>", lambda _e, i=idx - 1: _apply_boundary_change(i, "from"))
                 row["to_entry"].bind("<FocusOut>", lambda _e, i=idx - 1: _apply_boundary_change(i, "to"))
                 row["from_entry"].bind("<Return>", lambda _e, i=idx - 1: _apply_boundary_change(i, "from"))
                 row["to_entry"].bind("<Return>", lambda _e, i=idx - 1: _apply_boundary_change(i, "to"))
-                row["ige_combo"].bind("<<ComboboxSelected>>", lambda _e, i=idx - 1: _apply_ige_change(i))
                 if idx == 1:
                     row["from_entry"].state(["readonly"])
                 if idx > 1:
@@ -6232,6 +6244,7 @@ class GeoCanvasEditor(tk.Tk):
         end_entry.configure(validate="key", validatecommand=(self.register(_validate_depth_input), "%P"))
         end_entry.bind("<FocusOut>", lambda _e: _apply_end_depth())
         end_entry.bind("<Return>", lambda _e: _apply_end_depth())
+        self._center_toplevel(win, parent=self)
 
         ttk.Label(frm, textvariable=msg_var, foreground="#b00020").pack(anchor="w", pady=(8, 0))
 
