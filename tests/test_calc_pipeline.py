@@ -89,6 +89,7 @@ def test_non_calculable_soils_are_blocked_by_whitelist():
         ("argillite", "аргиллит"),
         ("sandstone", "песчаник"),
         ("gravel_soil", "гравийный грунт"),
+        ("sand_gravelly", "песок гравелистый"),
     ):
         policy = resolve_cpt_soil_policy(soil_code=soil_code, soil_name=soil_name)
         assert policy.is_calculable is False
@@ -100,7 +101,8 @@ def test_non_calculable_soils_are_blocked_by_whitelist():
 
 
 def test_calc_mode_for_soil_matches_supported_cpt_whitelist():
-    assert calc_mode_for_soil(SoilType.SAND) == calc_mode_for_soil(SoilType.GRAVELLY_SAND)
+    assert calc_mode_for_soil(SoilType.SAND).value == "valid"
+    assert calc_mode_for_soil(SoilType.GRAVELLY_SAND).value == "limited"
     assert calc_mode_for_soil(SoilType.FILL).value == "valid"
     assert calc_mode_for_soil(SoilType.PEAT).value == "limited"
     assert calc_mode_for_soil(SoilType.ARGILLITE).value == "limited"

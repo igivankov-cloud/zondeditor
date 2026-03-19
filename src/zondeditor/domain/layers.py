@@ -34,7 +34,6 @@ VALID_SOILS = {
     SoilType.LOAM,
     SoilType.SANDY_LOAM,
     SoilType.SAND,
-    SoilType.GRAVELLY_SAND,
     SoilType.FILL,
 }
 
@@ -52,6 +51,19 @@ SOIL_STYLE: dict[SoilType, dict[str, str]] = {
     SoilType.SANDSTONE: {"color": "#ffffff"},
 }
 DEFAULT_LAYER_STYLE = SOIL_STYLE
+
+SOIL_TYPE_TO_COLUMN_FILL: dict[SoilType, str] = {
+    SoilType.SAND: "#EED8A8",
+    SoilType.GRAVELLY_SAND: "#D9C48C",
+    SoilType.SANDY_LOAM: "#D9C2A3",
+    SoilType.LOAM: "#C9A27E",
+    SoilType.CLAY: "#A88E7A",
+    SoilType.PEAT: "#6E4F3A",
+    SoilType.GRAVEL: "#A79B8A",
+    SoilType.SANDSTONE: "#CFA56D",
+    SoilType.ARGILLITE: "#9C6B5A",
+    SoilType.FILL: "#B29A84",
+}
 
 
 @dataclass

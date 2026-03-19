@@ -29,6 +29,7 @@ def test_project_store_roundtrip_preserves_state_and_settings(tmp_path: Path):
             "step_m": 0.05,
             "depth_start": 0.0,
             "show_graphs": False,
+            "show_layer_colors": True,
         },
         ops=[{"op": "noop"}],
     )
@@ -44,4 +45,5 @@ def test_project_store_roundtrip_preserves_state_and_settings(tmp_path: Path):
     assert loaded.state["geo_kind"] == "K4"
     assert loaded.state["common_params"]["cone_kn"] == "50"
     assert loaded.state["step_m"] == 0.05
+    assert loaded.state["show_layer_colors"] is True
     assert source_bytes == b"abc"

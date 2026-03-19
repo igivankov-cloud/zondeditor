@@ -164,6 +164,19 @@ def move_column_boundary(column: ExperienceColumn, boundary_index: int, new_dept
     return normalize_column(ExperienceColumn(column_depth_start=0.0, column_depth_end=column.column_depth_end, intervals=intervals))
 
 
+def resize_column_end(column: ExperienceColumn, new_depth_m: float) -> ExperienceColumn:
+    intervals = [ColumnInterval(**column_interval_to_dict(item)) for item in column.intervals]
+    start = max(0.0, float(column.column_depth_start or 0.0))
+    min_end = start + MIN_LAYER_THICKNESS_M
+    if intervals:
+        min_end = max(min_end, float(intervals[-1].from_depth) + MIN_LAYER_THICKNESS_M)
+    snapped = snap_depth(new_depth_m)
+    clamped = max(min_end, snapped)
+    if intervals:
+        intervals[-1].to_depth = clamped
+    return normalize_column(ExperienceColumn(column_depth_start=0.0, column_depth_end=clamped, intervals=intervals))
+
+
 def insert_between(column: ExperienceColumn, boundary_index: int, *, thickness: float = INSERT_LAYER_THICKNESS_M, new_ige_id: str = "ИГЭ-1") -> ExperienceColumn:
     intervals = [ColumnInterval(**column_interval_to_dict(item)) for item in column.intervals]
     if boundary_index < 0 or boundary_index >= len(intervals):
