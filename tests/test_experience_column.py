@@ -201,3 +201,19 @@ def test_ige_choices_use_existing_registry_ids():
         ("ИГЭ-1", "ИГЭ-1 (суглинок)"),
         ("ИГЭ-2", "ИГЭ-2 (песок)"),
     ]
+
+
+def test_validate_experience_column_iges_accepts_existing_registry_values():
+    editor = GeoCanvasEditor.__new__(GeoCanvasEditor)
+    editor.ige_registry = {"ИГЭ-1": {}, "ИГЭ-2": {}}
+    column = ExperienceColumn(0.0, 2.0, [ColumnInterval(0.0, 1.0, "ИГЭ-1"), ColumnInterval(1.0, 2.0, "ИГЭ-2")])
+    assert editor._validate_experience_column_iges(column) is None
+
+
+def test_validate_experience_column_iges_reports_missing_registry_value_without_picker():
+    editor = GeoCanvasEditor.__new__(GeoCanvasEditor)
+    editor.ige_registry = {"ИГЭ-1": {}}
+    column = ExperienceColumn(0.0, 2.0, [ColumnInterval(0.0, 2.0, "ИГЭ-404")])
+    msg = editor._validate_experience_column_iges(column)
+    assert msg is not None
+    assert "не найден" in msg.lower()

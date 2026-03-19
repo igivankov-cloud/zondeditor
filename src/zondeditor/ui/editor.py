@@ -4916,6 +4916,16 @@ class GeoCanvasEditor(tk.Tk):
         ids = sorted(self.ige_registry.keys(), key=self._ige_id_to_num)
         return [(ige_id, self._experience_column_ige_display(ige_id)) for ige_id in ids]
 
+    def _validate_experience_column_iges(self, column: ExperienceColumn) -> str | None:
+        known_ids = {str(ige_id or "").strip() for ige_id in (self.ige_registry or {}).keys()}
+        for idx, interval in enumerate(list(getattr(column, "intervals", []) or []), start=1):
+            ige_id = self._column_interval_ige_id(interval)
+            if not str(ige_id or "").strip():
+                return f"Для интервала {idx} не выбран ИГЭ"
+            if known_ids and str(ige_id) not in known_ids:
+                return f"ИГЭ «{ige_id}» из интервала {idx} не найден среди ИГЭ проекта"
+        return None
+
     def _center_toplevel(self, win, *, parent=None):
         host = parent or self
         try:
@@ -6261,8 +6271,13 @@ class GeoCanvasEditor(tk.Tk):
                     msg_var.set(f"Некорректная граница [до] в строке {idx + 1}")
                     _sync_rows_from_column()
                     return None
-                _apply_ige_change(idx)
-            return _clone_working()
+            built = _clone_working()
+            ige_error = self._validate_experience_column_iges(built)
+            if ige_error:
+                msg_var.set(ige_error)
+                _sync_rows_from_column()
+                return None
+            return built
 
         btns = ttk.Frame(frm)
         btns.pack(fill="x", pady=(12, 0))
@@ -6468,7 +6483,6 @@ class GeoCanvasEditor(tk.Tk):
             t.experience_column = append_bottom(column, thickness=take, new_ige_id=selected_ige_id)
         else:
             t.experience_column = insert_between(column, li, thickness=take, new_ige_id=selected_ige_id)
-        self._sync_layers_panel()
         self._redraw()
         self._redraw_graphs_now()
         self.schedule_graph_redraw()
@@ -6509,7 +6523,6 @@ class GeoCanvasEditor(tk.Tk):
             self._set_status("Нельзя удалить единственный слой")
             return
         t.experience_column = remove_column_interval(column, len(layers) - 1)
-        self._sync_layers_panel()
         self._redraw()
         self._redraw_graphs_now()
         self.schedule_graph_redraw()
@@ -6531,7 +6544,6 @@ class GeoCanvasEditor(tk.Tk):
             self._remove_layer_from_bottom(int(ti))
             return
         t.experience_column = remove_column_interval(column, li)
-        self._sync_layers_panel()
         self._redraw()
         self._redraw_graphs_now()
         self.schedule_graph_redraw()
@@ -6583,7 +6595,6 @@ class GeoCanvasEditor(tk.Tk):
             try:
                 if 0 <= ti < len(self.tests):
                     self._calc_layer_params_for_test(int(ti))
-                    self._sync_layers_panel()
             except Exception:
                 pass
             self._redraw()

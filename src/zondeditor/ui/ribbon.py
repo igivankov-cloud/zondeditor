@@ -11,14 +11,12 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk, simpledialog
 
-from src.zondeditor.calculations.cpt_soil_policy import NON_CALCULABLE_CPT_MESSAGE, resolve_cpt_soil_policy
+from src.zondeditor.calculations.cpt_soil_policy import resolve_cpt_soil_policy
 from src.zondeditor.ui.consts import ICON_EXPORT, ICON_IMPORT, ICON_REDO, ICON_SAVE, ICON_UNDO, ICON_TRASH
 from src.zondeditor.ui.widgets import ToolTip
 
 
 class RibbonView(ttk.Frame):
-    _IGE_SIMPLIFIED_HINT = NON_CALCULABLE_CPT_MESSAGE
-
     def __init__(self, master, *, commands: dict[str, callable], icon_font=None):
         super().__init__(master)
         self.commands = commands
@@ -523,7 +521,6 @@ class RibbonView(ttk.Frame):
             return
 
         if profile == "simplified":
-            ttk.Label(parent, text=self._IGE_SIMPLIFIED_HINT, foreground="#667085", wraplength=180, justify="left").grid(row=0, column=0, sticky="w")
             return
 
         cons = tk.StringVar(value=str(row.get("consistency", "") or ""))
@@ -671,6 +668,7 @@ class RibbonView(ttk.Frame):
 
     def _rows_signature(self, row: dict) -> tuple:
         return (
+            str(row.get("ige_id", "")),
             str(row.get("label", "")),
             str(row.get("soil", "")),
             str(row.get("sand_kind", "")),
@@ -678,6 +676,7 @@ class RibbonView(ttk.Frame):
             str(row.get("density_state", "")),
             bool(row.get("sand_is_alluvial", False)),
             str(row.get("consistency", "")),
+            str(row.get("fill_subtype", "")),
             str(row.get("notes", "")),
             bool(row.get("_can_delete", True)),
         )
@@ -716,23 +715,35 @@ class RibbonView(ttk.Frame):
             self._ige_rows_cache[rid] = row
 
     def set_layers(self, rows: list[dict], soil_values: list[str], *, can_add: bool = True, can_delete: bool = True):
-        self._layer_rows = list(rows or [])
-        self._ige_soil_values = list(soil_values or [])
+        new_rows = list(rows or [])
+        new_soils = list(soil_values or [])
+        current_sig = tuple(self._rows_signature({**dict(row), "_can_delete": bool(can_delete)}) for row in self._layer_rows)
+        new_sig = tuple(self._rows_signature({**dict(row), "_can_delete": bool(can_delete)}) for row in new_rows)
+        needs_cards_rebuild = (
+            current_sig != new_sig
+            or self._ige_soil_values != new_soils
+            or not getattr(self, "_ige_cards", None)
+        )
+
+        self._layer_rows = new_rows
+        self._ige_soil_values = new_soils
         if not self._layer_rows:
             self._ige_order = []
-        try:
-            if self._add_ige_btn is not None:
-                self._add_ige_btn.destroy()
-        except Exception:
-            pass
-        self._add_ige_btn = None
 
-        self._render_ige_cards(self._layer_rows, self._ige_soil_values, bool(can_delete))
-        self._add_ige_btn = ttk.Button(self._ige_columns_frame, text="+ ИГЭ", width=6, style="RibbonCompact.TButton", command=self.commands.get("add_ige"))
-        if not can_add:
-            self._add_ige_btn.configure(state="disabled")
-        _, gap, _ = self._ige_card_metrics()
-        self._add_ige_btn.pack(side="left", fill="y", pady=0, padx=(0, max(2, gap)))
+        if needs_cards_rebuild:
+            try:
+                if self._add_ige_btn is not None:
+                    self._add_ige_btn.destroy()
+            except Exception:
+                pass
+            self._add_ige_btn = None
+            self._render_ige_cards(self._layer_rows, self._ige_soil_values, bool(can_delete))
+            self._add_ige_btn = ttk.Button(self._ige_columns_frame, text="+ ИГЭ", width=6, style="RibbonCompact.TButton", command=self.commands.get("add_ige"))
+            _, gap, _ = self._ige_card_metrics()
+            self._add_ige_btn.pack(side="left", fill="y", pady=0, padx=(0, max(2, gap)))
+
+        if self._add_ige_btn is not None:
+            self._add_ige_btn.configure(state=("normal" if can_add else "disabled"))
         self._sync_ige_canvas()
 
     def focus_ige_row(self, ige_id: str):
