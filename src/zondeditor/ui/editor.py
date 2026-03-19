@@ -368,6 +368,8 @@ class GeoCanvasEditor(tk.Tk):
         if not getattr(self, "tests", None):
             return [], None, {}, {}
 
+        include_column_axis = bool(getattr(self, "show_geology_column", True))
+
         depth_lists = {}
         min_d = None
         max_d = None
@@ -388,6 +390,22 @@ class GeoCanvasEditor(tk.Tk):
                 dd = b - a
                 if dd > 1e-6:
                     diffs.append(dd)
+            if include_column_axis:
+                try:
+                    col_top, col_bot = self._experience_column_depth_range(t)
+                    min_d = col_top if (min_d is None or col_top < min_d) else min_d
+                    max_d = col_bot if (max_d is None or col_bot > max_d) else max_d
+                except Exception:
+                    pass
+
+        if include_column_axis and (min_d is None or max_d is None):
+            for t in (self.tests or []):
+                try:
+                    col_top, col_bot = self._experience_column_depth_range(t)
+                except Exception:
+                    continue
+                min_d = col_top if (min_d is None or col_top < min_d) else min_d
+                max_d = col_bot if (max_d is None or col_bot > max_d) else max_d
 
         if min_d is None or max_d is None:
             return [], None, {}, {}
@@ -427,6 +445,10 @@ class GeoCanvasEditor(tk.Tk):
                 start_rows[ti] = min(mp.keys())
 
         return grid, step, row_maps, start_rows
+
+    def _experience_column_depth_range(self, t) -> tuple[float, float]:
+        column = self._ensure_test_experience_column(t)
+        return float(column.column_depth_start), float(column.column_depth_end)
 
     def _build_grid(self):
         """Backward-compatible grid cache builder used by legacy callbacks."""
@@ -5104,7 +5126,7 @@ class GeoCanvasEditor(tk.Tk):
             ly0 = depth_to_y(lt)
             ly1 = depth_to_y(lb)
             if ly0 is None or ly1 is None:
-                self._debug_log(f"layers_overlay: depth_to_y none ti={ti}, layer={lyr.ige_num}, top={lyr.top_m}, bot={lyr.bot_m}")
+                self._debug_log(f"layers_overlay: depth_to_y none ti={ti}, ige={self._column_interval_ige_id(lyr)}, top={lt}, bot={lb}")
                 continue
             ty0 = max(y0, min(ly0, ly1))
             ty1 = min(y1, max(ly0, ly1))
