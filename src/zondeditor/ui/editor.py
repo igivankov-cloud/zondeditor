@@ -95,33 +95,14 @@ from src.zondeditor.calculations.protocol_builder import build_protocol
 _rebuild_geo_from_template = build_k2_geo_from_template
 
 LAYER_UI_COLORS = {
-    "label_fill": "#f7ecdd",
-    "label_outline": "#c9beb0",
-    "label_text": "#4e4335",
-    "label_active_fill": "#f2e2cd",
-    "label_active_outline": "#b4a18b",
-    "button_fill": "#f3ede4",
-    "button_outline": "#a89d90",
-    "button_active_fill": "#eadfce",
-    "button_active_outline": "#8d7f70",
-    "button_plus_text": "#355c7d",
-    "button_minus_text": "#7a4b42",
-    "button_disabled_fill": "#f6f4f1",
-    "button_disabled_outline": "#ccc5bc",
-    "button_disabled_text": "#b8b1a8",
-    "boundary_line": "#b7a792",
-    "handle_fill": "#f4e7d8",
-    "handle_outline": "#725f4b",
-    "handle_active_fill": "#ead8c3",
-    "handle_active_outline": "#5d4b39",
-    "depth_box_fill": "#fff7ea",
-    "depth_box_outline": "#907c67",
-    "depth_box_active_fill": "#f8ecd7",
-    "depth_box_active_outline": "#6f5f4c",
-    "depth_text": "#4a4036",
-    "depth_editor_bg": "#fff8ee",
-    "depth_editor_outline": "#8f7b67",
-    "depth_editor_focus": "#c6844f",
+    "fill": "#eef3f8",
+    "fill_active": "#e3ebf3",
+    "outline": "#b7c4d1",
+    "outline_active": "#97a8ba",
+    "text": "#4d5c6b",
+    "text_muted": "#9aa7b4",
+    "line": "#aebbc8",
+    "focus": "#7f94a9",
 }
 
 
@@ -5132,19 +5113,19 @@ class GeoCanvasEditor(tk.Tk):
                     cy - chip_h * 0.5,
                     cx + chip_w * 0.5,
                     cy + chip_h * 0.5,
-                    fill=LAYER_UI_COLORS["label_fill"],
-                    outline=LAYER_UI_COLORS["label_outline"],
+                    fill=LAYER_UI_COLORS["fill"],
+                    outline=LAYER_UI_COLORS["outline"],
                     width=1,
-                    activefill=LAYER_UI_COLORS["label_active_fill"],
-                    activeoutline=LAYER_UI_COLORS["label_active_outline"],
+                    activefill=LAYER_UI_COLORS["fill_active"],
+                    activeoutline=LAYER_UI_COLORS["outline_active"],
                     tags=tags,
                 )
                 self.canvas.create_text(
                     cx,
                     cy,
                     text=text,
-                    fill=LAYER_UI_COLORS["label_text"],
-                    activefill=LAYER_UI_COLORS["label_text"],
+                    fill=LAYER_UI_COLORS["text"],
+                    activefill=LAYER_UI_COLORS["text"],
                     font=font,
                     tags=tags,
                 )
@@ -5333,9 +5314,9 @@ class GeoCanvasEditor(tk.Tk):
 
         def _draw_plus(tag: str, y_pos: float, boundary: int, kind: str, *, active: bool = True, x_pos: float | None = None):
             px = float(plus_x if x_pos is None else x_pos)
-            box_fill = LAYER_UI_COLORS["button_fill"] if active else LAYER_UI_COLORS["button_disabled_fill"]
-            box_outline = LAYER_UI_COLORS["button_outline"] if active else LAYER_UI_COLORS["button_disabled_outline"]
-            text_fill = LAYER_UI_COLORS["button_plus_text"] if active else LAYER_UI_COLORS["button_disabled_text"]
+            box_fill = LAYER_UI_COLORS["fill"] if active else LAYER_UI_COLORS["fill"]
+            box_outline = LAYER_UI_COLORS["outline"] if active else LAYER_UI_COLORS["outline"]
+            text_fill = LAYER_UI_COLORS["text"] if active else LAYER_UI_COLORS["text_muted"]
             self.canvas.create_rectangle(
                 px - 6,
                 y_pos - 6,
@@ -5344,8 +5325,8 @@ class GeoCanvasEditor(tk.Tk):
                 fill=box_fill,
                 outline=box_outline,
                 width=1,
-                activefill=(LAYER_UI_COLORS["button_active_fill"] if active else box_fill),
-                activeoutline=(LAYER_UI_COLORS["button_active_outline"] if active else box_outline),
+                activefill=(LAYER_UI_COLORS["fill_active"] if active else box_fill),
+                activeoutline=(LAYER_UI_COLORS["outline_active"] if active else box_outline),
                 tags=("layer_handles", "layer_plus_box", tag),
             )
             self.canvas.create_text(
@@ -5362,9 +5343,9 @@ class GeoCanvasEditor(tk.Tk):
 
         def _draw_minus(tag: str, y_pos: float, boundary: int, kind: str, *, active: bool = True, x_pos: float | None = None):
             px = float(plus_x if x_pos is None else x_pos)
-            box_fill = LAYER_UI_COLORS["button_fill"] if active else LAYER_UI_COLORS["button_disabled_fill"]
-            box_outline = LAYER_UI_COLORS["button_outline"] if active else LAYER_UI_COLORS["button_disabled_outline"]
-            text_fill = LAYER_UI_COLORS["button_minus_text"] if active else LAYER_UI_COLORS["button_disabled_text"]
+            box_fill = LAYER_UI_COLORS["fill"] if active else LAYER_UI_COLORS["fill"]
+            box_outline = LAYER_UI_COLORS["outline"] if active else LAYER_UI_COLORS["outline"]
+            text_fill = LAYER_UI_COLORS["text"] if active else LAYER_UI_COLORS["text_muted"]
             self.canvas.create_rectangle(
                 px - 6,
                 y_pos - 6,
@@ -5373,8 +5354,8 @@ class GeoCanvasEditor(tk.Tk):
                 fill=box_fill,
                 outline=box_outline,
                 width=1,
-                activefill=(LAYER_UI_COLORS["button_active_fill"] if active else box_fill),
-                activeoutline=(LAYER_UI_COLORS["button_active_outline"] if active else box_outline),
+                activefill=(LAYER_UI_COLORS["fill_active"] if active else box_fill),
+                activeoutline=(LAYER_UI_COLORS["outline_active"] if active else box_outline),
                 tags=("layer_handles", "layer_minus_box", tag),
             )
             self.canvas.create_text(
@@ -5412,7 +5393,7 @@ class GeoCanvasEditor(tk.Tk):
                 y,
                 x1,
                 y,
-                fill=LAYER_UI_COLORS["boundary_line"],
+                fill=LAYER_UI_COLORS["line"],
                 width=1,
                 dash=(3, 2),
                 tags=("layer_handles", "layer_boundary_line"),
@@ -5422,11 +5403,11 @@ class GeoCanvasEditor(tk.Tk):
                 y - 5,
                 handle_x + 5,
                 y + 5,
-                fill=LAYER_UI_COLORS["handle_fill"],
-                outline=LAYER_UI_COLORS["handle_outline"],
+                fill=LAYER_UI_COLORS["fill"],
+                outline=LAYER_UI_COLORS["outline"],
                 width=1,
-                activefill=LAYER_UI_COLORS["handle_active_fill"],
-                activeoutline=LAYER_UI_COLORS["handle_active_outline"],
+                activefill=LAYER_UI_COLORS["fill_active"],
+                activeoutline=LAYER_UI_COLORS["outline_active"],
                 activewidth=2,
                 tags=("layer_handles", "layer_handle", h_tag),
             )
@@ -5437,19 +5418,19 @@ class GeoCanvasEditor(tk.Tk):
                 y - 8,
                 bx1,
                 y + 8,
-                fill=LAYER_UI_COLORS["depth_box_fill"],
-                outline=LAYER_UI_COLORS["depth_box_outline"],
+                fill=LAYER_UI_COLORS["fill"],
+                outline=LAYER_UI_COLORS["outline"],
                 width=1,
-                activefill=LAYER_UI_COLORS["depth_box_active_fill"],
-                activeoutline=LAYER_UI_COLORS["depth_box_active_outline"],
+                activefill=LAYER_UI_COLORS["fill_active"],
+                activeoutline=LAYER_UI_COLORS["outline_active"],
                 tags=("layer_handles", "layer_depth_box", h_tag),
             )
             self.canvas.create_text(
                 (bx0 + bx1) / 2,
                 y,
                 text=f"{float(boundary):.2f}",
-                fill=LAYER_UI_COLORS["depth_text"],
-                activefill=LAYER_UI_COLORS["depth_text"],
+                fill=LAYER_UI_COLORS["text"],
+                activefill=LAYER_UI_COLORS["text"],
                 font=("Segoe UI", 7),
                 tags=("layer_handles", "layer_depth_label", h_tag),
             )
@@ -5947,7 +5928,7 @@ class GeoCanvasEditor(tk.Tk):
             self,
             width=6,
             justify="center",
-            bg=LAYER_UI_COLORS["depth_editor_bg"],
+            bg=LAYER_UI_COLORS["fill"],
             fg="#111111",
             insertbackground="#111111",
             selectbackground="#2f80ed",
@@ -5955,8 +5936,8 @@ class GeoCanvasEditor(tk.Tk):
             relief="solid",
             bd=1,
             highlightthickness=1,
-            highlightbackground=LAYER_UI_COLORS["depth_editor_outline"],
-            highlightcolor=LAYER_UI_COLORS["depth_editor_focus"],
+            highlightbackground=LAYER_UI_COLORS["outline"],
+            highlightcolor=LAYER_UI_COLORS["focus"],
         )
         t = self.tests[ti]
         layers = self._ensure_test_layers(t)
