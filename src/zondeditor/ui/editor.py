@@ -8990,7 +8990,7 @@ class GeoCanvasEditor(tk.Tk):
     def _show_cpt_calc_result_dialog(self, *, ok_count: int, missing: list[str]):
         dlg = tk.Toplevel(self)
         if missing:
-            dlg.title("Расчёт CPT: нужны дополнительные данные")
+            dlg.title("Расчёт CPT: есть нерасчётные ИГЭ или недостающие данные")
         else:
             dlg.title("Расчёт CPT: готово")
         dlg.transient(self)
@@ -8998,7 +8998,11 @@ class GeoCanvasEditor(tk.Tk):
         frm = ttk.Frame(dlg, padding=10)
         frm.pack(fill="both", expand=True)
         if missing:
-            ttk.Label(frm, text="Для части ИГЭ не хватает данных. Заполните параметры и повторите расчёт:", foreground="#8a3d00").pack(anchor="w")
+            ttk.Label(
+                frm,
+                text="Для части ИГЭ расчёт по данным зондирования не выполнен. Проверьте исходные данные или тип грунта:",
+                foreground="#8a3d00",
+            ).pack(anchor="w")
             box = tk.Text(frm, height=min(12, max(4, len(missing))), width=90, wrap="word")
             box.pack(fill="both", expand=True, pady=(6, 0))
             box.insert("1.0", "\n".join([f"• {line}" for line in missing]))

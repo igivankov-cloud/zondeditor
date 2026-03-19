@@ -1,4 +1,4 @@
-from src.zondeditor.domain.cpt_params_ru import CptCalcSettings, METHOD_SP446, calculate_ige_cpt_results, qc_stats
+from src.zondeditor.domain.cpt_params_ru import CptCalcSettings, METHOD_SP11, METHOD_SP446, calculate_ige_cpt_results, qc_stats
 
 
 class DummyLayer:
@@ -49,3 +49,13 @@ def test_supes_uses_il_for_auto_consistency():
     assert one["status"] == "ok"
     assert one["consistency"] == "пластичная"
     assert one["consistency_source"] == "auto_by_il"
+
+
+def test_sp11_returns_honest_reason_for_non_calculable_soils():
+    tests = [DummyTest()]
+    registry = {"ИГЭ-1": {"soil_type": "торф", "soil_code": "peat"}}
+    result = calculate_ige_cpt_results(tests=tests, ige_registry=registry, settings=CptCalcSettings(method=METHOD_SP11))
+    one = result.get("ИГЭ-1")
+    assert one is not None
+    assert one["status"] == "no_norm"
+    assert "не выполняется" in str(one["reason"]).lower()

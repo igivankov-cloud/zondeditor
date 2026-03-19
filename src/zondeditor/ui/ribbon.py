@@ -11,12 +11,13 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk, simpledialog
 
+from src.zondeditor.calculations.cpt_soil_policy import NON_CALCULABLE_CPT_MESSAGE, resolve_cpt_soil_policy
 from src.zondeditor.ui.consts import ICON_EXPORT, ICON_IMPORT, ICON_REDO, ICON_SAVE, ICON_UNDO, ICON_TRASH
 from src.zondeditor.ui.widgets import ToolTip
 
 
 class RibbonView(ttk.Frame):
-    _IGE_SIMPLIFIED_HINT = "Дополнительные параметры для этого типа грунта в текущем расчёте не используются."
+    _IGE_SIMPLIFIED_HINT = NON_CALCULABLE_CPT_MESSAGE
 
     def __init__(self, master, *, commands: dict[str, callable], icon_font=None):
         super().__init__(master)
@@ -465,16 +466,15 @@ class RibbonView(ttk.Frame):
 
     def _ige_ui_profile(self, soil_name: str) -> str:
         soil = str(soil_name or "").strip().lower()
-        if soil in {"песок", "песок гравелистый"}:
+        policy = resolve_cpt_soil_policy(soil_name=soil)
+        if policy.calc_branch == "sand":
             return "sand"
         if soil == "супесь":
             return "clay_supes"
         if soil in {"суглинок", "глина"}:
             return "clay_general"
-        if soil == "насыпной":
+        if policy.calc_branch == "fill":
             return "fill"
-        if soil in {"аргиллит", "песчаник", "гравийный грунт", "торф"}:
-            return "simplified"
         return "simplified"
 
     def _build_dynamic_ige_fields(self, parent, ige_id: str, row: dict):

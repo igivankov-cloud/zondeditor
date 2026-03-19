@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ._data_loader import load_data_file
+from .cpt_soil_policy import resolve_cpt_soil_policy
 
 
 @dataclass
@@ -36,6 +37,17 @@ def resolve_applicability(*, profile_id: str, soil_code: str, subtype: str | Non
     rules = _load_rules()
     pid = str(profile_id or "DEFAULT_CURRENT")
     scode = str(soil_code or "")
+    policy = resolve_cpt_soil_policy(soil_code=scode)
+
+    if not policy.is_calculable:
+        return ApplicabilityRule(
+            profile_id=pid,
+            soil_code=scode,
+            method="LAB_ONLY",
+            status="NOT_APPLICABLE",
+            manual_confirmation_required=False,
+            warning=policy.warning,
+        )
 
     base = next((r for r in rules if r.profile_id == pid and r.soil_code == scode), None)
     if base is None:

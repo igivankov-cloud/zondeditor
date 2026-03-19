@@ -53,7 +53,7 @@ def export_cpt_protocol_docx(*, out_path: Path, object_name: str, settings: dict
             else:
                 doc.add_paragraph(f"Глинистый: IL не задан, консистенция={row.get('consistency') or '-'} (вручную)")
         else:
-            doc.add_paragraph("Режим limited: используются note/source flags.")
+            doc.add_paragraph("Для данного типа грунта расчёт по данным зондирования в текущей реализации не выполняется.")
         sf = dict(row.get("source_flags") or {})
         doc.add_paragraph(f"Источник/флаги: CPT={bool(sf.get('CPT', True))}, LAB={bool(sf.get('LAB', False))}, Stamp={bool(sf.get('Stamp', False))}")
         doc.add_paragraph(
