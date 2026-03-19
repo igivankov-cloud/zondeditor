@@ -4905,6 +4905,11 @@ class GeoCanvasEditor(tk.Tk):
     def _column_interval_ige_id(self, interval: ColumnInterval) -> str:
         return str(getattr(interval, "ige_id", "") or getattr(interval, "ige_name", "") or "ИГЭ-1")
 
+    def _experience_column_ige_display(self, ige_id: str) -> str:
+        ent = self._ensure_ige_entry(str(ige_id or "ИГЭ-1"))
+        soil = str(ent.get("soil_type") or "не назначен")
+        return f"{str(ige_id or 'ИГЭ-1')} ({soil})"
+
     def _sync_experience_column_to_test_depth_range(self, ti: int):
         if ti is None or ti < 0 or ti >= len(self.tests):
             return
@@ -5976,6 +5981,11 @@ class GeoCanvasEditor(tk.Tk):
             return
         t = self.tests[int(ti)]
         column = self._ensure_test_experience_column(t)
+        working_column = ExperienceColumn(
+            column_depth_start=float(column.column_depth_start),
+            column_depth_end=float(column.column_depth_end),
+            intervals=[ColumnInterval(**column_interval_to_dict(item)) for item in column.intervals],
+        )
         win = tk.Toplevel(self)
         win.title(f"Редактор колонки опыта — СЗ-{getattr(t, 'tid', ti)}")
         win.transient(self)
@@ -5985,7 +5995,7 @@ class GeoCanvasEditor(tk.Tk):
         frm.pack(fill="both", expand=True)
         ttk.Label(frm, text="Интервалы колонки опыта", font=("Segoe UI", 10, "bold")).pack(anchor="w")
 
-        end_var = tk.StringVar(value=f"{float(column.column_depth_end):.2f}")
+        end_var = tk.StringVar(value=f"{float(working_column.column_depth_end):.2f}")
         end_row = ttk.Frame(frm)
         end_row.pack(fill="x", pady=(8, 8))
         ttk.Label(end_row, text="Глубина колонки до, м:").pack(side="left")
@@ -5995,10 +6005,115 @@ class GeoCanvasEditor(tk.Tk):
         table.pack(fill="both", expand=True)
         rows: list[dict[str, Any]] = []
         msg_var = tk.StringVar()
+        max_intervals = MAX_LAYERS_PER_TEST
+        min_thickness = 0.2
+        input_pattern = re.compile(r"^\d*(?:[.,]\d{0,2})?$")
 
-        def _available_ige_values() -> list[str]:
+        def _clone_working() -> ExperienceColumn:
+            return ExperienceColumn(
+                column_depth_start=float(working_column.column_depth_start),
+                column_depth_end=float(working_column.column_depth_end),
+                intervals=[ColumnInterval(**column_interval_to_dict(item)) for item in working_column.intervals],
+            )
+
+        def _available_ige_values() -> list[tuple[str, str]]:
             ids = sorted(self.ige_registry.keys(), key=self._ige_id_to_num)
-            return ids or ["ИГЭ-1"]
+            if not ids:
+                ids = ["ИГЭ-1"]
+            out = []
+            for ige_id in ids:
+                out.append((ige_id, self._experience_column_ige_display(ige_id)))
+            return out
+
+        def _find_ige_display(ige_id: str) -> str:
+            for value, display in _available_ige_values():
+                if value == ige_id:
+                    return display
+            return ige_id or "ИГЭ-1"
+
+        def _display_to_ige_id(display_value: str) -> str:
+            for value, display in _available_ige_values():
+                if display == display_value:
+                    return value
+            return str(display_value or "").split("(", 1)[0].strip()
+
+        def _set_working_column(new_column: ExperienceColumn):
+            nonlocal working_column
+            working_column = new_column
+            end_var.set(f"{float(working_column.column_depth_end):.2f}")
+            _sync_rows_from_column()
+            msg_var.set("")
+
+        def _parse_two_decimals(raw: str) -> float:
+            value = str(raw or "").strip().replace(",", ".")
+            if not value:
+                raise ValueError("Введите глубину")
+            if not input_pattern.fullmatch(value):
+                raise ValueError("Допустимы только неотрицательные числа с максимум 2 знаками после запятой")
+            parsed = float(value)
+            if parsed < 0:
+                raise ValueError("Глубина не может быть отрицательной")
+            return round(parsed, 2)
+
+        def _validate_depth_input(raw: str) -> bool:
+            return input_pattern.fullmatch(str(raw or "")) is not None
+
+        def _sync_rows_from_column():
+            for idx, item in enumerate(working_column.intervals):
+                if idx >= len(rows):
+                    rows.append(
+                        {
+                            "from_var": tk.StringVar(),
+                            "to_var": tk.StringVar(),
+                            "ige_var": tk.StringVar(),
+                        }
+                    )
+                rows[idx]["from_var"].set(f"{float(item.from_depth):.2f}")
+                rows[idx]["to_var"].set(f"{float(item.to_depth):.2f}")
+                rows[idx]["ige_var"].set(_find_ige_display(self._column_interval_ige_id(item)))
+            del rows[len(working_column.intervals):]
+            _rebuild_rows()
+
+        def _apply_boundary_change(row_index: int, field_kind: str, *, restore_on_error: bool = True) -> bool:
+            try:
+                if field_kind == "from":
+                    if row_index == 0:
+                        rows[row_index]["from_var"].set("0.00")
+                        return True
+                    new_depth = _parse_two_decimals(rows[row_index]["from_var"].get())
+                    new_column = move_experience_column_boundary(_clone_working(), row_index, new_depth)
+                elif field_kind == "to":
+                    if row_index < len(working_column.intervals) - 1:
+                        new_depth = _parse_two_decimals(rows[row_index]["to_var"].get())
+                        new_column = move_experience_column_boundary(_clone_working(), row_index + 1, new_depth)
+                    else:
+                        new_end = _parse_two_decimals(rows[row_index]["to_var"].get())
+                        last_from = float(working_column.intervals[-1].from_depth)
+                        new_end = max(round(last_from + min_thickness, 2), new_end)
+                        clone = _clone_working()
+                        clone.column_depth_end = new_end
+                        new_column = normalize_column(clone, default_ige_id=self._column_interval_ige_id(clone.intervals[0]))
+                else:
+                    return False
+            except Exception as ex:
+                if restore_on_error:
+                    msg_var.set(str(ex))
+                    _sync_rows_from_column()
+                return False
+            _set_working_column(new_column)
+            return True
+
+        def _apply_ige_change(row_index: int):
+            if not (0 <= row_index < len(working_column.intervals)):
+                return
+            ige_id = _display_to_ige_id(rows[row_index]["ige_var"].get())
+            if not ige_id:
+                _sync_rows_from_column()
+                return
+            clone = _clone_working()
+            clone.intervals[row_index].ige_id = ige_id
+            clone.intervals[row_index].ige_name = ige_id
+            _set_working_column(normalize_column(clone, default_ige_id=self._column_interval_ige_id(clone.intervals[0])))
 
         def _rebuild_rows():
             for child in table.winfo_children():
@@ -6007,61 +6122,96 @@ class GeoCanvasEditor(tk.Tk):
             ttk.Label(table, text="До").grid(row=0, column=1, sticky="w", padx=(0, 8))
             ttk.Label(table, text="ИГЭ").grid(row=0, column=2, sticky="w", padx=(0, 8))
             ttk.Label(table, text="").grid(row=0, column=3, sticky="w")
-            values = _available_ige_values()
+            values = [display for _value, display in _available_ige_values()]
+            vcmd = (self.register(_validate_depth_input), "%P")
             for idx, row in enumerate(rows, start=1):
-                row["from_entry"] = ttk.Entry(table, textvariable=row["from_var"], width=10)
-                row["to_entry"] = ttk.Entry(table, textvariable=row["to_var"], width=10)
+                row["from_entry"] = ttk.Entry(table, textvariable=row["from_var"], width=10, validate="key", validatecommand=vcmd)
+                row["to_entry"] = ttk.Entry(table, textvariable=row["to_var"], width=10, validate="key", validatecommand=vcmd)
                 row["ige_combo"] = ttk.Combobox(table, textvariable=row["ige_var"], values=values, state="readonly", width=18)
                 row["from_entry"].grid(row=idx, column=0, sticky="we", padx=(0, 8), pady=2)
                 row["to_entry"].grid(row=idx, column=1, sticky="we", padx=(0, 8), pady=2)
                 row["ige_combo"].grid(row=idx, column=2, sticky="we", padx=(0, 8), pady=2)
+                row["from_entry"].bind("<FocusOut>", lambda _e, i=idx - 1: _apply_boundary_change(i, "from"))
+                row["to_entry"].bind("<FocusOut>", lambda _e, i=idx - 1: _apply_boundary_change(i, "to"))
+                row["from_entry"].bind("<Return>", lambda _e, i=idx - 1: _apply_boundary_change(i, "from"))
+                row["to_entry"].bind("<Return>", lambda _e, i=idx - 1: _apply_boundary_change(i, "to"))
+                row["ige_combo"].bind("<<ComboboxSelected>>", lambda _e, i=idx - 1: _apply_ige_change(i))
+                if idx == 1:
+                    row["from_entry"].state(["readonly"])
+                if idx == len(rows):
+                    row["to_entry"].state(["!readonly"])
                 ttk.Button(table, text="Удалить", command=lambda i=idx - 1: _delete_row(i)).grid(row=idx, column=3, sticky="e", pady=2)
                 ttk.Button(table, text="+ Добавить", command=lambda i=idx - 1: _insert_row_after(i)).grid(row=idx, column=4, sticky="e", padx=(8, 0), pady=2)
 
         def _insert_row_after(index: int):
-            rows.insert(index + 1, {"from_var": tk.StringVar(value="0.00"), "to_var": tk.StringVar(value="0.20"), "ige_var": tk.StringVar(value=_available_ige_values()[0])})
-            _rebuild_rows()
+            if len(working_column.intervals) >= max_intervals:
+                msg_var.set("Достигнут лимит 12 интервалов")
+                return
+            new_ige_id = self._find_unassigned_ige_id() or self._next_free_ige_id()
+            self.ige_registry.setdefault(new_ige_id, {"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}})
+            try:
+                new_column = split_column_interval(_clone_working(), index, new_ige_id=new_ige_id)
+            except Exception as ex:
+                msg_var.set(str(ex))
+                return
+            _set_working_column(new_column)
 
         def _delete_row(index: int):
-            if len(rows) <= 1:
+            if len(working_column.intervals) <= 1:
                 return
-            rows.pop(index)
-            _rebuild_rows()
+            try:
+                new_column = remove_column_interval(_clone_working(), index)
+            except Exception as ex:
+                msg_var.set(str(ex))
+                return
+            _set_working_column(new_column)
 
-        for item in column.intervals:
-            rows.append(
-                {
-                    "from_var": tk.StringVar(value=f"{float(item.from_depth):.2f}"),
-                    "to_var": tk.StringVar(value=f"{float(item.to_depth):.2f}"),
-                    "ige_var": tk.StringVar(value=self._column_interval_ige_id(item)),
-                }
-            )
-        _rebuild_rows()
+        def _apply_end_depth(*, restore_on_error: bool = True) -> bool:
+            try:
+                new_end = _parse_two_decimals(end_var.get())
+                last_from = float(working_column.intervals[-1].from_depth) if working_column.intervals else 0.0
+                new_end = max(round(last_from + min_thickness, 2), new_end)
+                clone = _clone_working()
+                clone.column_depth_end = new_end
+                new_column = normalize_column(clone, default_ige_id=self._column_interval_ige_id(clone.intervals[0]) if clone.intervals else "ИГЭ-1")
+            except Exception as ex:
+                if restore_on_error:
+                    msg_var.set(str(ex))
+                    end_var.set(f"{float(working_column.column_depth_end):.2f}")
+                return False
+            _set_working_column(new_column)
+            return True
+
+        for _ in working_column.intervals:
+            rows.append({"from_var": tk.StringVar(), "to_var": tk.StringVar(), "ige_var": tk.StringVar()})
+        _sync_rows_from_column()
+        end_entry = end_row.winfo_children()[-1]
+        end_entry.configure(validate="key", validatecommand=(self.register(_validate_depth_input), "%P"))
+        end_entry.bind("<FocusOut>", lambda _e: _apply_end_depth())
+        end_entry.bind("<Return>", lambda _e: _apply_end_depth())
 
         ttk.Label(frm, textvariable=msg_var, foreground="#b00020").pack(anchor="w", pady=(8, 0))
 
-        def _build_column_from_form() -> ExperienceColumn | None:
-            try:
-                end_depth = float(str(end_var.get()).replace(",", "."))
-                intervals = []
-                for row in rows:
-                    intervals.append(
-                        ColumnInterval(
-                            from_depth=float(str(row["from_var"].get()).replace(",", ".")),
-                            to_depth=float(str(row["to_var"].get()).replace(",", ".")),
-                            ige_id=str(row["ige_var"].get() or "").strip(),
-                            ige_name=str(row["ige_var"].get() or "").strip(),
-                        )
-                    )
-                return normalize_column(ExperienceColumn(column_depth_start=0.0, column_depth_end=end_depth, intervals=intervals))
-            except Exception as ex:
-                msg_var.set(str(ex))
+        def _commit_form() -> ExperienceColumn | None:
+            if not _apply_end_depth(restore_on_error=False):
+                msg_var.set("Проверьте глубину конца колонки")
                 return None
+            for idx in range(len(rows)):
+                if not _apply_boundary_change(idx, "from", restore_on_error=False):
+                    msg_var.set(f"Некорректная граница [от] в строке {idx + 1}")
+                    _sync_rows_from_column()
+                    return None
+                if not _apply_boundary_change(idx, "to", restore_on_error=False):
+                    msg_var.set(f"Некорректная граница [до] в строке {idx + 1}")
+                    _sync_rows_from_column()
+                    return None
+                _apply_ige_change(idx)
+            return _clone_working()
 
         btns = ttk.Frame(frm)
         btns.pack(fill="x", pady=(12, 0))
         def _apply_and_close():
-            built = _build_column_from_form()
+            built = _commit_form()
             if built is None:
                 return
             self._push_undo()

@@ -125,3 +125,9 @@ def test_build_grid_expanded_keeps_absolute_zero_rows_for_shifted_start():
     assert editor._grid_base[0] == 0.0
     assert editor._grid_units[0] == ("row", 0)
     assert editor._grid_row_maps[0][10] == 0
+
+
+def test_ige_display_includes_soil_name():
+    editor = GeoCanvasEditor.__new__(GeoCanvasEditor)
+    editor._ensure_ige_entry = lambda ige_id: {"soil_type": "суглинок"}
+    assert editor._experience_column_ige_display("ИГЭ-1") == "ИГЭ-1 (суглинок)"
