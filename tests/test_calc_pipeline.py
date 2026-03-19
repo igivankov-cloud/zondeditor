@@ -1,4 +1,5 @@
 from src.zondeditor.calculations.applicability import resolve_applicability
+from src.zondeditor.calculations.cpt_soil_policy import NON_CALCULABLE_CPT_MESSAGE, resolve_cpt_soil_policy
 from src.zondeditor.calculations.protocol_builder import build_protocol
 from src.zondeditor.calculations.sample_builder import build_ige_samples
 from src.zondeditor.domain.layers import Layer, SoilType, calc_mode_for_soil
@@ -66,6 +67,7 @@ def test_method_not_applicable_and_protocol_trace_payload():
     samples = build_ige_samples(tests=tests, ige_registry=registry, profile_id="DEFAULT_CURRENT", allow_fill_by_material=False)
     s = samples[0]
     assert s.status == "NOT_APPLICABLE"
+    assert any("торф" in w.lower() for w in s.warnings)
 
     protocol = build_protocol(project_name="obj", profile_id="DEFAULT_CURRENT", samples=samples)
     trace = protocol["sections"]["calculation_trace"]
@@ -79,6 +81,29 @@ def test_method_not_applicable_and_protocol_trace_payload():
     export_payload = protocol["sections"]["export_ready_params"]
     assert len(export_payload) == 1
     assert {"E_MPa", "phi_deg", "c_kPa"}.issubset(set(export_payload[0].keys()))
+
+
+def test_non_calculable_soils_are_blocked_by_whitelist():
+    for soil_code, soil_name in (
+        ("peat", "торф"),
+        ("argillite", "аргиллит"),
+        ("sandstone", "песчаник"),
+        ("gravel_soil", "гравийный грунт"),
+    ):
+        policy = resolve_cpt_soil_policy(soil_code=soil_code, soil_name=soil_name)
+        assert policy.is_calculable is False
+        assert NON_CALCULABLE_CPT_MESSAGE in str(policy.warning)
+
+        res = resolve_applicability(profile_id="DEFAULT_CURRENT", soil_code=soil_code, subtype=None, allow_fill_by_material=False)
+        assert res.status == "NOT_APPLICABLE"
+        assert NON_CALCULABLE_CPT_MESSAGE in str(res.warning)
+
+
+def test_calc_mode_for_soil_matches_supported_cpt_whitelist():
+    assert calc_mode_for_soil(SoilType.SAND) == calc_mode_for_soil(SoilType.GRAVELLY_SAND)
+    assert calc_mode_for_soil(SoilType.FILL).value == "valid"
+    assert calc_mode_for_soil(SoilType.PEAT).value == "limited"
+    assert calc_mode_for_soil(SoilType.ARGILLITE).value == "limited"
 
 
 def test_fill_rule_limited_without_manual_confirmation():

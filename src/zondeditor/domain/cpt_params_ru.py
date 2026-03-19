@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.zondeditor.domain.cpt_ru_sp446 import QcStats, calculate_ige_sp446, qc_stats
+from src.zondeditor.calculations.cpt_soil_policy import resolve_cpt_soil_policy
 
 METHOD_SP446 = "SP446_APP_J"
 METHOD_SP11 = "SP11_APP_I"
@@ -48,11 +49,14 @@ def _soil_group(soil_type: str) -> str:
         return "суглинок"
     if "глин" in raw:
         return "глина"
-    return "суглинок"
+    return ""
 
 
 def lookup_phi_e(*, qc_mean: float, soil_type: str) -> tuple[float, float, LookupRow, str]:
-    rows = TABLE_SP11.get(_soil_group(soil_type)) or TABLE_SP11["суглинок"]
+    group = _soil_group(soil_type)
+    rows = TABLE_SP11.get(group)
+    if not rows:
+        raise ValueError("Для данного типа грунта расчёт по СП 11-105-97 (Приложение И) не выполняется")
     for row in rows:
         if qc_mean >= row.qc_from and (row.qc_to is None or qc_mean < row.qc_to):
             return row.phi_norm, row.e_norm, row, f"[{row.qc_from:g}; {'∞' if row.qc_to is None else f'{row.qc_to:g}'})"
@@ -90,13 +94,37 @@ def calculate_ige_cpt_results(*, tests: list[Any], ige_registry: dict[str, dict[
         if stats is None:
             continue
         ent = dict(ige_registry.get(ige_id) or {})
-        phi, e_val, _row, interval = lookup_phi_e(qc_mean=stats.qc_mean, soil_type=str(ent.get("soil_type") or ""))
+        soil_type = str(ent.get("soil_type") or "")
+        policy = resolve_cpt_soil_policy(soil_code=ent.get("soil_code"), soil_name=soil_type)
+        if not policy.is_calculable or policy.calc_branch not in {"sand", "clay"}:
+            out[ige_id] = {
+                "source": "CPT",
+                "method": METHOD_SP11,
+                "status": "no_norm",
+                "status_text": "не рассчитано",
+                "soil_type": soil_type,
+                "qc_mean": round(stats.qc_mean, 3),
+                "n": int(stats.n),
+                "qc_min": round(stats.qc_min, 3),
+                "qc_max": round(stats.qc_max, 3),
+                "std": round(stats.std, 4),
+                "variation": round(stats.variation, 4),
+                "phi_norm": None,
+                "E_norm": None,
+                "lookup_table": "СП 11-105-97 Прил. И",
+                "lookup_branch": "-",
+                "lookup_interval": "-",
+                "layer_bounds": bounds.get(ige_id, []),
+                "reason": policy.warning or "Для данного типа грунта расчёт по данным зондирования в текущей реализации не выполняется.",
+            }
+            continue
+        phi, e_val, _row, interval = lookup_phi_e(qc_mean=stats.qc_mean, soil_type=soil_type)
         out[ige_id] = {
             "source": "CPT",
             "method": METHOD_SP11,
             "status": "ok",
             "status_text": "OK",
-            "soil_type": str(ent.get("soil_type") or ""),
+            "soil_type": soil_type,
             "qc_mean": round(stats.qc_mean, 3),
             "n": int(stats.n),
             "qc_min": round(stats.qc_min, 3),
@@ -109,5 +137,6 @@ def calculate_ige_cpt_results(*, tests: list[Any], ige_registry: dict[str, dict[
             "lookup_branch": _soil_group(str(ent.get("soil_type") or "")),
             "lookup_interval": interval,
             "layer_bounds": bounds.get(ige_id, []),
+            "reason": "",
         }
     return out

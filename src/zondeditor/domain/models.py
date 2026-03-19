@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from src.zondeditor.domain.layers import Layer
+from src.zondeditor.domain.experience_column import ExperienceColumn
 
 
 @dataclass
@@ -71,6 +72,7 @@ class TestData:
     orig_id: Optional[int] = None
     block: Optional[GeoBlockInfo] = None
     layers: list[Layer] = field(default_factory=list)
+    experience_column: ExperienceColumn | None = None
     locked: bool = False
 
 

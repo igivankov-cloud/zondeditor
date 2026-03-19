@@ -34,7 +34,8 @@ VALID_SOILS = {
     SoilType.LOAM,
     SoilType.SANDY_LOAM,
     SoilType.SAND,
-    SoilType.PEAT,
+    SoilType.GRAVELLY_SAND,
+    SoilType.FILL,
 }
 
 SOIL_STYLE: dict[SoilType, dict[str, str]] = {

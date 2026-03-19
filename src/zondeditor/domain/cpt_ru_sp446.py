@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from statistics import mean, pstdev
 from typing import Any
 
+from src.zondeditor.calculations.cpt_soil_policy import NON_CALCULABLE_CPT_MESSAGE, resolve_cpt_soil_policy
+
 
 @dataclass
 class QcStats:
@@ -207,6 +209,7 @@ def calculate_ige_sp446(*, tests: list[Any], ige_registry: dict[str, dict[str, A
             mid_depth = float(mean(mids))
 
         soil_type = str(ent.get("soil_type") or "")
+        soil_policy = resolve_cpt_soil_policy(soil_code=ent.get("soil_code"), soil_name=soil_type)
         soil_group = _soil_group(soil_type)
         saturated_auto = infer_saturated(mid_depth=mid_depth, groundwater_level=groundwater_level)
         saturated = bool(ent.get("saturated", False))
@@ -242,6 +245,13 @@ def calculate_ige_sp446(*, tests: list[Any], ige_registry: dict[str, dict[str, A
             "lookup_interval": "-",
             "reason": "",
         }
+
+        if not soil_policy.is_calculable:
+            result["status"] = "no_norm"
+            result["status_text"] = "не рассчитано"
+            result["reason"] = soil_policy.warning or NON_CALCULABLE_CPT_MESSAGE
+            out[ige_id] = result
+            continue
 
         if soil_group == "песок":
             sand_class = _normalize_sand_class(str(ent.get("sand_class") or ""))
@@ -309,7 +319,7 @@ def calculate_ige_sp446(*, tests: list[Any], ige_registry: dict[str, dict[str, A
 
         result["status"] = "no_norm"
         result["status_text"] = "не рассчитано"
-        result["reason"] = "Автоназначение по СП 446 Прил. Ж для данного типа не выполняется, требуется другой источник"
+        result["reason"] = soil_policy.warning or NON_CALCULABLE_CPT_MESSAGE
         out[ige_id] = result
 
     return out

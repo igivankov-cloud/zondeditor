@@ -6,6 +6,7 @@ from src.zondeditor.domain.cpt_ru_sp446 import parse_depth_float
 
 from .applicability import resolve_applicability
 from .calc_methods import load_method_catalog, run_method
+from .cpt_soil_policy import resolve_cpt_soil_policy
 from .models import IGECalcPoint, IGECalcResult, IGECalcSample, IGECalcStats, IGEModel
 from .soil_catalog import load_soil_catalog, soil_code_by_name
 from .statistics import calc_stats
@@ -84,6 +85,7 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
     for ige_key in sorted((ige_registry or {}).keys()):
         ent = dict(ige_registry.get(ige_key) or {})
         ige = _build_ige_model(ige_key, ent, profile_id)
+        soil_policy = resolve_cpt_soil_policy(soil_code=ige.soil_code, soil_name=ent.get("soil_type"))
         app = resolve_applicability(profile_id=profile_id, soil_code=ige.soil_code, subtype=ige.subtype, allow_fill_by_material=allow_fill_by_material)
 
         if ige.soil_code == "sandy_loam":
@@ -95,6 +97,10 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
                 app.status = "CALCULATED"
                 app.method = "SP446_CPT_CLAY"
                 app.warning = "Рассчитано по старой редакции СП 446"
+        elif not soil_policy.is_calculable:
+            app.status = "NOT_APPLICABLE"
+            app.method = "LAB_ONLY"
+            app.warning = soil_policy.warning
 
         points: list[IGECalcPoint] = []
         excluded_points: list[dict[str, Any]] = []
