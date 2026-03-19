@@ -190,3 +190,14 @@ def test_ige_display_includes_soil_name():
     editor = GeoCanvasEditor.__new__(GeoCanvasEditor)
     editor._ensure_ige_entry = lambda ige_id: {"soil_type": "суглинок"}
     assert editor._experience_column_ige_display("ИГЭ-1") == "ИГЭ-1 (суглинок)"
+
+
+def test_ige_choices_use_existing_registry_ids():
+    editor = GeoCanvasEditor.__new__(GeoCanvasEditor)
+    editor.ige_registry = {"ИГЭ-2": {}, "ИГЭ-1": {}}
+    editor._ige_id_to_num = lambda value: int(str(value).split("-")[-1])
+    editor._ensure_ige_entry = lambda ige_id: {"soil_type": "песок" if ige_id == "ИГЭ-2" else "суглинок"}
+    assert editor._experience_column_ige_choices() == [
+        ("ИГЭ-1", "ИГЭ-1 (суглинок)"),
+        ("ИГЭ-2", "ИГЭ-2 (песок)"),
+    ]

@@ -4912,6 +4912,52 @@ class GeoCanvasEditor(tk.Tk):
         soil = str(ent.get("soil_type") or "не назначен")
         return f"{str(ige_id or 'ИГЭ-1')} ({soil})"
 
+    def _experience_column_ige_choices(self) -> list[tuple[str, str]]:
+        ids = sorted(self.ige_registry.keys(), key=self._ige_id_to_num)
+        return [(ige_id, self._experience_column_ige_display(ige_id)) for ige_id in ids]
+
+    def _pick_existing_ige_for_column(self, *, parent=None, title: str = "Выбор ИГЭ") -> str | None:
+        choices = self._experience_column_ige_choices()
+        if not choices:
+            messagebox.showinfo(
+                "Нет ИГЭ",
+                "Сначала создайте ИГЭ на вкладке ИГЭ проекта, затем добавляйте интервалы в колонке опыта.",
+                parent=parent or self,
+            )
+            return None
+
+        holder: dict[str, str | None] = {"value": None}
+        win = tk.Toplevel(parent or self)
+        win.title(title)
+        win.transient(parent or self)
+        win.grab_set()
+        win.resizable(False, False)
+        frm = ttk.Frame(win, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Выберите существующий ИГЭ:").pack(anchor="w")
+        selected_var = tk.StringVar(value=choices[0][1])
+        cb = ttk.Combobox(frm, state="readonly", values=[display for _id, display in choices], textvariable=selected_var, width=28)
+        cb.pack(fill="x", pady=(8, 0))
+
+        def _ok():
+            display = str(selected_var.get() or "")
+            holder["value"] = next((ige_id for ige_id, label in choices if label == display), None)
+            win.destroy()
+
+        def _cancel():
+            holder["value"] = None
+            win.destroy()
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x", pady=(12, 0))
+        ttk.Button(btns, text="Отмена", command=_cancel).pack(side="right")
+        ttk.Button(btns, text="ОК", command=_ok).pack(side="right", padx=(0, 8))
+        cb.bind("<Return>", lambda _e: _ok())
+        cb.bind("<Escape>", lambda _e: _cancel())
+        cb.focus_set()
+        win.wait_window()
+        return holder["value"]
+
     def _sync_experience_column_to_test_depth_range(self, ti: int):
         if ti is None or ti < 0 or ti >= len(self.tests):
             return
@@ -5583,7 +5629,6 @@ class GeoCanvasEditor(tk.Tk):
             if self._is_test_locked(int(ti)):
                 self._set_status("Опыт заблокирован")
                 return
-            self._push_undo()
             self._insert_layer_at_boundary(ti, row)
             return
         if kind == "layer_plus_top":
@@ -5592,7 +5637,6 @@ class GeoCanvasEditor(tk.Tk):
                 return
             if not self._can_insert_layer_from_top(int(ti)):
                 return
-            self._push_undo()
             self._insert_layer_from_top(ti)
             return
         if kind == "layer_plus_bottom":
@@ -5601,7 +5645,6 @@ class GeoCanvasEditor(tk.Tk):
                 return
             if not self._can_insert_layer_from_bottom(int(ti)):
                 return
-            self._push_undo()
             self._insert_layer_from_bottom(ti)
             return
         if kind == "layer_minus_top":
@@ -6018,13 +6061,7 @@ class GeoCanvasEditor(tk.Tk):
             )
 
         def _available_ige_values() -> list[tuple[str, str]]:
-            ids = sorted(self.ige_registry.keys(), key=self._ige_id_to_num)
-            if not ids:
-                ids = ["ИГЭ-1"]
-            out = []
-            for ige_id in ids:
-                out.append((ige_id, self._experience_column_ige_display(ige_id)))
-            return out
+            return self._experience_column_ige_choices()
 
         def _find_ige_display(ige_id: str) -> str:
             for value, display in _available_ige_values():
@@ -6122,16 +6159,16 @@ class GeoCanvasEditor(tk.Tk):
             ttk.Label(table, text="От").grid(row=0, column=0, sticky="w", padx=(0, 8))
             ttk.Label(table, text="До").grid(row=0, column=1, sticky="w", padx=(0, 8))
             ttk.Label(table, text="ИГЭ").grid(row=0, column=2, sticky="w", padx=(0, 8))
-            ttk.Label(table, text="").grid(row=0, column=3, sticky="w")
             values = [display for _value, display in _available_ige_values()]
             vcmd = (self.register(_validate_depth_input), "%P")
             for idx, row in enumerate(rows, start=1):
+                grid_row = (idx * 2) - 1
                 row["from_entry"] = ttk.Entry(table, textvariable=row["from_var"], width=10, validate="key", validatecommand=vcmd)
                 row["to_entry"] = ttk.Entry(table, textvariable=row["to_var"], width=10, validate="key", validatecommand=vcmd)
                 row["ige_combo"] = ttk.Combobox(table, textvariable=row["ige_var"], values=values, state="readonly", width=18)
-                row["from_entry"].grid(row=idx, column=0, sticky="we", padx=(0, 8), pady=2)
-                row["to_entry"].grid(row=idx, column=1, sticky="we", padx=(0, 8), pady=2)
-                row["ige_combo"].grid(row=idx, column=2, sticky="we", padx=(0, 8), pady=2)
+                row["from_entry"].grid(row=grid_row, column=0, sticky="we", padx=(0, 8), pady=2)
+                row["to_entry"].grid(row=grid_row, column=1, sticky="we", padx=(0, 8), pady=2)
+                row["ige_combo"].grid(row=grid_row, column=2, sticky="we", padx=(0, 8), pady=2)
                 row["from_entry"].bind("<FocusOut>", lambda _e, i=idx - 1: _apply_boundary_change(i, "from"))
                 row["to_entry"].bind("<FocusOut>", lambda _e, i=idx - 1: _apply_boundary_change(i, "to"))
                 row["from_entry"].bind("<Return>", lambda _e, i=idx - 1: _apply_boundary_change(i, "from"))
@@ -6140,20 +6177,23 @@ class GeoCanvasEditor(tk.Tk):
                 if idx == 1:
                     row["from_entry"].state(["readonly"])
                 if idx > 1:
-                    ttk.Button(table, text="Удалить", command=lambda i=idx - 1: _delete_row(i)).grid(row=idx, column=3, sticky="e", pady=2)
-                ttk.Button(table, text="+ Добавить", command=lambda i=idx - 1: _insert_row_after(i)).grid(row=idx, column=4, sticky="e", padx=(8, 0), pady=2)
+                    ttk.Button(table, text="Удалить", command=lambda i=idx - 1: _delete_row(i)).grid(row=grid_row, column=3, sticky="e", pady=2)
+                add_row = grid_row + 1
+                add_label = "+ Добавить" if idx < len(rows) else "+ Добавить в низ"
+                ttk.Button(table, text=add_label, command=lambda i=idx - 1: _insert_row_after(i)).grid(row=add_row, column=0, columnspan=4, sticky="w", pady=(0, 6))
 
         def _insert_row_after(index: int):
             if len(working_column.intervals) >= max_intervals:
                 msg_var.set("Достигнут лимит 12 интервалов")
                 return
-            new_ige_id = self._find_unassigned_ige_id() or self._next_free_ige_id()
-            self.ige_registry.setdefault(new_ige_id, {"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}})
+            selected_ige_id = self._pick_existing_ige_for_column(parent=win, title="Выбор ИГЭ для нового интервала")
+            if not selected_ige_id:
+                return
             try:
                 if index >= len(working_column.intervals) - 1:
-                    new_column = append_bottom(_clone_working(), new_ige_id=new_ige_id)
+                    new_column = append_bottom(_clone_working(), new_ige_id=selected_ige_id)
                 else:
-                    new_column = insert_between(_clone_working(), index + 1, new_ige_id=new_ige_id)
+                    new_column = insert_between(_clone_working(), index + 1, new_ige_id=selected_ige_id)
             except Exception as ex:
                 msg_var.set(str(ex))
                 return
@@ -6407,19 +6447,21 @@ class GeoCanvasEditor(tk.Tk):
             self._set_status("Добавление недоступно: слой нельзя разделить на 2 слоя по ≥0.20 м")
             return
 
-        new_ige_id = self._find_unassigned_ige_id() or self._next_free_ige_id()
+        selected_ige_id = self._pick_existing_ige_for_column(title="Выбор ИГЭ для нового интервала")
+        if not selected_ige_id:
+            return
+        self._push_undo()
         if from_bottom:
-            t.experience_column = append_bottom(column, thickness=take, new_ige_id=new_ige_id)
+            t.experience_column = append_bottom(column, thickness=take, new_ige_id=selected_ige_id)
         else:
-            t.experience_column = insert_between(column, li, thickness=take, new_ige_id=new_ige_id)
-        self.ige_registry[new_ige_id] = {"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}}
+            t.experience_column = insert_between(column, li, thickness=take, new_ige_id=selected_ige_id)
         self._sync_layers_panel()
         self._redraw()
         self._redraw_graphs_now()
         self.schedule_graph_redraw()
         try:
             if getattr(self, "ribbon_view", None):
-                self.ribbon_view.focus_ige_row(new_ige_id)
+                self.ribbon_view.focus_ige_row(selected_ige_id)
         except Exception:
             pass
 
