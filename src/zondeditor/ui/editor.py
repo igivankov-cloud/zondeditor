@@ -4994,7 +4994,7 @@ class GeoCanvasEditor(tk.Tk):
         return y0 + (y1 - y0) * ratio
 
 
-    def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, soil_type: str, tags):
+    def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, soil_type: str, tags, logical_rect=None):
         # Единая система: внешние JSON-штриховки через domain.hatching registry.
         pattern = load_registered_hatch(str(soil_type or ""))
         if pattern is None:
@@ -5005,7 +5005,7 @@ class GeoCanvasEditor(tk.Tk):
             (float(x0), float(y0), float(x1), float(y1)),
             pattern,
             tags=tags,
-            scale_info={"usage": HATCH_USAGE_EDITOR_EXPANDED, "layer_height_px": float(y1 - y0)},
+            scale_info={"usage": HATCH_USAGE_EDITOR_EXPANDED, "layer_height_px": float(y1 - y0), "logical_rect": tuple(logical_rect) if logical_rect is not None else (float(x0), float(y0), float(x1), float(y1))},
         )
 
     def _draw_layers_overlay_for_test(self, ti: int, plot_rect, depth_to_y, tags):
@@ -5056,7 +5056,7 @@ class GeoCanvasEditor(tk.Tk):
             # Штриховки черные на белом фоне: цвет фона фиксирован и не зависит от style.
             self.canvas.create_rectangle(x0, ty0, x1, ty1, fill="#ffffff", outline="", tags=tags)
             soil_type = str(getattr(lyr.soil_type, "value", "") or ent.get("soil_type") or "")
-            self._draw_layer_hatch(x0, ty0, x1, ty1, soil_type=soil_type, tags=tags)
+            self._draw_layer_hatch(x0, ty0, x1, ty1, soil_type=soil_type, tags=tags, logical_rect=(x0, y0, x1, y1))
             self._layer_plot_hitbox.append({"kind": "interval", "ti": ti, "ige_id": ige_id, "top": float(lt), "bot": float(lb), "bbox": (x0, ty0, x1, ty1)})
             label_spans.append({
                 "x0": x0,
