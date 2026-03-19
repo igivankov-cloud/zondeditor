@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .layers import MIN_LAYER_THICKNESS_M, SNAP_STEP_M, snap_depth
+from .layers import INSERT_LAYER_THICKNESS_M, MIN_LAYER_THICKNESS_M, snap_depth
 
 
 @dataclass
@@ -164,35 +164,71 @@ def move_column_boundary(column: ExperienceColumn, boundary_index: int, new_dept
     return normalize_column(ExperienceColumn(column_depth_start=0.0, column_depth_end=column.column_depth_end, intervals=intervals))
 
 
-def split_column_interval(column: ExperienceColumn, interval_index: int, *, from_bottom: bool = False, new_ige_id: str = "ИГЭ-1") -> ExperienceColumn:
+def insert_between(column: ExperienceColumn, boundary_index: int, *, thickness: float = INSERT_LAYER_THICKNESS_M, new_ige_id: str = "ИГЭ-1") -> ExperienceColumn:
     intervals = [ColumnInterval(**column_interval_to_dict(item)) for item in column.intervals]
-    if interval_index < 0 or interval_index >= len(intervals):
-        raise ValueError("Interval index out of range")
-    base = intervals[interval_index]
-    if float(base.to_depth) - float(base.from_depth) < (MIN_LAYER_THICKNESS_M * 2.0) - 1e-9:
-        raise ValueError("Interval is too thin to split")
-    if from_bottom:
-        mid = snap_depth(float(base.to_depth) - min(1.0, float(base.to_depth) - float(base.from_depth) - MIN_LAYER_THICKNESS_M))
-    else:
-        mid = snap_depth(float(base.from_depth) + min(1.0, float(base.to_depth) - float(base.from_depth) - MIN_LAYER_THICKNESS_M))
-    mid = max(float(base.from_depth) + MIN_LAYER_THICKNESS_M, min(float(base.to_depth) - MIN_LAYER_THICKNESS_M, mid))
-    new_interval = ColumnInterval(mid, float(base.to_depth), new_ige_id, new_ige_id) if from_bottom else ColumnInterval(float(base.from_depth), mid, new_ige_id, new_ige_id)
-    if from_bottom:
-        base.to_depth = mid
-        intervals.insert(interval_index + 1, new_interval)
-    else:
-        base.from_depth = mid
-        intervals.insert(interval_index, new_interval)
+    if boundary_index < 0 or boundary_index >= len(intervals):
+        raise ValueError("Boundary index out of range")
+    donor = intervals[boundary_index]
+    donor_thickness = float(donor.to_depth) - float(donor.from_depth)
+    max_take = donor_thickness - MIN_LAYER_THICKNESS_M
+    if max_take < MIN_LAYER_THICKNESS_M - 1e-9:
+        raise ValueError("Not enough thickness to insert interval")
+    take = min(float(thickness or INSERT_LAYER_THICKNESS_M), max_take)
+    take = max(MIN_LAYER_THICKNESS_M, snap_depth(take))
+    if take > max_take:
+        take = max_take
+    new_from = float(donor.from_depth)
+    new_to = snap_depth(new_from + take)
+    if new_to > float(donor.to_depth) - MIN_LAYER_THICKNESS_M:
+        new_to = float(donor.to_depth) - MIN_LAYER_THICKNESS_M
+    donor.from_depth = new_to
+    intervals.insert(boundary_index, ColumnInterval(new_from, new_to, new_ige_id, new_ige_id))
     return normalize_column(ExperienceColumn(column_depth_start=0.0, column_depth_end=column.column_depth_end, intervals=intervals))
 
 
-def remove_column_interval(column: ExperienceColumn, interval_index: int) -> ExperienceColumn:
+def append_bottom(column: ExperienceColumn, *, thickness: float = INSERT_LAYER_THICKNESS_M, new_ige_id: str = "ИГЭ-1") -> ExperienceColumn:
+    intervals = [ColumnInterval(**column_interval_to_dict(item)) for item in column.intervals]
+    if not intervals:
+        raise ValueError("Column has no intervals")
+    donor = intervals[-1]
+    donor_thickness = float(donor.to_depth) - float(donor.from_depth)
+    max_take = donor_thickness - MIN_LAYER_THICKNESS_M
+    if max_take < MIN_LAYER_THICKNESS_M - 1e-9:
+        raise ValueError("Not enough thickness to append interval")
+    take = min(float(thickness or INSERT_LAYER_THICKNESS_M), max_take)
+    take = max(MIN_LAYER_THICKNESS_M, snap_depth(take))
+    if take > max_take:
+        take = max_take
+    new_to = float(column.column_depth_end)
+    new_from = snap_depth(new_to - take)
+    if new_from < float(donor.from_depth) + MIN_LAYER_THICKNESS_M:
+        new_from = float(donor.from_depth) + MIN_LAYER_THICKNESS_M
+    donor.to_depth = new_from
+    intervals.append(ColumnInterval(new_from, new_to, new_ige_id, new_ige_id))
+    return normalize_column(ExperienceColumn(column_depth_start=0.0, column_depth_end=column.column_depth_end, intervals=intervals))
+
+
+def remove_interval(column: ExperienceColumn, interval_index: int) -> ExperienceColumn:
     intervals = [ColumnInterval(**column_interval_to_dict(item)) for item in column.intervals]
     if len(intervals) <= 1:
         raise ValueError("Cannot remove the last interval")
-    removed = intervals.pop(interval_index)
     if interval_index <= 0:
-        intervals[0].from_depth = float(removed.from_depth)
+        raise ValueError("Cannot remove the first interval directly")
+    removed = intervals.pop(interval_index)
+    if interval_index >= len(intervals):
+        intervals[-1].to_depth = float(removed.to_depth)
     else:
-        intervals[max(0, interval_index - 1)].to_depth = float(removed.to_depth)
+        intervals[interval_index].from_depth = float(removed.from_depth)
     return normalize_column(ExperienceColumn(column_depth_start=0.0, column_depth_end=column.column_depth_end, intervals=intervals))
+
+
+def split_column_interval(column: ExperienceColumn, interval_index: int, *, from_bottom: bool = False, new_ige_id: str = "ИГЭ-1") -> ExperienceColumn:
+    if from_bottom:
+        if interval_index != len(column.intervals) - 1:
+            raise ValueError("Bottom split is allowed only for the last interval")
+        return append_bottom(column, new_ige_id=new_ige_id)
+    return insert_between(column, interval_index, new_ige_id=new_ige_id)
+
+
+def remove_column_interval(column: ExperienceColumn, interval_index: int) -> ExperienceColumn:
+    return remove_interval(column, interval_index)

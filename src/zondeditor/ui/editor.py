@@ -60,9 +60,11 @@ from src.zondeditor.domain.experience_column import (
     ColumnInterval,
     ExperienceColumn,
     build_column_from_layers,
+    append_bottom,
     column_interval_to_dict,
     column_from_dict,
     column_to_dict,
+    insert_between,
     move_column_boundary as move_experience_column_boundary,
     normalize_column,
     remove_column_interval,
@@ -5450,7 +5452,6 @@ class GeoCanvasEditor(tk.Tk):
             bot_y = self._depth_to_canvas_y(float(column.intervals[-1].to_depth))
             if top_y is not None:
                 _draw_plus(f"layer_plus_top_{ti}", top_y + 6, 0, "plus_top", active=self._can_insert_layer_from_top(int(ti)))
-                _draw_minus(f"layer_minus_top_{ti}", top_y + 20, 0, "minus_top", active=(len(column.intervals) > 1))
             if bot_y is not None:
                 _draw_plus(f"layer_plus_bottom_{ti}", bot_y, len(column.intervals), "plus_bottom", active=self._can_insert_layer_from_bottom(int(ti)))
                 _draw_minus(f"layer_minus_bottom_{ti}", bot_y, len(column.intervals) - 1, "minus_bottom", active=(len(column.intervals) > 1), x_pos=(plus_x + 14))
@@ -6138,9 +6139,8 @@ class GeoCanvasEditor(tk.Tk):
                 row["ige_combo"].bind("<<ComboboxSelected>>", lambda _e, i=idx - 1: _apply_ige_change(i))
                 if idx == 1:
                     row["from_entry"].state(["readonly"])
-                if idx == len(rows):
-                    row["to_entry"].state(["!readonly"])
-                ttk.Button(table, text="Удалить", command=lambda i=idx - 1: _delete_row(i)).grid(row=idx, column=3, sticky="e", pady=2)
+                if idx > 1:
+                    ttk.Button(table, text="Удалить", command=lambda i=idx - 1: _delete_row(i)).grid(row=idx, column=3, sticky="e", pady=2)
                 ttk.Button(table, text="+ Добавить", command=lambda i=idx - 1: _insert_row_after(i)).grid(row=idx, column=4, sticky="e", padx=(8, 0), pady=2)
 
         def _insert_row_after(index: int):
@@ -6150,7 +6150,10 @@ class GeoCanvasEditor(tk.Tk):
             new_ige_id = self._find_unassigned_ige_id() or self._next_free_ige_id()
             self.ige_registry.setdefault(new_ige_id, {"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}})
             try:
-                new_column = split_column_interval(_clone_working(), index, new_ige_id=new_ige_id)
+                if index >= len(working_column.intervals) - 1:
+                    new_column = append_bottom(_clone_working(), new_ige_id=new_ige_id)
+                else:
+                    new_column = insert_between(_clone_working(), index + 1, new_ige_id=new_ige_id)
             except Exception as ex:
                 msg_var.set(str(ex))
                 return
@@ -6404,22 +6407,11 @@ class GeoCanvasEditor(tk.Tk):
             self._set_status("Добавление недоступно: слой нельзя разделить на 2 слоя по ≥0.20 м")
             return
 
-        if from_bottom:
-            new_bot = bot
-            new_top = round((new_bot - take) / 0.1) * 0.1
-            new_top = max(top + 0.2, min(new_bot - 0.2, new_top))
-            base.bot_m = new_top
-            ins_top, ins_bot, ins_idx = float(new_top), float(new_bot), li + 1
-        else:
-            new_top = top
-            new_bot = round((new_top + take) / 0.1) * 0.1
-            new_bot = min(bot - 0.2, max(new_top + 0.2, new_bot))
-            base.top_m = new_bot
-            ins_top, ins_bot, ins_idx = float(new_top), float(new_bot), li
-
         new_ige_id = self._find_unassigned_ige_id() or self._next_free_ige_id()
-        soil = SoilType.SANDY_LOAM
-        t.experience_column = split_column_interval(column, li, from_bottom=from_bottom, new_ige_id=new_ige_id)
+        if from_bottom:
+            t.experience_column = append_bottom(column, thickness=take, new_ige_id=new_ige_id)
+        else:
+            t.experience_column = insert_between(column, li, thickness=take, new_ige_id=new_ige_id)
         self.ige_registry[new_ige_id] = {"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}}
         self._sync_layers_panel()
         self._redraw()
@@ -6450,19 +6442,7 @@ class GeoCanvasEditor(tk.Tk):
         return self._can_split_layer_index(int(ti), len(layers) - 1)
 
     def _remove_layer_from_top(self, ti: int):
-        if ti is None or ti < 0 or ti >= len(self.tests):
-            return
-        t = self.tests[ti]
-        column = self._ensure_test_experience_column(t)
-        layers = list(column.intervals)
-        if len(layers) <= 1:
-            self._set_status("Нельзя удалить единственный слой")
-            return
-        t.experience_column = remove_column_interval(column, 0)
-        self._sync_layers_panel()
-        self._redraw()
-        self._redraw_graphs_now()
-        self.schedule_graph_redraw()
+        self._set_status("Верхний слой нельзя удалить напрямую")
 
     def _remove_layer_from_bottom(self, ti: int):
         if ti is None or ti < 0 or ti >= len(self.tests):

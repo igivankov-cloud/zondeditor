@@ -1,10 +1,11 @@
 from src.zondeditor.domain.experience_column import (
     ColumnInterval,
     ExperienceColumn,
+    append_bottom,
     build_column_from_layers,
+    insert_between,
     normalize_column,
-    remove_column_interval,
-    split_column_interval,
+    remove_interval,
 )
 from src.zondeditor.domain.layers import Layer, SoilType, calc_mode_for_soil
 from src.zondeditor.domain.models import TestData as _TestData
@@ -52,14 +53,72 @@ def test_normalize_column_keeps_continuous_full_depth():
     assert column.intervals[-1].to_depth == 3.0
 
 
-def test_split_and_remove_column_interval_roundtrip():
-    column = ExperienceColumn(0.0, 3.0, [ColumnInterval(0.0, 3.0, "ИГЭ-1")])
-    column = split_column_interval(column, 0, new_ige_id="ИГЭ-2")
-    assert len(column.intervals) == 2
-    column = remove_column_interval(column, 0)
-    assert len(column.intervals) == 1
-    assert column.intervals[0].from_depth == 0.0
-    assert column.intervals[0].to_depth == 3.0
+def test_insert_between_takes_thickness_from_upper_part_of_lower_interval():
+    column = ExperienceColumn(
+        0.0,
+        4.6,
+        [
+            ColumnInterval(0.0, 1.0, "ИГЭ-A"),
+            ColumnInterval(1.0, 4.6, "ИГЭ-B"),
+        ],
+    )
+    column = insert_between(column, 1, thickness=1.0, new_ige_id="ИГЭ-NEW")
+    assert [(round(x.from_depth, 2), round(x.to_depth, 2), x.ige_id) for x in column.intervals] == [
+        (0.0, 1.0, "ИГЭ-A"),
+        (1.0, 2.0, "ИГЭ-NEW"),
+        (2.0, 4.6, "ИГЭ-B"),
+    ]
+
+
+def test_append_bottom_takes_thickness_from_bottom_of_last_interval():
+    column = ExperienceColumn(
+        0.0,
+        13.7,
+        [
+            ColumnInterval(0.0, 9.5, "ИГЭ-1"),
+            ColumnInterval(9.5, 13.7, "ИГЭ-LAST"),
+        ],
+    )
+    column = append_bottom(column, thickness=1.0, new_ige_id="ИГЭ-NEW")
+    assert [(round(x.from_depth, 2), round(x.to_depth, 2), x.ige_id) for x in column.intervals] == [
+        (0.0, 9.5, "ИГЭ-1"),
+        (9.5, 12.7, "ИГЭ-LAST"),
+        (12.7, 13.7, "ИГЭ-NEW"),
+    ]
+
+
+def test_remove_interval_returns_thickness_to_lower_neighbor_for_middle_insert():
+    column = ExperienceColumn(
+        0.0,
+        4.6,
+        [
+            ColumnInterval(0.0, 1.0, "ИГЭ-A"),
+            ColumnInterval(1.0, 2.0, "ИГЭ-NEW"),
+            ColumnInterval(2.0, 4.6, "ИГЭ-B"),
+        ],
+    )
+    column = remove_interval(column, 1)
+    assert [(round(x.from_depth, 2), round(x.to_depth, 2), x.ige_id) for x in column.intervals] == [
+        (0.0, 1.0, "ИГЭ-A"),
+        (1.0, 4.6, "ИГЭ-B"),
+    ]
+
+
+def test_remove_interval_returns_thickness_to_upper_neighbor_for_bottom_insert():
+    column = ExperienceColumn(
+        0.0,
+        13.7,
+        [
+            ColumnInterval(0.0, 9.5, "ИГЭ-1"),
+            ColumnInterval(9.5, 12.7, "ИГЭ-LAST"),
+            ColumnInterval(12.7, 13.7, "ИГЭ-NEW"),
+        ],
+    )
+    column = remove_interval(column, 2)
+    assert [(round(x.from_depth, 2), round(x.to_depth, 2), x.ige_id) for x in column.intervals] == [
+        (0.0, 9.5, "ИГЭ-1"),
+        (9.5, 13.7, "ИГЭ-LAST"),
+    ]
 
 
 def test_compute_depth_grid_uses_absolute_column_axis_when_column_visible():
