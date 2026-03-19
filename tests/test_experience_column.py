@@ -6,6 +6,7 @@ from src.zondeditor.domain.experience_column import (
     insert_between,
     normalize_column,
     remove_interval,
+    resize_column_end,
 )
 from src.zondeditor.domain.layers import Layer, SoilType, calc_mode_for_soil
 from src.zondeditor.domain.models import TestData as _TestData
@@ -20,6 +21,7 @@ def _make_editor_for_grid(test: _TestData, *, show_geology_column: bool) -> GeoC
     editor.depth_start = 0.0
     editor.depth0_by_tid = {}
     editor.compact_1m = False
+    editor.show_layer_colors = False
     editor.expanded_meters = set()
     editor.row_h_default = 22
     editor.row_h_compact_1m = 38
@@ -186,20 +188,24 @@ def test_build_grid_expanded_keeps_absolute_zero_rows_for_shifted_start():
     assert editor._grid_row_maps[0][10] == 0
 
 
-def test_ige_display_includes_soil_name():
+def test_ige_display_includes_soil_name_and_detail():
     editor = GeoCanvasEditor.__new__(GeoCanvasEditor)
-    editor.ige_registry = {"ИГЭ-1": {"label": "ИГЭ-1а", "soil_type": "суглинок"}}
-    assert editor._experience_column_ige_display("ИГЭ-1") == "ИГЭ-1а (суглинок)"
+    editor.ige_registry = {"ИГЭ-1": {"label": "ИГЭ-1а", "soil_type": "суглинок", "consistency": "тугопластичная"}}
+    editor._resolve_existing_ige_id = lambda value: value if value in editor.ige_registry else None
+    assert editor._experience_column_ige_display("ИГЭ-1") == "ИГЭ-1а (суглинок, тугопластичная)"
 
 
-def test_ige_choices_use_existing_registry_ids():
+def test_ige_choices_use_existing_registry_ids_and_details():
     editor = GeoCanvasEditor.__new__(GeoCanvasEditor)
-    editor.ige_registry = {"ИГЭ-2": {"label": "ИГЭ-2"}, "ИГЭ-1": {"label": "ИГЭ-1а"}}
+    editor.ige_registry = {
+        "ИГЭ-2": {"label": "ИГЭ-2", "soil_type": "песок", "sand_kind": "мелкий"},
+        "ИГЭ-1": {"label": "ИГЭ-1а", "soil_type": "суглинок", "consistency": "тугопластичная"},
+    }
     editor._ige_id_to_num = lambda value: int(str(value).split("-")[-1])
-    editor._ensure_ige_entry = lambda ige_id: {"soil_type": "песок" if ige_id == "ИГЭ-2" else "суглинок", "label": "ИГЭ-2" if ige_id == "ИГЭ-2" else "ИГЭ-1а"}
+    editor._resolve_existing_ige_id = lambda value: value if value in editor.ige_registry else None
     assert editor._experience_column_ige_choices() == [
-        ("ИГЭ-1", "ИГЭ-1а (суглинок)"),
-        ("ИГЭ-2", "ИГЭ-2 (песок)"),
+        ("ИГЭ-1", "ИГЭ-1а (суглинок, тугопластичная)"),
+        ("ИГЭ-2", "ИГЭ-2 (песок, мелкий)"),
     ]
 
 
@@ -254,4 +260,53 @@ def test_legacy_column_reference_resolves_to_current_ige_without_ghost_card():
     normalized = editor._canonicalize_experience_column_refs(column)
 
     assert normalized.intervals[0].ige_id == "ИГЭ-5а"
-    assert normalized.intervals[0].ige_name == "ИГЭ-5а"
+    assert normalized.intervals[0].ige_name == "ИГЭ-5а (песок)"
+
+
+def test_resize_column_end_extends_last_interval_without_gap():
+    column = ExperienceColumn(
+        0.0,
+        4.0,
+        [
+            ColumnInterval(0.0, 1.5, "ИГЭ-1"),
+            ColumnInterval(1.5, 4.0, "ИГЭ-2"),
+        ],
+    )
+
+    resized = resize_column_end(column, 5.37)
+
+    assert resized.column_depth_end == 5.4
+    assert [(round(x.from_depth, 2), round(x.to_depth, 2), x.ige_id) for x in resized.intervals] == [
+        (0.0, 1.5, "ИГЭ-1"),
+        (1.5, 5.4, "ИГЭ-2"),
+    ]
+
+
+def test_resize_column_end_respects_minimum_last_interval_thickness():
+    column = ExperienceColumn(
+        0.0,
+        4.0,
+        [
+            ColumnInterval(0.0, 3.6, "ИГЭ-1"),
+            ColumnInterval(3.6, 4.0, "ИГЭ-2"),
+        ],
+    )
+
+    resized = resize_column_end(column, 3.1)
+
+    assert round(resized.column_depth_end, 2) == 3.8
+    assert [(round(x.from_depth, 2), round(x.to_depth, 2), x.ige_id) for x in resized.intervals] == [
+        (0.0, 3.6, "ИГЭ-1"),
+        (3.6, 3.8, "ИГЭ-2"),
+    ]
+
+
+def test_geology_layer_fill_color_uses_palette_only_when_enabled():
+    editor = GeoCanvasEditor.__new__(GeoCanvasEditor)
+    editor.show_layer_colors = False
+    assert editor._geology_layer_fill_color("песок") == "#ffffff"
+
+    editor.show_layer_colors = True
+    assert editor._geology_layer_fill_color("песок") == "#EED8A8"
+    assert editor._geology_layer_fill_color("торф") == "#6E4F3A"
+    assert editor._geology_layer_fill_color("неизвестный") == "#ffffff"

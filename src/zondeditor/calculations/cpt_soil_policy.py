@@ -7,7 +7,7 @@ from .soil_catalog import soil_code_by_name
 
 NON_CALCULABLE_CPT_MESSAGE = "Для данного типа грунта расчёт по данным зондирования в текущей реализации не выполняется."
 
-_SAND_CODES = {"sand", "sand_gravelly"}
+_SAND_CODES = {"sand"}
 _CLAY_CODES = {"sandy_loam", "loam", "clay"}
 _FILL_CODES = {"fill"}
 _CALCULABLE_CODES = _SAND_CODES | _CLAY_CODES | _FILL_CODES

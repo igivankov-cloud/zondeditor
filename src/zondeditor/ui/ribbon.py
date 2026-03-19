@@ -11,7 +11,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk, simpledialog
 
-from src.zondeditor.calculations.cpt_soil_policy import resolve_cpt_soil_policy
+from src.zondeditor.calculations.ige_policy import get_ige_profile
 from src.zondeditor.ui.consts import ICON_EXPORT, ICON_IMPORT, ICON_REDO, ICON_SAVE, ICON_UNDO, ICON_TRASH
 from src.zondeditor.ui.widgets import ToolTip
 
@@ -32,6 +32,7 @@ class RibbonView(ttk.Frame):
         self.show_graphs_var = tk.BooleanVar(value=False)
         self.show_geology_var = tk.BooleanVar(value=True)
         self.show_inclinometer_var = tk.BooleanVar(value=True)
+        self.show_layer_colors_var = tk.BooleanVar(value=False)
         self.compact_1m_var = tk.BooleanVar(value=False)
         self.display_sort_var = tk.StringVar(value="date")
         self.layers_edit_var = tk.BooleanVar(value=False)
@@ -256,6 +257,15 @@ class RibbonView(ttk.Frame):
         geology_chk.pack(side="top", anchor="w", pady=(2, 0))
         ToolTip(geology_chk, "Показывать/скрывать геологическую колонку")
 
+        layer_colors_chk = ttk.Checkbutton(
+            opts_col,
+            text="Цвет слоёв",
+            variable=self.show_layer_colors_var,
+            command=lambda: self.commands.get("toggle_layer_colors", lambda *_: None)(bool(self.show_layer_colors_var.get())),
+        )
+        layer_colors_chk.pack(side="top", anchor="w", pady=(2, 0))
+        ToolTip(layer_colors_chk, "Мягкая заливка по типу грунта под штриховкой")
+
         incl_chk = ttk.Checkbutton(
             opts_col,
             text="Инклинометр",
@@ -462,24 +472,22 @@ class RibbonView(ttk.Frame):
             _apply()
         cb.bind("<<ComboboxSelected>>", _on_selected, add="+")
 
-    def _ige_ui_profile(self, soil_name: str) -> str:
-        soil = str(soil_name or "").strip().lower()
-        policy = resolve_cpt_soil_policy(soil_name=soil)
-        if policy.calc_branch == "sand":
-            return "sand"
-        if soil == "супесь":
-            return "clay_supes"
-        if soil in {"суглинок", "глина"}:
-            return "clay_general"
-        if policy.calc_branch == "fill":
-            return "fill"
-        return "simplified"
+    def _ige_ui_profile(self, soil_name: str, row: dict | None = None) -> str:
+        profile = get_ige_profile(soil_name=str(soil_name or "").strip(), params=dict(row or {}))
+        mapping = {
+            "sand_calculable": "sand",
+            "clay_supes_calculable": "clay_supes",
+            "clay_calculable": "clay_general",
+            "fill_calculable": "fill",
+            "descriptive": "simplified",
+        }
+        return mapping.get(profile.ui_profile, "simplified")
 
     def _build_dynamic_ige_fields(self, parent, ige_id: str, row: dict):
         soil = str(row.get("soil", "") or "").lower()
         if not soil.strip():
             return
-        profile = self._ige_ui_profile(soil)
+        profile = self._ige_ui_profile(soil, row)
         if profile == "sand":
             sand_kind = tk.StringVar(value=str(row.get("sand_kind", "") or ""))
             cb_kind = ttk.Combobox(parent, state="readonly", width=16, values=["гравелистый", "крупный", "средней крупности", "мелкий", "пылеватый"], textvariable=sand_kind)
@@ -529,11 +537,14 @@ class RibbonView(ttk.Frame):
         self._set_combo_placeholder(cb_cons, cons, "тугопластичная")
         cb_cons.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=cons: self._change_ige_field(ig, "consistency", vv.get()))
 
-    def _build_ige_column(self, parent, row: dict, soil_values: list[str], can_delete: bool):
+    def _build_ige_column(self, parent, row: dict, soil_values: list[str], can_delete: bool, *, before=None):
         ige_id = str(row.get("ige_id", "") or "")
         card_w, gap, border_w = self._ige_card_metrics()
         card = tk.Frame(parent, padx=2, pady=1, bd=0, highlightthickness=1, highlightbackground="#d4d8de", highlightcolor="#d4d8de")
-        card.pack(side="left", fill="y", padx=(0, max(2, gap)))
+        pack_kwargs = {"side": "left", "fill": "y", "padx": (0, max(2, gap))}
+        if before is not None:
+            pack_kwargs["before"] = before
+        card.pack(**pack_kwargs)
         try:
             card.configure(width=card_w)
         except Exception:
@@ -575,6 +586,7 @@ class RibbonView(ttk.Frame):
                 w.bind("<Button-5>", lambda _e: self._on_ige_wheel_x_linux(1), add="+")
             except Exception:
                 pass
+        return card
 
     def _change_ige_field(self, ige_id: str, field_name: str, value):
         cmd = self.commands.get("change_ige_field")
@@ -651,6 +663,9 @@ class RibbonView(ttk.Frame):
     def set_show_geology_column(self, value: bool):
         self.show_geology_var.set(bool(value))
 
+    def set_show_layer_colors(self, value: bool):
+        self.show_layer_colors_var.set(bool(value))
+
     def set_show_inclinometer(self, value: bool, *, enabled: bool = True):
         self.show_inclinometer_var.set(bool(value))
         chk = getattr(self, "_inclinometer_chk", None)
@@ -681,6 +696,30 @@ class RibbonView(ttk.Frame):
             bool(row.get("_can_delete", True)),
         )
 
+    def _rows_structure_signature(self, rows: list[dict], can_delete: bool) -> tuple:
+        return tuple((str(dict(row).get("ige_id", "")), bool(can_delete)) for row in (rows or []))
+
+    def _replace_ige_card(self, row: dict, soil_values: list[str], can_delete: bool):
+        ige_id = str(row.get("ige_id", "") or "")
+        old_card = self._ige_cards.get(ige_id)
+        before_widget = self._add_ige_btn
+        if old_card is not None:
+            try:
+                siblings = list(self._ige_columns_frame.winfo_children())
+                idx = siblings.index(old_card)
+                if idx + 1 < len(siblings):
+                    before_widget = siblings[idx + 1]
+            except Exception:
+                before_widget = self._add_ige_btn
+            try:
+                old_card.destroy()
+            except Exception:
+                pass
+        new_card = self._build_ige_column(self._ige_columns_frame, row, soil_values, can_delete, before=before_widget)
+        self._ige_cards[ige_id] = new_card
+        self._ige_rows_cache[ige_id] = dict(row)
+        return new_card
+
     def _render_ige_cards(self, rows: list[dict], soil_values: list[str], can_delete: bool):
         incoming_ids = [str(r.get("ige_id", "") or "") for r in rows]
         row_by_id = {str(r.get("ige_id", "") or ""): dict(r) for r in rows}
@@ -710,17 +749,16 @@ class RibbonView(ttk.Frame):
         self._ige_rows_cache = {}
         for row in ordered_rows:
             rid = str(row.get("ige_id", "") or "")
-            self._build_ige_column(self._ige_columns_frame, row, soil_values, can_delete)
-            self._ige_cards[rid] = self._ige_columns_frame.winfo_children()[-1]
-            self._ige_rows_cache[rid] = row
+            self._ige_cards[rid] = self._build_ige_column(self._ige_columns_frame, row, soil_values, can_delete)
+            self._ige_rows_cache[rid] = dict(row)
 
     def set_layers(self, rows: list[dict], soil_values: list[str], *, can_add: bool = True, can_delete: bool = True):
         new_rows = list(rows or [])
         new_soils = list(soil_values or [])
-        current_sig = tuple(self._rows_signature({**dict(row), "_can_delete": bool(can_delete)}) for row in self._layer_rows)
-        new_sig = tuple(self._rows_signature({**dict(row), "_can_delete": bool(can_delete)}) for row in new_rows)
+        current_structure_sig = self._rows_structure_signature(self._layer_rows, bool(can_delete))
+        new_structure_sig = self._rows_structure_signature(new_rows, bool(can_delete))
         needs_cards_rebuild = (
-            current_sig != new_sig
+            current_structure_sig != new_structure_sig
             or self._ige_soil_values != new_soils
             or not getattr(self, "_ige_cards", None)
         )
@@ -741,6 +779,14 @@ class RibbonView(ttk.Frame):
             self._add_ige_btn = ttk.Button(self._ige_columns_frame, text="+ ИГЭ", width=6, style="RibbonCompact.TButton", command=self.commands.get("add_ige"))
             _, gap, _ = self._ige_card_metrics()
             self._add_ige_btn.pack(side="left", fill="y", pady=0, padx=(0, max(2, gap)))
+        else:
+            rows_cache = getattr(self, "_ige_rows_cache", {})
+            for row in new_rows:
+                ige_id = str(row.get("ige_id", "") or "")
+                new_sig = self._rows_signature({**dict(row), "_can_delete": bool(can_delete)})
+                old_sig = self._rows_signature({**dict(rows_cache.get(ige_id) or {}), "_can_delete": bool(can_delete)})
+                if new_sig != old_sig:
+                    self._replace_ige_card(row, self._ige_soil_values, bool(can_delete))
 
         if self._add_ige_btn is not None:
             self._add_ige_btn.configure(state=("normal" if can_add else "disabled"))
