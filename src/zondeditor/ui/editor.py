@@ -94,6 +94,17 @@ from src.zondeditor.calculations.protocol_builder import build_protocol
 
 _rebuild_geo_from_template = build_k2_geo_from_template
 
+LAYER_UI_COLORS = {
+    "fill": "#eef3f8",
+    "fill_active": "#e3ebf3",
+    "outline": "#b7c4d1",
+    "outline_active": "#97a8ba",
+    "text": "#4d5c6b",
+    "text_muted": "#9aa7b4",
+    "line": "#aebbc8",
+    "focus": "#7f94a9",
+}
+
 
 # --- Cell edit validators (auto-restored) ---
 import re as _re__cell
@@ -5102,12 +5113,22 @@ class GeoCanvasEditor(tk.Tk):
                     cy - chip_h * 0.5,
                     cx + chip_w * 0.5,
                     cy + chip_h * 0.5,
-                    fill="#ffffff",
-                    outline="#d0d0d0",
+                    fill=LAYER_UI_COLORS["fill"],
+                    outline=LAYER_UI_COLORS["outline"],
                     width=1,
+                    activefill=LAYER_UI_COLORS["fill_active"],
+                    activeoutline=LAYER_UI_COLORS["outline_active"],
                     tags=tags,
                 )
-                self.canvas.create_text(cx, cy, text=text, fill="#4e4335", font=font, tags=tags)
+                self.canvas.create_text(
+                    cx,
+                    cy,
+                    text=text,
+                    fill=LAYER_UI_COLORS["text"],
+                    activefill=LAYER_UI_COLORS["text"],
+                    font=font,
+                    tags=tags,
+                )
                 try:
                     self._layer_label_hitbox.append({
                         "ti": int(ti),
@@ -5293,15 +5314,59 @@ class GeoCanvasEditor(tk.Tk):
 
         def _draw_plus(tag: str, y_pos: float, boundary: int, kind: str, *, active: bool = True, x_pos: float | None = None):
             px = float(plus_x if x_pos is None else x_pos)
-            self.canvas.create_rectangle(px - 6, y_pos - 6, px + 6, y_pos + 6, fill="#ffffff", outline="#8f8f8f", width=1, tags=("layer_handles", "layer_plus_box", tag))
-            self.canvas.create_text(px, y_pos, text="+", fill=("#1d4f7c" if active else "#bdbdbd"), font=("Segoe UI", 9, "bold"), tags=("layer_handles", "layer_plus", tag))
+            box_fill = LAYER_UI_COLORS["fill"] if active else LAYER_UI_COLORS["fill"]
+            box_outline = LAYER_UI_COLORS["outline"] if active else LAYER_UI_COLORS["outline"]
+            text_fill = LAYER_UI_COLORS["text"] if active else LAYER_UI_COLORS["text_muted"]
+            self.canvas.create_rectangle(
+                px - 6,
+                y_pos - 6,
+                px + 6,
+                y_pos + 6,
+                fill=box_fill,
+                outline=box_outline,
+                width=1,
+                activefill=(LAYER_UI_COLORS["fill_active"] if active else box_fill),
+                activeoutline=(LAYER_UI_COLORS["outline_active"] if active else box_outline),
+                tags=("layer_handles", "layer_plus_box", tag),
+            )
+            self.canvas.create_text(
+                px,
+                y_pos,
+                text="+",
+                fill=text_fill,
+                activefill=text_fill,
+                font=("Segoe UI", 9, "bold"),
+                tags=("layer_handles", "layer_plus", tag),
+            )
             if active:
                 self._layer_handle_hitbox.append({"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (px - 10, y_pos - 10, px + 10, y_pos + 10)})
 
         def _draw_minus(tag: str, y_pos: float, boundary: int, kind: str, *, active: bool = True, x_pos: float | None = None):
             px = float(plus_x if x_pos is None else x_pos)
-            self.canvas.create_rectangle(px - 6, y_pos - 6, px + 6, y_pos + 6, fill="#ffffff", outline="#8f8f8f", width=1, tags=("layer_handles", "layer_minus_box", tag))
-            self.canvas.create_text(px, y_pos, text="−", fill=("#7c1d1d" if active else "#bdbdbd"), font=("Segoe UI", 9, "bold"), tags=("layer_handles", "layer_minus", tag))
+            box_fill = LAYER_UI_COLORS["fill"] if active else LAYER_UI_COLORS["fill"]
+            box_outline = LAYER_UI_COLORS["outline"] if active else LAYER_UI_COLORS["outline"]
+            text_fill = LAYER_UI_COLORS["text"] if active else LAYER_UI_COLORS["text_muted"]
+            self.canvas.create_rectangle(
+                px - 6,
+                y_pos - 6,
+                px + 6,
+                y_pos + 6,
+                fill=box_fill,
+                outline=box_outline,
+                width=1,
+                activefill=(LAYER_UI_COLORS["fill_active"] if active else box_fill),
+                activeoutline=(LAYER_UI_COLORS["outline_active"] if active else box_outline),
+                tags=("layer_handles", "layer_minus_box", tag),
+            )
+            self.canvas.create_text(
+                px,
+                y_pos,
+                text="−",
+                fill=text_fill,
+                activefill=text_fill,
+                font=("Segoe UI", 9, "bold"),
+                tags=("layer_handles", "layer_minus", tag),
+            )
             if active:
                 self._layer_handle_hitbox.append({"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (px - 10, y_pos - 10, px + 10, y_pos + 10)})
 
@@ -5323,12 +5388,52 @@ class GeoCanvasEditor(tk.Tk):
             h_tag = f"layer_handle_{ti}_{bi}"
             p_tag = f"layer_plus_{ti}_{bi}"
             m_tag = f"layer_minus_{ti}_{bi}"
-            self.canvas.create_line(x0, y, x1, y, fill="#ab9f8a", width=1, dash=(3, 2), tags=("layer_handles", "layer_boundary_line"))
-            self.canvas.create_rectangle(handle_x - 5, y - 5, handle_x + 5, y + 5, fill="#fefefe", outline="#555", tags=("layer_handles", "layer_handle", h_tag))
+            self.canvas.create_line(
+                x0,
+                y,
+                x1,
+                y,
+                fill=LAYER_UI_COLORS["line"],
+                width=1,
+                dash=(3, 2),
+                tags=("layer_handles", "layer_boundary_line"),
+            )
+            self.canvas.create_rectangle(
+                handle_x - 5,
+                y - 5,
+                handle_x + 5,
+                y + 5,
+                fill=LAYER_UI_COLORS["fill"],
+                outline=LAYER_UI_COLORS["outline"],
+                width=1,
+                activefill=LAYER_UI_COLORS["fill_active"],
+                activeoutline=LAYER_UI_COLORS["outline_active"],
+                activewidth=2,
+                tags=("layer_handles", "layer_handle", h_tag),
+            )
             bx0 = handle_x - 52
             bx1 = handle_x - 12
-            self.canvas.create_rectangle(bx0, y - 8, bx1, y + 8, fill="#ffffff", outline="#555", tags=("layer_handles", "layer_depth_box", h_tag))
-            self.canvas.create_text((bx0 + bx1) / 2, y, text=f"{float(boundary):.2f}", fill="#3f3f3f", font=("Segoe UI", 7), tags=("layer_handles", "layer_depth_label", h_tag))
+            self.canvas.create_rectangle(
+                bx0,
+                y - 8,
+                bx1,
+                y + 8,
+                fill=LAYER_UI_COLORS["fill"],
+                outline=LAYER_UI_COLORS["outline"],
+                width=1,
+                activefill=LAYER_UI_COLORS["fill_active"],
+                activeoutline=LAYER_UI_COLORS["outline_active"],
+                tags=("layer_handles", "layer_depth_box", h_tag),
+            )
+            self.canvas.create_text(
+                (bx0 + bx1) / 2,
+                y,
+                text=f"{float(boundary):.2f}",
+                fill=LAYER_UI_COLORS["text"],
+                activefill=LAYER_UI_COLORS["text"],
+                font=("Segoe UI", 7),
+                tags=("layer_handles", "layer_depth_label", h_tag),
+            )
             self._layer_handle_hitbox.append({"kind": "boundary", "ti": ti, "boundary": bi, "tag": h_tag, "bbox": (handle_x - 6, y - 6, handle_x + 6, y + 6)})
             self._layer_depth_box_hitbox.append({"kind": "boundary_depth_edit", "ti": ti, "boundary": bi, "bbox": (bx0, y - 9, bx1, y + 9)})
             _draw_plus(p_tag, y, bi, "plus", active=self._can_split_layer_index(int(ti), int(bi)))
@@ -5823,7 +5928,7 @@ class GeoCanvasEditor(tk.Tk):
             self,
             width=6,
             justify="center",
-            bg="#ffffff",
+            bg=LAYER_UI_COLORS["fill"],
             fg="#111111",
             insertbackground="#111111",
             selectbackground="#2f80ed",
@@ -5831,8 +5936,8 @@ class GeoCanvasEditor(tk.Tk):
             relief="solid",
             bd=1,
             highlightthickness=1,
-            highlightbackground="#666666",
-            highlightcolor="#2f80ed",
+            highlightbackground=LAYER_UI_COLORS["outline"],
+            highlightcolor=LAYER_UI_COLORS["focus"],
         )
         t = self.tests[ti]
         layers = self._ensure_test_layers(t)
