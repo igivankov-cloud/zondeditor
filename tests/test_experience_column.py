@@ -188,17 +188,17 @@ def test_build_grid_expanded_keeps_absolute_zero_rows_for_shifted_start():
 
 def test_ige_display_includes_soil_name():
     editor = GeoCanvasEditor.__new__(GeoCanvasEditor)
-    editor._ensure_ige_entry = lambda ige_id: {"soil_type": "суглинок"}
-    assert editor._experience_column_ige_display("ИГЭ-1") == "ИГЭ-1 (суглинок)"
+    editor.ige_registry = {"ИГЭ-1": {"label": "ИГЭ-1а", "soil_type": "суглинок"}}
+    assert editor._experience_column_ige_display("ИГЭ-1") == "ИГЭ-1а (суглинок)"
 
 
 def test_ige_choices_use_existing_registry_ids():
     editor = GeoCanvasEditor.__new__(GeoCanvasEditor)
-    editor.ige_registry = {"ИГЭ-2": {}, "ИГЭ-1": {}}
+    editor.ige_registry = {"ИГЭ-2": {"label": "ИГЭ-2"}, "ИГЭ-1": {"label": "ИГЭ-1а"}}
     editor._ige_id_to_num = lambda value: int(str(value).split("-")[-1])
-    editor._ensure_ige_entry = lambda ige_id: {"soil_type": "песок" if ige_id == "ИГЭ-2" else "суглинок"}
+    editor._ensure_ige_entry = lambda ige_id: {"soil_type": "песок" if ige_id == "ИГЭ-2" else "суглинок", "label": "ИГЭ-2" if ige_id == "ИГЭ-2" else "ИГЭ-1а"}
     assert editor._experience_column_ige_choices() == [
-        ("ИГЭ-1", "ИГЭ-1 (суглинок)"),
+        ("ИГЭ-1", "ИГЭ-1а (суглинок)"),
         ("ИГЭ-2", "ИГЭ-2 (песок)"),
     ]
 
@@ -217,3 +217,41 @@ def test_validate_experience_column_iges_reports_missing_registry_value_without_
     msg = editor._validate_experience_column_iges(column)
     assert msg is not None
     assert "не найден" in msg.lower()
+
+
+def test_rename_ige_keeps_stable_registry_key_and_updates_display_label():
+    test = _TestData(
+        tid=1,
+        dt="",
+        depth=["0.0", "0.1"],
+        qc=["1", "1"],
+        fs=["1", "1"],
+        layers=[Layer(top_m=0.0, bot_m=2.0, ige_id="ИГЭ-5", soil_type=SoilType.SAND, calc_mode=calc_mode_for_soil(SoilType.SAND))],
+        experience_column=ExperienceColumn(0.0, 2.0, [ColumnInterval(0.0, 2.0, "ИГЭ-5")]),
+    )
+    editor = GeoCanvasEditor.__new__(GeoCanvasEditor)
+    editor.tests = [test]
+    editor.ige_registry = {"ИГЭ-5": {"label": "ИГЭ-5", "soil_type": "песок", "ordinal": 5}}
+    editor._push_undo = lambda: None
+    editor._sync_layers_panel = lambda: None
+    editor.schedule_graph_redraw = lambda: None
+    editor.ribbon_view = None
+
+    editor._rename_ige_from_ribbon("ИГЭ-5", "ИГЭ-5а")
+
+    assert set(editor.ige_registry.keys()) == {"ИГЭ-5"}
+    assert editor.ige_registry["ИГЭ-5"]["label"] == "ИГЭ-5а"
+    assert test.layers[0].ige_id == "ИГЭ-5"
+    assert test.experience_column.intervals[0].ige_id == "ИГЭ-5"
+    assert editor._experience_column_ige_display("ИГЭ-5") == "ИГЭ-5а (песок)"
+
+
+def test_legacy_column_reference_resolves_to_current_ige_without_ghost_card():
+    editor = GeoCanvasEditor.__new__(GeoCanvasEditor)
+    editor.ige_registry = {"ИГЭ-5а": {"label": "ИГЭ-5а", "soil_type": "песок", "ordinal": 5}}
+    column = ExperienceColumn(0.0, 2.0, [ColumnInterval(0.0, 2.0, "ИГЭ-5")])
+
+    normalized = editor._canonicalize_experience_column_refs(column)
+
+    assert normalized.intervals[0].ige_id == "ИГЭ-5а"
+    assert normalized.intervals[0].ige_name == "ИГЭ-5а"

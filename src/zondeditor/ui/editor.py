@@ -804,6 +804,7 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
 
+        self._normalize_all_ige_references()
         self._ensure_layers_defaults_for_all_tests()
         self._active_test_idx = 0 if self.tests else None
         self._sync_layers_panel()
@@ -1149,6 +1150,42 @@ class GeoCanvasEditor(tk.Tk):
     def _ige_default_label(self, ordinal: int) -> str:
         return f"ИГЭ-{max(1, int(ordinal or 1))}"
 
+    def _resolve_existing_ige_id(self, raw_ref: str | None) -> str | None:
+        raw = str(raw_ref or "").strip()
+        if not raw:
+            return None
+        if raw in (self.ige_registry or {}):
+            return raw
+        for ige_id, ent in (self.ige_registry or {}).items():
+            for candidate in (
+                ent.get("stable_ige_id"),
+                ent.get("label"),
+                ent.get("display_label"),
+                ige_id,
+            ):
+                if str(candidate or "").strip() == raw:
+                    return str(ige_id)
+        raw_ord = self._extract_base_ige_num(raw)
+        if raw_ord is not None:
+            matches = []
+            for ige_id, ent in (self.ige_registry or {}).items():
+                try:
+                    ord_num = int(ent.get("ordinal", self._ige_id_to_num(ige_id)) or self._ige_id_to_num(ige_id))
+                except Exception:
+                    ord_num = self._ige_id_to_num(ige_id)
+                if int(ord_num) == int(raw_ord):
+                    matches.append(str(ige_id))
+            if len(matches) == 1:
+                return matches[0]
+        return None
+
+    def _ige_display_label(self, ige_ref: str | None) -> str:
+        resolved = self._resolve_existing_ige_id(ige_ref)
+        if resolved is None:
+            return str(ige_ref or "").strip() or "ИГЭ-1"
+        ent = dict((self.ige_registry or {}).get(resolved) or {})
+        return str(ent.get("label") or ent.get("display_label") or resolved)
+
     def _ensure_ige_identity(self, ige_id: str, ent: dict[str, object]) -> dict[str, object]:
         key = str(ige_id or "").strip() or "ИГЭ-1"
         ord_raw = ent.get("ordinal", None)
@@ -1163,6 +1200,8 @@ class GeoCanvasEditor(tk.Tk):
         if not lbl:
             lbl = self._ige_default_label(ord_num)
         ent["label"] = lbl
+        ent["stable_ige_id"] = key
+        ent["display_label"] = str(ent.get("display_label") or lbl)
         return ent
 
     def _ige_sort_key(self, ige_id: str) -> tuple[int, str]:
@@ -1203,6 +1242,10 @@ class GeoCanvasEditor(tk.Tk):
 
     def _layer_ige_id(self, lyr: Layer) -> str:
         ige_id = str(getattr(lyr, "ige_id", "") or "").strip()
+        resolved = self._resolve_existing_ige_id(ige_id)
+        if resolved:
+            ige_id = resolved
+            lyr.ige_id = resolved
         if not ige_id:
             ige_id = f"ИГЭ-{int(getattr(lyr, 'ige_num', 1) or 1)}"
             lyr.ige_id = ige_id
@@ -1211,6 +1254,9 @@ class GeoCanvasEditor(tk.Tk):
 
     def _ensure_ige_entry(self, ige_id: str, *, fallback_soil: str | None = None, fallback_mode: str | None = None) -> dict[str, object]:
         key = str(ige_id or "").strip() or "ИГЭ-1"
+        resolved = self._resolve_existing_ige_id(key)
+        if resolved:
+            key = resolved
         ent = self.ige_registry.get(key)
         if ent is None:
             soil_raw = str(fallback_soil or "").strip()
@@ -1689,7 +1735,7 @@ class GeoCanvasEditor(tk.Tk):
         self.schedule_graph_redraw()
 
     def _rename_ige_from_ribbon(self, old_id: str, new_label: str):
-        old_key = str(old_id or "").strip()
+        old_key = self._resolve_existing_ige_id(old_id) or str(old_id or "").strip()
         if not old_key or old_key not in (self.ige_registry or {}):
             return
         ent = self._ensure_ige_entry(old_key)
@@ -1703,27 +1749,22 @@ class GeoCanvasEditor(tk.Tk):
             if str(ent.get("label", old_key) or old_key).strip() != lbl:
                 self._push_undo()
                 ent["label"] = str(lbl)
+                ent["display_label"] = str(lbl)
                 self._sync_layers_panel()
                 self.schedule_graph_redraw()
             return
-        if lbl in (self.ige_registry or {}):
+        if self._resolve_existing_ige_id(lbl) not in (None, old_key):
             messagebox.showwarning("Переименование ИГЭ", f"ИГЭ с именем «{lbl}» уже существует.")
             return
 
         self._push_undo()
-        ent_obj = self.ige_registry.pop(old_key)
-        ent_obj["label"] = str(lbl)
-        self.ige_registry[str(lbl)] = ent_obj
-
-        for t in (self.tests or []):
-            for lyr in self._ensure_test_layers(t):
-                if str(getattr(lyr, "ige_id", "") or "").strip() == old_key:
-                    lyr.ige_id = str(lbl)
-                    lyr.ige_num = self._ige_id_to_num(str(lbl))
+        ent["label"] = str(lbl)
+        ent["display_label"] = str(lbl)
+        self._normalize_all_ige_references()
 
         if getattr(self, "ribbon_view", None):
             try:
-                self.ribbon_view.layer_ige_var.set(str(lbl))
+                self.ribbon_view.layer_ige_var.set(str(old_key))
             except Exception:
                 pass
         self._sync_layers_panel()
@@ -4901,16 +4942,56 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             top, bot = self._test_depth_range(t)
             column = build_column_from_layers(self._ensure_test_layers(t), sounding_top=float(top), sounding_bottom=float(bot), default_ige_id=default_ige)
+        column = self._canonicalize_experience_column_refs(column)
         t.experience_column = column
         return column
 
+    def _canonicalize_experience_column_refs(self, column: ExperienceColumn) -> ExperienceColumn:
+        clone = ExperienceColumn(
+            column_depth_start=float(column.column_depth_start),
+            column_depth_end=float(column.column_depth_end),
+            intervals=[ColumnInterval(**column_interval_to_dict(item)) for item in (column.intervals or [])],
+        )
+        for item in clone.intervals:
+            resolved = self._resolve_existing_ige_id(getattr(item, "ige_id", None) or getattr(item, "ige_name", None))
+            if resolved:
+                item.ige_id = resolved
+                item.ige_name = self._ige_display_label(resolved)
+            else:
+                item.ige_id = str(getattr(item, "ige_id", "") or "").strip()
+                item.ige_name = str(getattr(item, "ige_name", "") or "").strip()
+        default_ige = self._resolve_existing_ige_id(clone.intervals[0].ige_id if clone.intervals else None) or "ИГЭ-1"
+        return normalize_column(clone, default_ige_id=default_ige)
+
+    def _normalize_all_ige_references(self) -> None:
+        for t in (self.tests or []):
+            for lyr in self._ensure_test_layers(t):
+                resolved = self._resolve_existing_ige_id(getattr(lyr, "ige_id", None))
+                if resolved:
+                    lyr.ige_id = resolved
+                    lyr.ige_num = self._ige_id_to_num(resolved)
+            column = getattr(t, "experience_column", None)
+            if column is not None:
+                t.experience_column = self._canonicalize_experience_column_refs(column)
+
     def _column_interval_ige_id(self, interval: ColumnInterval) -> str:
+        resolved = self._resolve_existing_ige_id(getattr(interval, "ige_id", None) or getattr(interval, "ige_name", None))
+        if resolved:
+            try:
+                interval.ige_id = resolved
+                interval.ige_name = self._ige_display_label(resolved)
+            except Exception:
+                pass
+            return resolved
         return str(getattr(interval, "ige_id", "") or getattr(interval, "ige_name", "") or "ИГЭ-1")
 
     def _experience_column_ige_display(self, ige_id: str) -> str:
-        ent = self._ensure_ige_entry(str(ige_id or "ИГЭ-1"))
+        resolved = self._resolve_existing_ige_id(ige_id)
+        if resolved is None:
+            return str(ige_id or "ИГЭ-1")
+        ent = self._ensure_ige_entry(resolved)
         soil = str(ent.get("soil_type") or "не назначен")
-        return f"{str(ige_id or 'ИГЭ-1')} ({soil})"
+        return f"{self._ige_display_label(resolved)} ({soil})"
 
     def _experience_column_ige_choices(self) -> list[tuple[str, str]]:
         ids = sorted(self.ige_registry.keys(), key=self._ige_id_to_num)
@@ -5926,15 +6007,18 @@ class GeoCanvasEditor(tk.Tk):
         win = tk.Toplevel(self)
         win.overrideredirect(True)
         values = []
+        value_to_ige_id: dict[str, str] = {}
         ids = sorted(self.ige_registry.keys(), key=self._ige_id_to_num)
         for ige_id in ids:
             ent = self._ensure_ige_entry(ige_id)
             soil_label = str(ent.get("soil_type") or "не назначен")
-            values.append(f"{ige_id} ({soil_label})")
+            display = f"{self._ige_display_label(ige_id)} ({soil_label})"
+            values.append(display)
+            value_to_ige_id[display] = str(ige_id)
         cb = ttk.Combobox(win, state="readonly", values=values)
         current_ige = self._layer_ige_id(target)
         current_soil = str(self._ensure_ige_entry(current_ige).get("soil_type") or "не назначен")
-        current_label = f"{current_ige} ({current_soil})"
+        current_label = f"{self._ige_display_label(current_ige)} ({current_soil})"
         if current_label in values:
             cb.set(current_label)
         def _canvas_to_root(xc: float, yc: float) -> tuple[int, int]:
@@ -6033,7 +6117,7 @@ class GeoCanvasEditor(tk.Tk):
 
         def _apply(_ev=None):
             label = str(cb.get() or "")
-            ige_id = label.split("(", 1)[0].strip()
+            ige_id = str(value_to_ige_id.get(label) or "").strip()
             if not ige_id:
                 return
             self._push_undo()
