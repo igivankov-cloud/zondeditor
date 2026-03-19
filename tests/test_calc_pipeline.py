@@ -66,6 +66,7 @@ def test_method_not_applicable_and_protocol_trace_payload():
     samples = build_ige_samples(tests=tests, ige_registry=registry, profile_id="DEFAULT_CURRENT", allow_fill_by_material=False)
     s = samples[0]
     assert s.status == "NOT_APPLICABLE"
+    assert any("торф" in w.lower() for w in s.warnings)
 
     protocol = build_protocol(project_name="obj", profile_id="DEFAULT_CURRENT", samples=samples)
     trace = protocol["sections"]["calculation_trace"]

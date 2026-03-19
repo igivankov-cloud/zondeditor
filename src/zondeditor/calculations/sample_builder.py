@@ -95,6 +95,10 @@ def build_ige_samples(*, tests: list[Any], ige_registry: dict[str, dict[str, Any
                 app.status = "CALCULATED"
                 app.method = "SP446_CPT_CLAY"
                 app.warning = "Рассчитано по старой редакции СП 446"
+        elif ige.soil_code == "peat":
+            app.status = "NOT_APPLICABLE"
+            app.method = "LAB_ONLY"
+            app.warning = "Торф хранится в проекте и колонке, но не участвует в текущем auto-CPT расчёте"
 
         points: list[IGECalcPoint] = []
         excluded_points: list[dict[str, Any]] = []

@@ -16,6 +16,8 @@ from src.zondeditor.ui.widgets import ToolTip
 
 
 class RibbonView(ttk.Frame):
+    _IGE_SIMPLIFIED_HINT = "Дополнительные параметры для этого типа грунта в текущем расчёте не используются."
+
     def __init__(self, master, *, commands: dict[str, callable], icon_font=None):
         super().__init__(master)
         self.commands = commands
@@ -461,11 +463,26 @@ class RibbonView(ttk.Frame):
             _apply()
         cb.bind("<<ComboboxSelected>>", _on_selected, add="+")
 
+    def _ige_ui_profile(self, soil_name: str) -> str:
+        soil = str(soil_name or "").strip().lower()
+        if soil in {"песок", "песок гравелистый"}:
+            return "sand"
+        if soil == "супесь":
+            return "clay_supes"
+        if soil in {"суглинок", "глина"}:
+            return "clay_general"
+        if soil == "насыпной":
+            return "fill"
+        if soil in {"аргиллит", "песчаник", "гравийный грунт", "торф"}:
+            return "simplified"
+        return "simplified"
+
     def _build_dynamic_ige_fields(self, parent, ige_id: str, row: dict):
         soil = str(row.get("soil", "") or "").lower()
         if not soil.strip():
             return
-        if "пес" in soil and "супес" not in soil:
+        profile = self._ige_ui_profile(soil)
+        if profile == "sand":
             sand_kind = tk.StringVar(value=str(row.get("sand_kind", "") or ""))
             cb_kind = ttk.Combobox(parent, state="readonly", width=16, values=["гравелистый", "крупный", "средней крупности", "мелкий", "пылеватый"], textvariable=sand_kind)
             cb_kind.grid(row=0, column=0, sticky="ew")
@@ -489,7 +506,7 @@ class RibbonView(ttk.Frame):
             cb_den.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=dens: self._change_ige_field(ig, "density_state", vv.get()))
             return
 
-        if "насып" in soil:
+        if profile == "fill":
             fill_sub = tk.StringVar(value=str(row.get("fill_subtype", "") or ""))
             cb_fill = ttk.Combobox(parent, state="readonly", width=18, values=["песчаный", "глинистый", "более 10% строительного материала"], textvariable=fill_sub)
             cb_fill.grid(row=0, column=0, sticky="ew")
@@ -497,12 +514,16 @@ class RibbonView(ttk.Frame):
             cb_fill.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=fill_sub: self._change_ige_field(ig, "fill_subtype", vv.get()))
             return
 
-        if "супес" in soil:
+        if profile == "clay_supes":
             cons = tk.StringVar(value=str(row.get("consistency", "") or ""))
             cb_cons = ttk.Combobox(parent, state="readonly", width=18, values=["твердая", "пластичная", "текучая"], textvariable=cons)
             cb_cons.grid(row=0, column=0, sticky="ew")
             self._set_combo_placeholder(cb_cons, cons, "пластичная")
             cb_cons.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=cons: self._change_ige_field(ig, "consistency", vv.get()))
+            return
+
+        if profile == "simplified":
+            ttk.Label(parent, text=self._IGE_SIMPLIFIED_HINT, foreground="#667085", wraplength=180, justify="left").grid(row=0, column=0, sticky="w")
             return
 
         cons = tk.StringVar(value=str(row.get("consistency", "") or ""))
