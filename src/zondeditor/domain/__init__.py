@@ -15,6 +15,18 @@ from .layers import (
     validate_layers,
 )
 from .layer_store import LayerStore
+from .experience_column import (
+    ColumnInterval,
+    ExperienceColumn,
+    build_column_from_layers,
+    column_from_dict,
+    column_to_dict,
+    move_column_boundary,
+    normalize_column,
+    remove_column_interval,
+    split_column_interval,
+    validate_column,
+)
 from .models import (
     GeoBlockInfo,
     Row,
@@ -31,6 +43,16 @@ __all__ = [
     "GeoBlockInfo",
     "Layer",
     "LayerStore",
+    "ColumnInterval",
+    "ExperienceColumn",
+    "build_column_from_layers",
+    "column_from_dict",
+    "column_to_dict",
+    "move_column_boundary",
+    "normalize_column",
+    "remove_column_interval",
+    "split_column_interval",
+    "validate_column",
     "MIN_LAYER_THICKNESS_M",
     "Row",
     "SNAP_STEP_M",

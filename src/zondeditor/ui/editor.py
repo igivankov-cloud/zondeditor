@@ -56,6 +56,18 @@ from src.zondeditor.io.gxl_reader import load_gxl, parse_gxl_file, GxlParseError
 from src.zondeditor.io.geo_writer import save_geo_as, save_k2_geo_from_template, build_k2_geo_from_template
 from src.zondeditor.domain.models import TestData, GeoBlockInfo, TestFlags
 from src.zondeditor.domain.layer_store import LayerStore
+from src.zondeditor.domain.experience_column import (
+    ColumnInterval,
+    ExperienceColumn,
+    build_column_from_layers,
+    column_interval_to_dict,
+    column_from_dict,
+    column_to_dict,
+    move_column_boundary as move_experience_column_boundary,
+    normalize_column,
+    remove_column_interval,
+    split_column_interval,
+)
 from src.zondeditor.domain.layers import (
     SoilType,
     CalcMode,
@@ -544,6 +556,11 @@ class GeoCanvasEditor(tk.Tk):
                 "header_pos": t.header_pos,
                 "orig_id": t.orig_id,
                 "layers": [layer_to_dict(x) for x in (getattr(t, "layers", []) or [])],
+                "experience_column": (
+                    column_to_dict(getattr(t, "experience_column", None))
+                    if getattr(t, "experience_column", None) is not None
+                    else None
+                ),
                 "export_on": bool(getattr(t, "export_on", True)),
                 "locked": bool(getattr(t, "locked", False)),
                 "block": None if t.block is None else {
@@ -730,6 +747,7 @@ class GeoCanvasEditor(tk.Tk):
                 orig_id=d.get("orig_id", None),
                 block=blk,
                 layers=[layer_from_dict(x) for x in (d.get("layers") or [])],
+                experience_column=(column_from_dict(d["experience_column"]) if isinstance(d.get("experience_column"), dict) else None),
             )
             self.tests.append(t)
             try:
@@ -4835,6 +4853,49 @@ class GeoCanvasEditor(tk.Tk):
         self._renumber_layers(t)
         return layers
 
+    def _ensure_test_experience_column(self, t) -> ExperienceColumn:
+        raw = getattr(t, "experience_column", None)
+        if isinstance(raw, ExperienceColumn):
+            column = raw
+        elif isinstance(raw, dict):
+            try:
+                column = column_from_dict(raw)
+            except Exception:
+                column = None
+        else:
+            column = None
+        if column is None:
+            layers = self._ensure_test_layers(t)
+            top, bot = self._test_depth_range(t)
+            default_ige = str(getattr(layers[0], "ige_id", "") or "ИГЭ-1") if layers else "ИГЭ-1"
+            column = build_column_from_layers(layers, sounding_top=float(top), sounding_bottom=float(bot), default_ige_id=default_ige)
+        default_ige = "ИГЭ-1"
+        if column.intervals:
+            default_ige = str(column.intervals[0].ige_id or default_ige)
+        try:
+            column = normalize_column(column, default_ige_id=default_ige)
+        except Exception:
+            top, bot = self._test_depth_range(t)
+            column = build_column_from_layers(self._ensure_test_layers(t), sounding_top=float(top), sounding_bottom=float(bot), default_ige_id=default_ige)
+        t.experience_column = column
+        return column
+
+    def _column_interval_ige_id(self, interval: ColumnInterval) -> str:
+        return str(getattr(interval, "ige_id", "") or getattr(interval, "ige_name", "") or "ИГЭ-1")
+
+    def _sync_experience_column_to_test_depth_range(self, ti: int):
+        if ti is None or ti < 0 or ti >= len(self.tests):
+            return
+        t = self.tests[int(ti)]
+        column = self._ensure_test_experience_column(t)
+        _top, bot = self._test_depth_range(t)
+        clone = ExperienceColumn(
+            column_depth_start=0.0,
+            column_depth_end=max(float(column.column_depth_end), float(bot)),
+            intervals=[ColumnInterval(**column_interval_to_dict(item)) for item in column.intervals],
+        )
+        t.experience_column = normalize_column(clone, default_ige_id=self._column_interval_ige_id(clone.intervals[0]) if clone.intervals else "ИГЭ-1")
+
     def _sync_layers_to_test_depth_range(self, ti: int, *, depth_shift: float = 0.0):
         """Локально синхронизирует слои одного опыта с актуальным диапазоном depth."""
         if ti is None or ti < 0 or ti >= len(self.tests):
@@ -4873,6 +4934,7 @@ class GeoCanvasEditor(tk.Tk):
             t.layers = normalize_layers(clipped)
 
         self._calc_layer_params_for_test(int(ti))
+        self._sync_experience_column_to_test_depth_range(int(ti))
         self._sync_layers_panel()
 
 
@@ -4881,6 +4943,7 @@ class GeoCanvasEditor(tk.Tk):
         for t in (self.tests or []):
             for lyr in self._ensure_test_layers(t):
                 self._apply_ige_to_layer(lyr)
+            self._ensure_test_experience_column(t)
         if changed:
             self._sync_layers_panel()
             self.schedule_graph_redraw()
@@ -5021,7 +5084,7 @@ class GeoCanvasEditor(tk.Tk):
 
     def _draw_layers_overlay_for_test(self, ti: int, plot_rect, depth_to_y, tags):
         t = self.tests[ti]
-        layers = self._ensure_test_layers(t)
+        column = self._ensure_test_experience_column(t)
         if plot_rect is None or len(plot_rect) != 4:
             self._debug_log(f"layers_overlay: invalid plot_rect for ti={ti}: {plot_rect}")
             return
@@ -5032,25 +5095,10 @@ class GeoCanvasEditor(tk.Tk):
         if not callable(depth_to_y):
             self._debug_log(f"layers_overlay: invalid depth_to_y for ti={ti}")
             return
-        data_top, data_bot = self._test_effective_data_depth_range(t)
-        data_top = float(data_top)
-        data_bot = float(data_bot)
-        inactive_fill = "white"
-
-        ty_top = depth_to_y(data_top)
-        ty_bot = depth_to_y(data_bot)
-        if ty_top is not None and ty_bot is not None:
-            data_y0 = max(y0, min(float(ty_top), float(ty_bot)))
-            data_y1 = min(y1, max(float(ty_top), float(ty_bot)))
-            if data_y0 > y0:
-                self.canvas.create_rectangle(x0, y0, x1, data_y0, fill=inactive_fill, outline="", tags=tags)
-            if data_y1 < y1:
-                self.canvas.create_rectangle(x0, data_y1, x1, y1, fill=inactive_fill, outline="", tags=tags)
-
         label_spans = []
-        for lyr in layers:
-            lt = max(data_top, float(lyr.top_m))
-            lb = min(data_bot, float(lyr.bot_m))
+        for interval_index, lyr in enumerate(column.intervals):
+            lt = max(float(column.column_depth_start), float(lyr.from_depth))
+            lb = min(float(column.column_depth_end), float(lyr.to_depth))
             if lb - lt <= 1e-9:
                 continue
             ly0 = depth_to_y(lt)
@@ -5062,13 +5110,13 @@ class GeoCanvasEditor(tk.Tk):
             ty1 = min(y1, max(ly0, ly1))
             if ty1 <= ty0:
                 continue
-            ige_id = self._layer_ige_id(lyr)
-            ent = self._ensure_ige_entry(ige_id, fallback_soil=lyr.soil_type.value, fallback_mode=lyr.calc_mode.value)
+            ige_id = self._column_interval_ige_id(lyr)
+            ent = self._ensure_ige_entry(ige_id)
             # Штриховки черные на белом фоне: цвет фона фиксирован и не зависит от style.
             self.canvas.create_rectangle(x0, ty0, x1, ty1, fill="#ffffff", outline="", tags=tags)
-            soil_type = str(getattr(lyr.soil_type, "value", "") or ent.get("soil_type") or "")
+            soil_type = str(ent.get("soil_type") or SoilType.SANDY_LOAM.value)
             self._draw_layer_hatch(x0, ty0, x1, ty1, soil_type=soil_type, tags=tags, logical_rect=(x0, y0, x1, y1))
-            self._layer_plot_hitbox.append({"kind": "interval", "ti": ti, "ige_id": ige_id, "top": float(lt), "bot": float(lb), "bbox": (x0, ty0, x1, ty1)})
+            self._layer_plot_hitbox.append({"kind": "interval", "ti": ti, "interval_index": int(interval_index), "ige_id": ige_id, "top": float(lt), "bot": float(lb), "bbox": (x0, ty0, x1, ty1)})
             label_spans.append({
                 "x0": x0,
                 "x1": x1,
@@ -5306,7 +5354,7 @@ class GeoCanvasEditor(tk.Tk):
         if self._is_test_locked(ti):
             return
         t = self.tests[ti]
-        layers = self._ensure_test_layers(t)
+        column = self._ensure_test_experience_column(t)
         x0, x1, _y0, _y1 = rect
         # Ручка границы: центр по правому краю колонки слоёв, слегка внутри.
         handle_x = x1 - 2
@@ -5370,18 +5418,18 @@ class GeoCanvasEditor(tk.Tk):
             if active:
                 self._layer_handle_hitbox.append({"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (px - 10, y_pos - 10, px + 10, y_pos + 10)})
 
-        if layers:
-            top_y = self._depth_to_canvas_y(float(layers[0].top_m))
-            bot_y = self._depth_to_canvas_y(float(layers[-1].bot_m))
+        if column.intervals:
+            top_y = self._depth_to_canvas_y(float(column.intervals[0].from_depth))
+            bot_y = self._depth_to_canvas_y(float(column.intervals[-1].to_depth))
             if top_y is not None:
                 _draw_plus(f"layer_plus_top_{ti}", top_y + 6, 0, "plus_top", active=self._can_insert_layer_from_top(int(ti)))
-                _draw_minus(f"layer_minus_top_{ti}", top_y + 20, 0, "minus_top", active=(len(layers) > 1))
+                _draw_minus(f"layer_minus_top_{ti}", top_y + 20, 0, "minus_top", active=(len(column.intervals) > 1))
             if bot_y is not None:
-                _draw_plus(f"layer_plus_bottom_{ti}", bot_y, len(layers), "plus_bottom", active=self._can_insert_layer_from_bottom(int(ti)))
-                _draw_minus(f"layer_minus_bottom_{ti}", bot_y, len(layers) - 1, "minus_bottom", active=(len(layers) > 1), x_pos=(plus_x + 14))
+                _draw_plus(f"layer_plus_bottom_{ti}", bot_y, len(column.intervals), "plus_bottom", active=self._can_insert_layer_from_bottom(int(ti)))
+                _draw_minus(f"layer_minus_bottom_{ti}", bot_y, len(column.intervals) - 1, "minus_bottom", active=(len(column.intervals) > 1), x_pos=(plus_x + 14))
 
-        for bi in range(1, len(layers)):
-            boundary = layers[bi].top_m
+        for bi in range(1, len(column.intervals)):
+            boundary = column.intervals[bi].from_depth
             y = self._depth_to_canvas_y(boundary)
             if y is None:
                 continue
@@ -5437,7 +5485,7 @@ class GeoCanvasEditor(tk.Tk):
             self._layer_handle_hitbox.append({"kind": "boundary", "ti": ti, "boundary": bi, "tag": h_tag, "bbox": (handle_x - 6, y - 6, handle_x + 6, y + 6)})
             self._layer_depth_box_hitbox.append({"kind": "boundary_depth_edit", "ti": ti, "boundary": bi, "bbox": (bx0, y - 9, bx1, y + 9)})
             _draw_plus(p_tag, y, bi, "plus", active=self._can_split_layer_index(int(ti), int(bi)))
-            _draw_minus(m_tag, y + 14, bi, "minus", active=(len(layers) > 1))
+            _draw_minus(m_tag, y + 14, bi, "minus", active=(len(column.intervals) > 1))
 
     def _draw_graph_layers(self):
         self._redraw_graphs_now()
@@ -5582,18 +5630,18 @@ class GeoCanvasEditor(tk.Tk):
                 if label_hit is not None:
                     depth_hit, bbox_hit = label_hit
                     self._ige_picker_log(f"click_resolved ti={int(ti)} source=layer_interval_near_label depth={float(depth_hit):.4f}")
-                    self._show_ige_picker_at_click(event, int(ti), float(depth_hit), anchor_bbox=bbox_hit)
+                    self._open_experience_column_editor(int(ti))
                     return
             except Exception:
                 pass
 
             # Клик по телу слоя только выбирает опыт/слой, но не открывает picker ИГЭ.
             try:
-                layers = self._ensure_test_layers(self.tests[int(ti)])
+                layers = self._ensure_test_experience_column(self.tests[int(ti)]).intervals
                 depth = float(field if field is not None else 0.0)
-                target = next((lyr for lyr in layers if float(lyr.top_m) <= depth <= float(lyr.bot_m)), None)
+                target = next((lyr for lyr in layers if float(lyr.from_depth) <= depth <= float(lyr.to_depth)), None)
                 if target is not None:
-                    self._select_ige_for_ribbon(self._layer_ige_id(target))
+                    self._select_ige_for_ribbon(self._column_interval_ige_id(target))
             except Exception:
                 pass
             return
@@ -5603,12 +5651,7 @@ class GeoCanvasEditor(tk.Tk):
                 return
             meta = field if isinstance(field, dict) else {}
             self._ige_picker_log(f"click_resolved ti={int(ti)} source=layer_label depth={float(meta.get('depth', 0.0) if meta else 0.0):.4f}")
-            self._show_ige_picker_at_click(
-                event,
-                int(ti),
-                float(meta.get("depth", 0.0) if meta else 0.0),
-                anchor_bbox=(meta.get("bbox") if meta else None),
-            )
+            self._open_experience_column_editor(int(ti))
             return
         if kind == "meter_row":
             if self._is_test_locked(int(ti)):
@@ -5906,6 +5949,108 @@ class GeoCanvasEditor(tk.Tk):
         self._layer_ige_picker = win
         self._layer_ige_picker_meta = picker_meta
 
+    def _open_experience_column_editor(self, ti: int):
+        if ti < 0 or ti >= len(self.tests):
+            return
+        t = self.tests[int(ti)]
+        column = self._ensure_test_experience_column(t)
+        win = tk.Toplevel(self)
+        win.title(f"Редактор колонки опыта — СЗ-{getattr(t, 'tid', ti)}")
+        win.transient(self)
+        win.grab_set()
+        win.resizable(True, False)
+        frm = ttk.Frame(win, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Интервалы колонки опыта", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+
+        end_var = tk.StringVar(value=f"{float(column.column_depth_end):.2f}")
+        end_row = ttk.Frame(frm)
+        end_row.pack(fill="x", pady=(8, 8))
+        ttk.Label(end_row, text="Глубина колонки до, м:").pack(side="left")
+        ttk.Entry(end_row, textvariable=end_var, width=10).pack(side="left", padx=(8, 0))
+
+        table = ttk.Frame(frm)
+        table.pack(fill="both", expand=True)
+        rows: list[dict[str, Any]] = []
+        msg_var = tk.StringVar()
+
+        def _available_ige_values() -> list[str]:
+            ids = sorted(self.ige_registry.keys(), key=self._ige_id_to_num)
+            return ids or ["ИГЭ-1"]
+
+        def _rebuild_rows():
+            for child in table.winfo_children():
+                child.destroy()
+            ttk.Label(table, text="От").grid(row=0, column=0, sticky="w", padx=(0, 8))
+            ttk.Label(table, text="До").grid(row=0, column=1, sticky="w", padx=(0, 8))
+            ttk.Label(table, text="ИГЭ").grid(row=0, column=2, sticky="w", padx=(0, 8))
+            ttk.Label(table, text="").grid(row=0, column=3, sticky="w")
+            values = _available_ige_values()
+            for idx, row in enumerate(rows, start=1):
+                row["from_entry"] = ttk.Entry(table, textvariable=row["from_var"], width=10)
+                row["to_entry"] = ttk.Entry(table, textvariable=row["to_var"], width=10)
+                row["ige_combo"] = ttk.Combobox(table, textvariable=row["ige_var"], values=values, state="readonly", width=18)
+                row["from_entry"].grid(row=idx, column=0, sticky="we", padx=(0, 8), pady=2)
+                row["to_entry"].grid(row=idx, column=1, sticky="we", padx=(0, 8), pady=2)
+                row["ige_combo"].grid(row=idx, column=2, sticky="we", padx=(0, 8), pady=2)
+                ttk.Button(table, text="Удалить", command=lambda i=idx - 1: _delete_row(i)).grid(row=idx, column=3, sticky="e", pady=2)
+                ttk.Button(table, text="+ Добавить", command=lambda i=idx - 1: _insert_row_after(i)).grid(row=idx, column=4, sticky="e", padx=(8, 0), pady=2)
+
+        def _insert_row_after(index: int):
+            rows.insert(index + 1, {"from_var": tk.StringVar(value="0.00"), "to_var": tk.StringVar(value="0.20"), "ige_var": tk.StringVar(value=_available_ige_values()[0])})
+            _rebuild_rows()
+
+        def _delete_row(index: int):
+            if len(rows) <= 1:
+                return
+            rows.pop(index)
+            _rebuild_rows()
+
+        for item in column.intervals:
+            rows.append(
+                {
+                    "from_var": tk.StringVar(value=f"{float(item.from_depth):.2f}"),
+                    "to_var": tk.StringVar(value=f"{float(item.to_depth):.2f}"),
+                    "ige_var": tk.StringVar(value=self._column_interval_ige_id(item)),
+                }
+            )
+        _rebuild_rows()
+
+        ttk.Label(frm, textvariable=msg_var, foreground="#b00020").pack(anchor="w", pady=(8, 0))
+
+        def _build_column_from_form() -> ExperienceColumn | None:
+            try:
+                end_depth = float(str(end_var.get()).replace(",", "."))
+                intervals = []
+                for row in rows:
+                    intervals.append(
+                        ColumnInterval(
+                            from_depth=float(str(row["from_var"].get()).replace(",", ".")),
+                            to_depth=float(str(row["to_var"].get()).replace(",", ".")),
+                            ige_id=str(row["ige_var"].get() or "").strip(),
+                            ige_name=str(row["ige_var"].get() or "").strip(),
+                        )
+                    )
+                return normalize_column(ExperienceColumn(column_depth_start=0.0, column_depth_end=end_depth, intervals=intervals))
+            except Exception as ex:
+                msg_var.set(str(ex))
+                return None
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x", pady=(12, 0))
+        def _apply_and_close():
+            built = _build_column_from_form()
+            if built is None:
+                return
+            self._push_undo()
+            t.experience_column = built
+            self._redraw()
+            self.schedule_graph_redraw()
+            win.destroy()
+
+        ttk.Button(btns, text="Отмена", command=win.destroy).pack(side="right")
+        ttk.Button(btns, text="ОК", command=_apply_and_close).pack(side="right", padx=(0, 8))
+
     def _open_boundary_depth_editor(self, ti: int, boundary: int):
         if ti < 0 or ti >= len(self.tests):
             return
@@ -5940,13 +6085,13 @@ class GeoCanvasEditor(tk.Tk):
             highlightcolor=LAYER_UI_COLORS["focus"],
         )
         t = self.tests[ti]
-        layers = self._ensure_test_layers(t)
-        cur = float(layers[boundary].top_m) if 0 <= boundary < len(layers) else 0.0
+        column = self._ensure_test_experience_column(t)
+        cur = float(column.intervals[boundary].from_depth) if 0 <= boundary < len(column.intervals) else 0.0
         entry.insert(0, f"{cur:.2f}")
         self._place_boundary_depth_editor(entry, bx0, by0, bx1, by1)
 
-        prev_depth = float(layers[boundary - 1].top_m) if boundary - 1 >= 0 else float(layers[0].top_m)
-        next_depth = float(layers[boundary + 1].top_m) if boundary + 1 < len(layers) else float(layers[-1].bot_m)
+        prev_depth = float(column.intervals[boundary - 1].from_depth) if boundary - 1 >= 0 else float(column.intervals[0].from_depth)
+        next_depth = float(column.intervals[boundary + 1].from_depth) if boundary + 1 < len(column.intervals) else float(column.intervals[-1].to_depth)
 
         def _apply(_ev=None):
             try:
@@ -5957,9 +6102,7 @@ class GeoCanvasEditor(tk.Tk):
             snapped = round(val / 0.1) * 0.1
             snapped = max(prev_depth + 0.2, min(next_depth - 0.2, snapped))
             self._push_undo()
-            cloned = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
-            t.layers = move_layer_boundary(cloned, int(boundary), snapped)
-            self._calc_layer_params_for_test(int(ti))
+            t.experience_column = move_experience_column_boundary(self._ensure_test_experience_column(t), int(boundary), snapped)
             self.redraw_all()
             self._close_boundary_depth_editor(commit=True)
 
@@ -6038,16 +6181,18 @@ class GeoCanvasEditor(tk.Tk):
         t = self.tests[int(ti)] if (ti is not None and 0 <= int(ti) < len(self.tests)) else None
         if t is None:
             return
-        layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
-        if not layers:
+        column = self._ensure_test_experience_column(t)
+        if not column.intervals:
             return
-        self._split_layer_for_plus(int(ti), len(layers) - 1, from_bottom=True)
+        self._split_layer_for_plus(int(ti), len(column.intervals) - 1, from_bottom=True)
 
-    def _can_split_layer(self, lyr: Layer) -> bool:
+    def _can_split_layer(self, lyr) -> bool:
         # Минимальная валидная мощность слоя = 0.20 м.
         # Для '+' слой должен делиться на 2 валидных слоя => минимум 0.40 м.
         try:
-            return (float(lyr.bot_m) - float(lyr.top_m)) >= (0.4 - 1e-9)
+            top = float(getattr(lyr, "top_m", getattr(lyr, "from_depth", 0.0)))
+            bot = float(getattr(lyr, "bot_m", getattr(lyr, "to_depth", 0.0)))
+            return (bot - top) >= (0.4 - 1e-9)
         except Exception:
             return False
 
@@ -6055,7 +6200,7 @@ class GeoCanvasEditor(tk.Tk):
         if ti is None or ti < 0 or ti >= len(self.tests):
             return False
         t = self.tests[int(ti)]
-        layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
+        layers = list(self._ensure_test_experience_column(t).intervals)
         if not (0 <= int(layer_index) < len(layers)):
             return False
         return self._can_split_layer(layers[int(layer_index)])
@@ -6066,7 +6211,8 @@ class GeoCanvasEditor(tk.Tk):
         if self._is_test_locked(int(ti)):
             return
         t = self.tests[int(ti)]
-        layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
+        column = self._ensure_test_experience_column(t)
+        layers = list(column.intervals)
         li = int(layer_index)
         if len(layers) >= MAX_LAYERS_PER_TEST:
             self._set_status("Достигнут лимит 12 слоёв")
@@ -6078,8 +6224,8 @@ class GeoCanvasEditor(tk.Tk):
             self._set_status("Добавление недоступно: слой нельзя разделить на 2 слоя по ≥0.20 м")
             return
 
-        top = float(base.top_m)
-        bot = float(base.bot_m)
+        top = float(base.from_depth)
+        bot = float(base.to_depth)
         thickness = bot - top
         take = min(float(INSERT_LAYER_THICKNESS_M), max(0.2, thickness - 0.2))
         if take < 0.2 - 1e-9:
@@ -6101,21 +6247,8 @@ class GeoCanvasEditor(tk.Tk):
 
         new_ige_id = self._find_unassigned_ige_id() or self._next_free_ige_id()
         soil = SoilType.SANDY_LOAM
-        layers.insert(ins_idx, Layer(top_m=ins_top, bot_m=ins_bot, ige_id=new_ige_id, soil_type=soil, calc_mode=calc_mode_for_soil(soil), style=dict(SOIL_STYLE.get(soil, {})), ige_num=self._ige_id_to_num(new_ige_id)))
-        try:
-            layers[ins_idx].params = dict(getattr(layers[ins_idx], "params", {}) or {})
-            layers[ins_idx].params.setdefault("ige_label", str(new_ige_id))
-            layers[ins_idx].params.setdefault("layer_id", f"layer-{ins_idx+1}")
-        except Exception:
-            pass
-        t.layers = normalize_layers(layers)
-        self._renumber_layers(t)
+        t.experience_column = split_column_interval(column, li, from_bottom=from_bottom, new_ige_id=new_ige_id)
         self.ige_registry[new_ige_id] = {"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}}
-        try:
-            self._apply_ige_to_layer(t.layers[int(ins_idx)])
-        except Exception:
-            pass
-        self._calc_layer_params_for_test(int(ti))
         self._sync_layers_panel()
         self._redraw()
         self._redraw_graphs_now()
@@ -6129,7 +6262,7 @@ class GeoCanvasEditor(tk.Tk):
     def _can_insert_layer_from_top(self, ti: int) -> bool:
         if ti is None or ti < 0 or ti >= len(self.tests):
             return False
-        if len(self._ensure_test_layers(self.tests[int(ti)])) >= MAX_LAYERS_PER_TEST:
+        if len(self._ensure_test_experience_column(self.tests[int(ti)]).intervals) >= MAX_LAYERS_PER_TEST:
             return False
         return self._can_split_layer_index(int(ti), 0)
 
@@ -6137,7 +6270,7 @@ class GeoCanvasEditor(tk.Tk):
         if ti is None or ti < 0 or ti >= len(self.tests):
             return False
         t = self.tests[int(ti)]
-        layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
+        layers = list(self._ensure_test_experience_column(t).intervals)
         if not layers:
             return False
         if len(layers) >= MAX_LAYERS_PER_TEST:
@@ -6148,15 +6281,12 @@ class GeoCanvasEditor(tk.Tk):
         if ti is None or ti < 0 or ti >= len(self.tests):
             return
         t = self.tests[ti]
-        layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
+        column = self._ensure_test_experience_column(t)
+        layers = list(column.intervals)
         if len(layers) <= 1:
             self._set_status("Нельзя удалить единственный слой")
             return
-        removed = layers.pop(0)
-        layers[0].top_m = float(removed.top_m)
-        t.layers = normalize_layers(layers)
-        self._renumber_layers(t)
-        self._calc_layer_params_for_test(int(ti))
+        t.experience_column = remove_column_interval(column, 0)
         self._sync_layers_panel()
         self._redraw()
         self._redraw_graphs_now()
@@ -6166,15 +6296,12 @@ class GeoCanvasEditor(tk.Tk):
         if ti is None or ti < 0 or ti >= len(self.tests):
             return
         t = self.tests[ti]
-        layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
+        column = self._ensure_test_experience_column(t)
+        layers = list(column.intervals)
         if len(layers) <= 1:
             self._set_status("Нельзя удалить единственный слой")
             return
-        removed = layers.pop()
-        layers[-1].bot_m = float(removed.bot_m)
-        t.layers = normalize_layers(layers)
-        self._renumber_layers(t)
-        self._calc_layer_params_for_test(int(ti))
+        t.experience_column = remove_column_interval(column, len(layers) - 1)
         self._sync_layers_panel()
         self._redraw()
         self._redraw_graphs_now()
@@ -6184,7 +6311,8 @@ class GeoCanvasEditor(tk.Tk):
         if ti is None or ti < 0 or ti >= len(self.tests):
             return
         t = self.tests[ti]
-        layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
+        column = self._ensure_test_experience_column(t)
+        layers = list(column.intervals)
         li = int(layer_index)
         if len(layers) <= 1 or not (0 <= li < len(layers)):
             self._set_status("Нельзя удалить единственный слой")
@@ -6195,12 +6323,7 @@ class GeoCanvasEditor(tk.Tk):
         if li >= len(layers) - 1:
             self._remove_layer_from_bottom(int(ti))
             return
-        removed = layers.pop(li)
-        # Внутренний слой поглощается нижележащим соседним слоем.
-        layers[li].top_m = float(removed.top_m)
-        t.layers = normalize_layers(layers)
-        self._renumber_layers(t)
-        self._calc_layer_params_for_test(int(ti))
+        t.experience_column = remove_column_interval(column, li)
         self._sync_layers_panel()
         self._redraw()
         self._redraw_graphs_now()
@@ -6235,11 +6358,10 @@ class GeoCanvasEditor(tk.Tk):
         if depth is None:
             return
         t = self.tests[ti]
-        layers = [layer_from_dict(layer_to_dict(x)) for x in self._ensure_test_layers(t)]
+        column = self._ensure_test_experience_column(t)
         try:
-            t.layers = move_layer_boundary(layers, boundary, depth)
-            self._calc_layer_params_for_test(int(ti))
-            snapped_depth = float(t.layers[boundary].top_m) if 0 <= boundary < len(t.layers) else float(depth)
+            t.experience_column = move_experience_column_boundary(column, boundary, depth)
+            snapped_depth = float(t.experience_column.intervals[boundary].from_depth) if 0 <= boundary < len(t.experience_column.intervals) else float(depth)
             tip = f"Граница: {snapped_depth:.2f} м"
             self._set_status(tip)
             self._redraw_graphs_now()
