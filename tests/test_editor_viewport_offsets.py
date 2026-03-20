@@ -86,9 +86,15 @@ def _make_editor():
     editor.pad_y = 8
     editor.col_gap = 12
     editor.hdr_h = 64
+    editor.show_graphs = False
+    editor.show_geology_column = True
+    editor.show_inclinometer = False
+    editor.geo_kind = "K2"
     editor._scroll_w = 1000.0
     editor._content_size = lambda: (1000, 600, 72)
     editor._xview_proxy = lambda *args: editor.soundings_viewport.xview(*args)
+    editor._total_body_height = lambda: 400
+    editor._row_y_bounds = lambda row: (row * 22, row * 22 + 22)
     return editor
 
 
@@ -130,7 +136,7 @@ def test_hit_test_layer_handle_accounts_for_nonzero_viewport_x():
     editor._evt_widget = editor.canvas
     editor.soundings_viewport = _DummyViewport(width=250, x0=300.0, fractions=(0.3, 0.55))
     editor._layer_depth_box_hitbox = []
-    editor._layer_handle_hitbox = [{"kind": "boundary", "ti": 0, "boundary": 2, "bbox": (340, 40, 360, 60)}]
+    editor._layer_handle_hitbox = [{"kind": "boundary", "ti": 0, "boundary": 2, "bbox": (310, 80, 330, 100)}]
     editor._layer_label_hitbox = []
     editor._layer_plot_hitbox = []
     editor._table_col_width = lambda: 176
@@ -140,9 +146,34 @@ def test_hit_test_layer_handle_accounts_for_nonzero_viewport_x():
     editor.w_depth = 64
     editor.w_val = 56
 
-    hit = editor._hit_test(50, 50)
+    hit = editor._hit_test(20, 90)
 
     assert hit == ("layer_boundary", 0, 2, None)
+
+
+def test_card_at_world_picks_card_by_world_coordinates():
+    editor = _make_editor()
+    editor.display_cols = [0, 1]
+    editor.tests = [object(), object()]
+    editor._total_body_height = lambda: 400
+    editor._is_graph_panel_visible = lambda: True
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.col_gap = 12
+    editor.pad_x = 8
+    editor.pad_y = 8
+    editor.hdr_h = 64
+    editor.soundings_viewport = SimpleNamespace(strip=None)
+    editor._rebuild_sounding_cards()
+
+    first = editor._card_at_world(20, 20)
+    second = editor._card_at_world(360, 20)
+
+    assert first is not None and first.test_index == 0
+    assert second is not None and second.test_index == 1
 
 
 def test_mousewheel_shift_routes_only_to_horizontal_handler():

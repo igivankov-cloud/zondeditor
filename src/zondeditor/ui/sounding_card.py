@@ -120,16 +120,84 @@ class SoundingCardGeometry:
 class SoundingCard:
     """Pilot wrapper for per-sounding UI/card APIs while the renderer is still global."""
 
-    def __init__(self, master, *, test_index: int, geometry: SoundingCardGeometry):
+    HEADER_CONTROLS = ("export", "lock", "edit", "dup", "trash")
+
+    def __init__(self, master, *, editor, test_index: int, geometry: SoundingCardGeometry):
+        self.editor = editor
         self.test_index = int(test_index)
         self.geometry = geometry
-        self.host = ttk.Frame(master)
-        self.header_frame = ttk.Frame(self.host)
-        self.body_canvas = tk.Canvas(self.host, highlightthickness=0, background="white")
-        self.footer_frame = ttk.Frame(self.host)
+        if master is None:
+            self.host = None
+            self.header_frame = None
+            self.body_canvas = None
+            self.footer_frame = None
+        else:
+            self.host = ttk.Frame(master)
+            self.header_frame = ttk.Frame(self.host)
+            self.body_canvas = tk.Canvas(self.host, highlightthickness=0, background="white")
+            self.footer_frame = ttk.Frame(self.host)
 
     def world_to_local(self, x: float, y: float) -> tuple[float, float]:
         return self.geometry.world_to_local(x, y)
+
+    def contains_world(self, x: float, y: float) -> bool:
+        x0, y0, x1, y1 = self.geometry.card_bounds_world
+        return x0 <= float(x) <= x1 and y0 <= float(y) <= y1
+
+    def section_at_world(self, x: float, y: float) -> str | None:
+        if not self.contains_world(x, y):
+            return None
+        if self.geometry.header_bounds_world[1] <= float(y) <= self.geometry.header_bounds_world[3]:
+            return "header"
+        if self.geometry.body_bounds_world[1] <= float(y) <= self.geometry.body_bounds_world[3]:
+            return "body"
+        if self.geometry.footer_bounds_world[1] <= float(y) <= self.geometry.footer_bounds_world[3]:
+            return "footer"
+        return "card"
+
+    def header_control_hit(self, x: float, y: float) -> str | None:
+        hx0, hy0, hx1, hy1 = self.geometry.header_bounds_world
+        header_top = hy0 + 8.0
+        if not (hx0 <= float(x) <= hx1 and hy0 <= float(y) <= hy1):
+            return None
+        if (hx0 + 6.0) <= float(x) <= (hx0 + 20.0) and header_top <= float(y) <= (header_top + 14.0):
+            return "export"
+        if (hx1 - 104.0) <= float(x) <= (hx1 - 80.0) and hy0 <= float(y) <= (hy0 + 24.0):
+            return "lock"
+        if (hx1 - 78.0) <= float(x) <= (hx1 - 54.0) and hy0 <= float(y) <= (hy0 + 24.0):
+            return "edit"
+        if (hx1 - 52.0) <= float(x) <= (hx1 - 28.0) and hy0 <= float(y) <= (hy0 + 24.0):
+            return "dup"
+        if (hx1 - 26.0) <= float(x) <= (hx1 - 2.0) and hy0 <= float(y) <= (hy0 + 24.0):
+            return "trash"
+        return "header"
+
+    def table_field_hit(self, x: float, row_y0: float, row_y1: float) -> str | None:
+        lx, _ly = self.world_to_local(x, row_y0)
+        if not (0.0 <= lx <= self.geometry.table_width):
+            return None
+        if lx < self.geometry.depth_width:
+            return "depth"
+        if lx < (self.geometry.depth_width + self.geometry.value_width):
+            return "qc"
+        if lx < (self.geometry.depth_width + self.geometry.value_width * 2):
+            return "fs"
+        return "incl"
+
+    def graph_hit(self, x: float, y: float) -> bool:
+        x0, y0, x1, y1 = self.geometry.graph_bbox_world(y0=0.0, y1=float(self.geometry.body_height))
+        return x0 <= float(x) <= x1 and y0 <= float(y) <= y1
+
+    def hit_test_hitboxes(self, x: float, y: float, hitboxes: list[dict], *, kinds: tuple[str, ...] | None = None):
+        for hit in hitboxes or []:
+            if int(hit.get("ti", -1)) != self.test_index:
+                continue
+            if kinds is not None and str(hit.get("kind") or "") not in kinds:
+                continue
+            bx0, by0, bx1, by1 = hit.get("bbox", (0.0, 0.0, 0.0, 0.0))
+            if bx0 <= float(x) <= bx1 and by0 <= float(y) <= by1:
+                return hit
+        return None
 
     def anchor_world(self, *, dx: float = 0.0, dy: float = 0.0) -> tuple[float, float]:
         return self.geometry.header_anchor_world(dx=dx, dy=dy)
@@ -139,3 +207,23 @@ class SoundingCard:
 
     def graph_bbox_world(self, *, y0: float = 0.0, y1: float | None = None) -> tuple[float, float, float, float]:
         return self.geometry.graph_bbox_world(y0=y0, y1=y1)
+
+    def cell_editor_rect(self, row_y0: float, row_y1: float, field: str) -> tuple[float, float, float, float]:
+        x0, y0, x1, y1 = self.cell_bbox_world(row_y0, row_y1, field)
+        return (x0 + 1.0, y0 + 1.0, x1 - 1.0, y1 - 1.0)
+
+    def depth0_editor_rect(self, row_y0: float, row_y1: float) -> tuple[float, float, float, float]:
+        return self.cell_editor_rect(row_y0, row_y1, "depth")
+
+    def boundary_editor_rect(self, bbox: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+        x0, y0, x1, y1 = bbox
+        return (float(x0), float(y0), float(x1), float(y1))
+
+    def header_anchor_root(self, *, dx: float = 0.0, dy: float = 0.0) -> tuple[int, int]:
+        x, y = self.anchor_world(dx=dx, dy=dy)
+        return self.editor._header_world_to_root(x, y)
+
+    def popup_anchor_root(self, x: float, y: float, *, section: str = "body") -> tuple[int, int]:
+        if section == "header":
+            return self.editor._header_world_to_root(x, y)
+        return self.editor._body_world_to_root(x, y)

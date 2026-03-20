@@ -4493,15 +4493,17 @@ class GeoCanvasEditor(tk.Tk):
         return bool(getattr(self, "show_graphs", False) or getattr(self, "show_geology_column", True))
 
     def _column_block_width(self) -> int:
-        graph_w = int(getattr(self, "graph_w", 150) or 150) if self._is_graph_panel_visible() else 0
+        graph_w = int(self.__dict__.get("graph_w", 150) or 150) if self._is_graph_panel_visible() else 0
         return self._table_col_width() + graph_w
 
     def _column_x0(self, col: int) -> int:
         return self.pad_x + col * (self._column_block_width() + self.col_gap)
 
     def _sounding_card_geometry(self, col: int) -> SoundingCardGeometry:
-        graph_w = int(getattr(self, "graph_w", 150) or 150) if self._is_graph_panel_visible() else 0
-        incl_w = int(self.w_val) if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True)) else 0
+        graph_w = int(self.__dict__.get("graph_w", 150) or 150) if self._is_graph_panel_visible() else 0
+        geo_kind = str(self.__dict__.get("geo_kind", "K2") or "K2").upper()
+        show_inclinometer = bool(self.__dict__.get("show_inclinometer", True))
+        incl_w = int(self.w_val) if geo_kind == "K4" and show_inclinometer else 0
         return SoundingCardGeometry(
             card_x0=float(self._column_x0(col)),
             card_y0=0.0,
@@ -4520,12 +4522,12 @@ class GeoCanvasEditor(tk.Tk):
         cards: dict[int, SoundingCard] = {}
         master = getattr(self.soundings_viewport, "strip", None)
         for col, ti in enumerate(getattr(self, "display_cols", []) or []):
-            cards[int(ti)] = SoundingCard(master, test_index=int(ti), geometry=self._sounding_card_geometry(col))
+            cards[int(ti)] = SoundingCard(master, editor=self, test_index=int(ti), geometry=self._sounding_card_geometry(col))
         self._sounding_cards = cards
         return cards
 
     def _card_for_test(self, ti: int) -> SoundingCard | None:
-        cards = getattr(self, "_sounding_cards", None) or {}
+        cards = self.__dict__.get("_sounding_cards", None) or {}
         card = cards.get(int(ti))
         if card is not None:
             return card
@@ -4533,10 +4535,29 @@ class GeoCanvasEditor(tk.Tk):
             col = int((getattr(self, "display_cols", []) or []).index(int(ti)))
         except Exception:
             return None
-        card = SoundingCard(getattr(self.soundings_viewport, "strip", None), test_index=int(ti), geometry=self._sounding_card_geometry(col))
+        card = SoundingCard(getattr(self.soundings_viewport, "strip", None), editor=self, test_index=int(ti), geometry=self._sounding_card_geometry(col))
         cards[int(ti)] = card
         self._sounding_cards = cards
         return card
+
+    def _card_at_world(self, x: float, y: float) -> SoundingCard | None:
+        for ti in getattr(self, "display_cols", []) or []:
+            card = self._card_for_test(int(ti))
+            if card is not None and card.contains_world(float(x), float(y)):
+                return card
+        return None
+
+    def _dev_log_card_hit(self, *, card: SoundingCard | None, world: tuple[float, float], target=None, rect=None, extra: dict | None = None):
+        if not bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+            return
+        try:
+            local = (card.world_to_local(*world) if card is not None else None)
+            print(
+                f"[CARDHIT] card={None if card is None else card.test_index} world={world} local={local} "
+                f"target={target} rect={rect} extra={extra or {}}"
+            )
+        except Exception:
+            pass
 
     def _last_column_right_px(self) -> float:
         """Правая граница последнего блока в пикселях (с учетом графиков)."""
@@ -6161,6 +6182,9 @@ class GeoCanvasEditor(tk.Tk):
         if current_label in values:
             cb.set(current_label)
         def _canvas_to_root(xc: float, yc: float) -> tuple[int, int]:
+            card = self._card_for_test(int(ti))
+            if card is not None:
+                return card.popup_anchor_root(float(xc), float(yc), section="body")
             return self._body_world_to_root(float(xc), float(yc))
 
         gx0 = int(event.x_root)
@@ -6586,7 +6610,15 @@ class GeoCanvasEditor(tk.Tk):
 
     def _place_boundary_depth_editor(self, entry, bx0: float, by0: float, bx1: float, by1: float):
         try:
-            vx0, vy0 = self._body_world_to_local(float(bx0), float(by0))
+            ti = None
+            if isinstance(getattr(self, "_boundary_depth_editor", None), dict):
+                ti = int((self._boundary_depth_editor or {}).get("ti", -1))
+            card = self._card_for_test(int(ti)) if ti is not None and ti >= 0 else None
+            if card is not None:
+                rx0, ry0, _rx1, _ry1 = card.boundary_editor_rect((float(bx0), float(by0), float(bx1), float(by1)))
+                vx0, vy0 = self._body_world_to_local(float(rx0), float(ry0))
+            else:
+                vx0, vy0 = self._body_world_to_local(float(bx0), float(by0))
             root_x = int(self.canvas.winfo_rootx() - self.winfo_rootx() + vx0)
             root_y = int(self.canvas.winfo_rooty() - self.winfo_rooty() + vy0)
             entry.place(
@@ -7509,71 +7541,62 @@ class GeoCanvasEditor(tk.Tk):
         if not self.tests:
             return None
 
-        col_w = self._table_col_width()
-
         if w is getattr(self, "hcanvas", None):
             cx, cy = self._event_header_world_xy(x, y)
-            y0 = self.pad_y  # верхний отступ внутри шапки
-
             self._refresh_display_order()
-            for col, ti in enumerate(self.display_cols):
-                x0, _hy0, x1, _hy1 = self._header_bbox(col)
-                if x0 <= cx <= x1 and (y0 <= cy <= y0 + self.hdr_h):
-                    # export checkbox (left)
-                    if (x0 + 6) <= cx <= (x0 + 20) and (y0 + 8) <= cy <= (y0 + 22):
-                        return ("export", ti, None, None)
-                    # icons
-                    if (x1 - 104) <= cx <= (x1 - 80) and y0 <= cy <= (y0 + 24):
-                        return ("lock", ti, None, None)
-                    if (x1 - 78) <= cx <= (x1 - 54) and y0 <= cy <= (y0 + 24):
-                        return ("edit", ti, None, None)
-                    if (x1 - 52) <= cx <= (x1 - 28) and y0 <= cy <= (y0 + 24):
-                        return ("dup", ti, None, None)
-                    if (x1 - 26) <= cx <= (x1 - 2) and y0 <= cy <= (y0 + 24):
-                        return ("trash", ti, None, None)
-                    return ("header", ti, None, None)
+            card = self._card_at_world(cx, cy)
+            if card is not None:
+                target = card.header_control_hit(cx, cy)
+                self._dev_log_card_hit(card=card, world=(cx, cy), target=target)
+                if target is not None:
+                    return (target, card.test_index, None, None)
             return None
 
         # --- таблица (числа) ---
         cx, cy = self._event_body_world_xy(x, y)
+        self._refresh_display_order()
+        card = self._card_at_world(cx, cy)
+        if card is None:
+            self._dev_log_card_hit(card=None, world=(cx, cy), target=None)
+            return None
 
-        for hit in (getattr(self, "_layer_depth_box_hitbox", []) or []):
-            bx0, by0, bx1, by1 = hit.get("bbox", (0, 0, 0, 0))
-            if bx0 <= cx <= bx1 and by0 <= cy <= by1:
-                hit_kind = str(hit.get("kind") or "boundary_depth_edit")
-                if hit_kind == "column_end_depth_edit":
-                    return ("layer_column_end_depth_edit", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
-                return ("layer_boundary_depth_edit", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
+        hit = card.hit_test_hitboxes(cx, cy, getattr(self, "_layer_depth_box_hitbox", []) or [])
+        if hit is not None:
+            hit_kind = str(hit.get("kind") or "boundary_depth_edit")
+            target = ("layer_column_end_depth_edit" if hit_kind == "column_end_depth_edit" else "layer_boundary_depth_edit")
+            self._dev_log_card_hit(card=card, world=(cx, cy), target=target, rect=hit.get("bbox"), extra=hit)
+            return (target, int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
 
-        for hit in (getattr(self, "_layer_handle_hitbox", []) or []):
-            bx0, by0, bx1, by1 = hit.get("bbox", (0, 0, 0, 0))
-            if bx0 <= cx <= bx1 and by0 <= cy <= by1:
-                if hit.get("kind") == "boundary":
-                    return ("layer_boundary", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
-                if hit.get("kind") == "column_end":
-                    return ("layer_column_end", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
-                if hit.get("kind") == "plus":
-                    return ("layer_plus", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
-                if hit.get("kind") == "plus_top":
-                    return ("layer_plus_top", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
-                if hit.get("kind") == "plus_bottom":
-                    return ("layer_plus_bottom", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
-                if hit.get("kind") == "minus":
-                    return ("layer_minus", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
-                if hit.get("kind") == "minus_top":
-                    return ("layer_minus_top", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
-                if hit.get("kind") == "minus_bottom":
-                    return ("layer_minus_bottom", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
+        hit = card.hit_test_hitboxes(cx, cy, getattr(self, "_layer_handle_hitbox", []) or [])
+        if hit is not None:
+            kind_map = {
+                "boundary": "layer_boundary",
+                "column_end": "layer_column_end",
+                "plus": "layer_plus",
+                "plus_top": "layer_plus_top",
+                "plus_bottom": "layer_plus_bottom",
+                "minus": "layer_minus",
+                "minus_top": "layer_minus_top",
+                "minus_bottom": "layer_minus_bottom",
+            }
+            target = kind_map.get(str(hit.get("kind") or ""))
+            self._dev_log_card_hit(card=card, world=(cx, cy), target=target, rect=hit.get("bbox"), extra=hit)
+            if target is not None:
+                return (target, int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
 
-        for hit in (getattr(self, "_layer_label_hitbox", []) or []):
-            bx0, by0, bx1, by1 = hit.get("bbox", (0, 0, 0, 0))
-            if bx0 <= cx <= bx1 and by0 <= cy <= by1:
-                return ("layer_label", int(hit.get("ti", -1)), None, {"depth": float(hit.get("depth", 0.0)), "bbox": (bx0, by0, bx1, by1)})
+        hit = card.hit_test_hitboxes(cx, cy, getattr(self, "_layer_label_hitbox", []) or [])
+        if hit is not None:
+            bx0, by0, bx1, by1 = hit.get("bbox", (0.0, 0.0, 0.0, 0.0))
+            target = ("layer_label", int(hit.get("ti", -1)), None, {"depth": float(hit.get("depth", 0.0)), "bbox": (bx0, by0, bx1, by1)})
+            self._dev_log_card_hit(card=card, world=(cx, cy), target=target[0], rect=hit.get("bbox"), extra=hit)
+            return target
 
-        for hit in (getattr(self, "_layer_plot_hitbox", []) or []):
-            bx0, by0, bx1, by1 = hit.get("bbox", (0, 0, 0, 0))
-            if bx0 <= cx <= bx1 and by0 <= cy <= by1:
-                return ("layer_interval", int(hit.get("ti", -1)), None, float(hit.get("top", 0.0) + (hit.get("bot", 0.0) - hit.get("top", 0.0)) * ((cy - by0) / max(1.0, (by1 - by0)))))
+        hit = card.hit_test_hitboxes(cx, cy, getattr(self, "_layer_plot_hitbox", []) or [])
+        if hit is not None:
+            bx0, by0, bx1, by1 = hit.get("bbox", (0.0, 0.0, 0.0, 0.0))
+            target_depth = float(hit.get("top", 0.0) + (hit.get("bot", 0.0) - hit.get("top", 0.0)) * ((cy - by0) / max(1.0, (by1 - by0))))
+            self._dev_log_card_hit(card=card, world=(cx, cy), target="layer_interval", rect=hit.get("bbox"), extra=hit)
+            return ("layer_interval", int(hit.get("ti", -1)), None, target_depth)
 
         # row/col by coordinates
         if cy < 0:
@@ -7583,34 +7606,23 @@ class GeoCanvasEditor(tk.Tk):
         if row < 0:
             return None
 
-        self._refresh_display_order()
-        for col, ti in enumerate(self.display_cols):
-            x0 = self._column_x0(col)
-            x1 = x0 + col_w
-            if x0 <= cx <= x1:
-                # which field
-                # depth/qc/fs split
-                relx = cx - x0
-                if relx < self.w_depth:
-                    field = "depth"
-                elif relx < (self.w_depth + self.w_val):
-                    field = "qc"
-                elif relx < (self.w_depth + self.w_val * 2):
-                    field = "fs"
-                else:
-                    field = "incl"
-                if bool(getattr(self, "compact_1m", False)):
-                    meter_n = (getattr(self, "_grid_meter_rows", {}) or {}).get(row)
-                    if meter_n is not None:
-                        # В свернутом meter-row интерактивна только depth-ячейка (toggle).
-                        if field == "depth":
-                            return ("meter_row", ti, row, int(meter_n))
-                        return None
-                if field in ("qc", "fs", "incl") and not self._is_real_interval_cell(int(ti), int(row), str(field)):
-                    return None
-                return ("cell", ti, row, field)
-
-        return None
+        y0, y1 = self._row_y_bounds(row)
+        field = card.table_field_hit(cx, float(y0), float(y1))
+        if field is None:
+            if card.graph_hit(cx, cy):
+                self._dev_log_card_hit(card=card, world=(cx, cy), target="graph")
+            return None
+        if bool(getattr(self, "compact_1m", False)):
+            meter_n = (getattr(self, "_grid_meter_rows", {}) or {}).get(row)
+            if meter_n is not None:
+                if field == "depth":
+                    self._dev_log_card_hit(card=card, world=(cx, cy), target="meter_row")
+                    return ("meter_row", card.test_index, row, int(meter_n))
+                return None
+        if field in ("qc", "fs", "incl") and not self._is_real_interval_cell(int(card.test_index), int(row), str(field)):
+            return None
+        self._dev_log_card_hit(card=card, world=(cx, cy), target="cell", rect=card.cell_bbox_world(float(y0), float(y1), field))
+        return ("cell", card.test_index, row, field)
 
 
     def _on_double_click(self, event):
@@ -8210,7 +8222,12 @@ class GeoCanvasEditor(tk.Tk):
         # Автопрокрутка (стрелки/Enter): держим ячейку в видимой зоне
         self._ensure_cell_visible(col, display_row, field)
 
-        bx0, by0, bx1, by1 = self._cell_bbox(col, display_row, field)
+        card = self._card_for_test(int(ti))
+        y0, y1 = self._row_y_bounds(display_row)
+        if card is not None:
+            bx0, by0, bx1, by1 = card.cell_editor_rect(float(y0), float(y1), field)
+        else:
+            bx0, by0, bx1, by1 = self._cell_bbox(col, display_row, field)
         vx0, vy0 = self._body_world_to_local(bx0, by0)
 
         vals = (getattr(t, "qc", []) or []) if field == "qc" else (getattr(t, "fs", []) or [])
@@ -8295,7 +8312,12 @@ class GeoCanvasEditor(tk.Tk):
         # Автопрокрутка (стрелки/Enter)
         self._ensure_cell_visible(col, display_row, "depth")
 
-        bx0, by0, bx1, by1 = self._cell_bbox(col, display_row, "depth")
+        card = self._card_for_test(int(ti))
+        y0, y1 = self._row_y_bounds(display_row)
+        if card is not None:
+            bx0, by0, bx1, by1 = card.depth0_editor_rect(float(y0), float(y1))
+        else:
+            bx0, by0, bx1, by1 = self._cell_bbox(col, display_row, "depth")
         vx0, vy0 = self._body_world_to_local(bx0, by0)
 
         current = str(t.depth[0]).strip()
@@ -9444,7 +9466,11 @@ class GeoCanvasEditor(tk.Tk):
             dlg.update_idletasks()
             x0, y0, x1, y1 = self._header_bbox(max(0, int(ti)))
             try:
-                sx, sy = self._header_world_to_root(float(x0), float(y0))
+                card = self._card_for_test(int(ti))
+                if card is not None:
+                    sx, sy = card.header_anchor_root(dx=float(x0 - card.geometry.card_x0), dy=float(y0))
+                else:
+                    sx, sy = self._header_world_to_root(float(x0), float(y0))
             except Exception:
                 sx, sy = int(self.hcanvas.winfo_rootx()), int(self.hcanvas.winfo_rooty())
             sx += 10
