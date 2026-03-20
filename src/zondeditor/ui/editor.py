@@ -9,7 +9,8 @@
 # - _next_free_ige_ordinal/_next_free_ige_id: L1141–L1340 — генерация ближайшего свободного базового имени ИГЭ.
 # - _add_unassigned_ige_from_ribbon: L1371–L1383 — добавление нового ИГЭ с пустым типом грунта.
 # - _rename_ige_from_ribbon: L1635–L1670 — переименование ИГЭ с проверкой уникальности и обновлением ссылок в слоях.
-# - hatching integration: _draw_layer_hatch/_draw_layers_overlay_for_test — применение встроенной библиотеки hatch-паттернов.
+# - Final ownership model: SoundingsViewport = horizontal host; SoundingCard = full card owner; GeoCanvasEditor = coordinator/orchestrator.
+# - hatching integration: _draw_layer_hatch — применение встроенной библиотеки hatch-паттернов для card-owned body targets.
 # === FILE MAP END ===
 
 from __future__ import annotations
@@ -4959,29 +4960,6 @@ class GeoCanvasEditor(tk.Tk):
                 except Exception:
                     pass
 
-    def _draw_graph_axes_for_test(self, ti: int, x0: float, x1: float, qmax: float, fmax: float):
-        y0 = self.pad_y
-        y1 = y0 + self.hdr_h
-        tag = ("graph_axes", f"graph_axes_{ti}")
-        self.hcanvas.create_rectangle(x0, y0, x1, y1, fill="#fbfdff", outline=GUI_GRID, tags=tag)
-        pad = 8
-        xa0 = x0 + pad
-        xa1 = x1 - pad
-        qc_axis_y = y0 + 24
-        fs_axis_y = y0 + 46
-        self.hcanvas.create_line(xa0, qc_axis_y, xa1, qc_axis_y, fill=GRAPH_QC_GREEN, width=1, tags=tag)
-        self.hcanvas.create_line(xa0, fs_axis_y, xa1, fs_axis_y, fill=GRAPH_FS_BLUE, width=1, tags=tag)
-        for i in range(0, 6):
-            xx = xa0 + ((xa1 - xa0) * i / 5.0)
-            self.hcanvas.create_line(xx, qc_axis_y - 3, xx, qc_axis_y + 3, fill=GRAPH_QC_GREEN, width=1, tags=tag)
-            self.hcanvas.create_line(xx, fs_axis_y - 3, xx, fs_axis_y + 3, fill=GRAPH_FS_BLUE, width=1, tags=tag)
-        self.hcanvas.create_text(xa0, qc_axis_y - 10, anchor="w", text="qc, МПа", fill=GRAPH_QC_GREEN, font=("Segoe UI", 8), tags=tag)
-        self.hcanvas.create_text(xa0, fs_axis_y - 10, anchor="w", text="fs, кПа", fill=GRAPH_FS_BLUE, font=("Segoe UI", 8), tags=tag)
-        q_txt = f"0–{int(float(qmax))}"
-        self.hcanvas.create_text(xa1, qc_axis_y - 10, anchor="e", text=q_txt, fill=GRAPH_QC_GREEN, font=("Segoe UI", 7), tags=tag)
-        f_txt = f"0–{int(float(fmax))}"
-        self.hcanvas.create_text(xa1, fs_axis_y - 10, anchor="e", text=f_txt, fill=GRAPH_FS_BLUE, font=("Segoe UI", 7), tags=tag)
-
     def _test_last_data_index(self, t) -> int | None:
         qarr = getattr(t, "qc", []) or []
         farr = getattr(t, "fs", []) or []
@@ -5440,167 +5418,6 @@ class GeoCanvasEditor(tk.Tk):
             scale_info={"usage": HATCH_USAGE_EDITOR_EXPANDED, "layer_height_px": float(y1 - y0), "logical_rect": tuple(logical_rect) if logical_rect is not None else (float(x0), float(y0), float(x1), float(y1))},
         )
 
-    def _draw_layers_overlay_for_test(self, ti: int, plot_rect, depth_to_y, tags):
-        t = self.tests[ti]
-        column = self._ensure_test_experience_column(t)
-        if plot_rect is None or len(plot_rect) != 4:
-            self._debug_log(f"layers_overlay: invalid plot_rect for ti={ti}: {plot_rect}")
-            return
-        x0, x1, y0, y1 = [float(v) for v in plot_rect]
-        if x1 <= x0 or y1 <= y0:
-            self._debug_log(f"layers_overlay: empty rect for ti={ti}: {plot_rect}")
-            return
-        if not callable(depth_to_y):
-            self._debug_log(f"layers_overlay: invalid depth_to_y for ti={ti}")
-            return
-        label_spans = []
-        for interval_index, lyr in enumerate(column.intervals):
-            lt = max(float(column.column_depth_start), float(lyr.from_depth))
-            lb = min(float(column.column_depth_end), float(lyr.to_depth))
-            if lb - lt <= 1e-9:
-                continue
-            ly0 = depth_to_y(lt)
-            ly1 = depth_to_y(lb)
-            if ly0 is None or ly1 is None:
-                self._debug_log(f"layers_overlay: depth_to_y none ti={ti}, ige={self._column_interval_ige_id(lyr)}, top={lt}, bot={lb}")
-                continue
-            ty0 = max(y0, min(ly0, ly1))
-            ty1 = min(y1, max(ly0, ly1))
-            if ty1 <= ty0:
-                continue
-            ige_id = self._column_interval_ige_id(lyr)
-            ent = self._ensure_ige_entry(ige_id)
-            soil_type = str(ent.get("soil_type") or SoilType.SANDY_LOAM.value)
-            fill_color = self._geology_layer_fill_color(soil_type)
-            self.canvas.create_rectangle(x0, ty0, x1, ty1, fill=fill_color, outline="", tags=tags)
-            self._draw_layer_hatch(x0, ty0, x1, ty1, soil_type=soil_type, tags=tags, logical_rect=(x0, y0, x1, y1))
-            self._layer_plot_hitbox.append({"kind": "interval", "ti": ti, "interval_index": int(interval_index), "ige_id": ige_id, "top": float(lt), "bot": float(lb), "bbox": (x0, ty0, x1, ty1)})
-            label_spans.append({
-                "x0": x0,
-                "x1": x1,
-                "y0": ty0,
-                "y1": ty1,
-                "ige": str(ige_id),
-                "ti": int(ti),
-                "depth": (float(lt) + float(lb)) * 0.5,
-            })
-        return label_spans
-
-    def _draw_layer_label_chip(self, span: dict, tags):
-        x0 = float(span.get("x0", 0.0))
-        x1 = float(span.get("x1", 0.0))
-        y0 = float(span.get("y0", 0.0))
-        y1 = float(span.get("y1", 0.0))
-        text = str(span.get("ige", "") or "")
-        ti_raw = span.get("ti", -1)
-        ti = -1 if ti_raw is None else int(ti_raw)
-        depth = float(span.get("depth", 0.0) or 0.0)
-        if not text or x1 <= x0 or y1 <= y0:
-            return
-        available_h = y1 - y0
-        if available_h < 8.0:
-            return
-        cx = (x0 + x1) * 0.5
-        cy = (y0 + y1) * 0.5
-        max_w = max(8.0, (x1 - x0) - 8.0)
-        max_h = max(8.0, available_h - 2.0)
-        for font_size in (8, 7, 6):
-            font = ("Segoe UI", font_size, "bold")
-            f = tkfont.Font(font=font)
-            tw = float(f.measure(text))
-            th = float(f.metrics("linespace"))
-            pad_x = 4.0
-            pad_y = 2.0
-            chip_w = tw + pad_x * 2.0
-            chip_h = th + pad_y * 2.0
-            if chip_w <= max_w and chip_h <= max_h:
-                self.canvas.create_rectangle(
-                    cx - chip_w * 0.5,
-                    cy - chip_h * 0.5,
-                    cx + chip_w * 0.5,
-                    cy + chip_h * 0.5,
-                    fill=LAYER_UI_COLORS["fill"],
-                    outline=LAYER_UI_COLORS["outline"],
-                    width=1,
-                    activefill=LAYER_UI_COLORS["fill_active"],
-                    activeoutline=LAYER_UI_COLORS["outline_active"],
-                    tags=tags,
-                )
-                self.canvas.create_text(
-                    cx,
-                    cy,
-                    text=text,
-                    fill=LAYER_UI_COLORS["text"],
-                    activefill=LAYER_UI_COLORS["text"],
-                    font=font,
-                    tags=tags,
-                )
-                try:
-                    self._layer_label_hitbox.append({
-                        "ti": int(ti),
-                        "depth": float(depth),
-                        "bbox": (
-                            float(cx - chip_w * 0.5 - 3.0),
-                            float(cy - chip_h * 0.5 - 2.0),
-                            float(cx + chip_w * 0.5 + 3.0),
-                            float(cy + chip_h * 0.5 + 2.0),
-                        ),
-                    })
-                except Exception:
-                    pass
-                return
-
-    def _draw_graph_lines_for_test(self, ti: int, rect, y_points, qc_mpa, fs_kpa, qmax: float, fmax: float):
-        x0, x1, y0, y1 = rect
-        tag_qc = ("graph_qc", f"graph_qc_{ti}")
-        tag_fs = ("graph_fs", f"graph_fs_{ti}")
-        tag_nodata = ("graph_nodata", f"graph_nodata_{ti}")
-
-        if not y_points:
-            self.canvas.create_text((x0 + x1) / 2, (y0 + y1) / 2, text="нет данных", fill="#666", font=("Segoe UI", 8), tags=tag_nodata)
-            return
-        qmax = max(float(qmax), 0.1)
-        fmax = max(float(fmax), 1.0)
-
-        pad = 8
-        xa0 = x0 + pad
-        xa1 = x1 - pad
-
-        def _sx(v, vmax):
-            return xa0 + (max(0.0, min(v, vmax)) / vmax) * (xa1 - xa0)
-
-        qc_pts = []
-        fs_pts = []
-        for yy, qv, fv in zip(y_points, qc_mpa, fs_kpa):
-            if yy < y0 - 1e-6 or yy > y1 + 1e-6:
-                continue
-            qc_pts.extend([_sx(qv, qmax), yy])
-            fs_pts.extend([_sx(fv, fmax), yy])
-
-        if len(qc_pts) >= 4:
-            self.canvas.create_line(*qc_pts, fill=GRAPH_QC_GREEN, width=2, smooth=False, tags=tag_qc)
-        if len(fs_pts) >= 4:
-            self.canvas.create_line(*fs_pts, fill=GRAPH_FS_BLUE, width=2, smooth=False, tags=tag_fs)
-
-    def _draw_groundwater_line_for_test(self, ti: int, rect):
-        settings = dict(getattr(self, "cpt_calc_settings", {}) or {})
-        gwl = settings.get("groundwater_level")
-        if gwl in (None, ""):
-            return
-        try:
-            gwl_val = float(str(gwl).replace(",", "."))
-        except Exception:
-            return
-        y = self._depth_to_canvas_y(gwl_val)
-        if y is None:
-            return
-        x0, x1, y0, y1 = rect
-        if y < y0 or y > y1:
-            return
-        tags = ("graph_axes", f"graph_gwl_{ti}")
-        self.canvas.create_line(x0 + 2, y, x1 - 2, y, fill="#2f6fff", width=2, dash=(6, 3), tags=tags)
-        self.canvas.create_text(x1 - 4, y - 2, anchor="se", text=f"УГВ {gwl_val:.2f} м", fill="#2f6fff", font=("Segoe UI", 8, "bold"), tags=tags)
-
     def _redraw_graphs_now(self):
         self._graph_redraw_after_id = None
         self._clear_graph_layers()
@@ -5621,7 +5438,7 @@ class GeoCanvasEditor(tk.Tk):
             card = self._card_for_test(int(ti))
             if card is None:
                 continue
-            body_target = getattr(card, "body_canvas", None) or self.canvas
+            body_target = getattr(card, "body_canvas", None) or self.canvas  # legacy fallback only if a card target is unavailable
             rect = self._graph_rect_for_test(ti)
             if not rect:
                 continue
@@ -5792,194 +5609,6 @@ class GeoCanvasEditor(tk.Tk):
                 dbg = f"LAYERS:{len(t_layers)} EDIT:True TEST:{getattr(t, 'tid', ti)}"
                 dx0, dy0 = (card.body_world_to_local(x0, y0) if body_target is getattr(card, "body_canvas", None) else (x0, y0))
                 body_target.create_text(dx0 + 4, dy0 + 4, anchor="nw", text=dbg, fill="#8a3d00", font=("Segoe UI", 8, "bold"), tags=("layers_overlay", f"layers_overlay_{ti}"))
-
-    def _draw_layer_handles_for_test(self, ti: int, rect):
-        if self._is_test_locked(ti):
-            return
-        t = self.tests[ti]
-        card = self._card_for_test(int(ti))
-        column = self._ensure_test_experience_column(t)
-        x0, x1, _y0, _y1 = rect
-        # Ручка границы: центр по правому краю колонки слоёв, слегка внутри.
-        handle_x = x1 - 2
-        plus_x = x0 + 10
-
-        def _draw_plus(tag: str, y_pos: float, boundary: int, kind: str, *, active: bool = True, x_pos: float | None = None):
-            px = float(plus_x if x_pos is None else x_pos)
-            box_fill = LAYER_UI_COLORS["fill"] if active else LAYER_UI_COLORS["fill"]
-            box_outline = LAYER_UI_COLORS["outline"] if active else LAYER_UI_COLORS["outline"]
-            text_fill = LAYER_UI_COLORS["text"] if active else LAYER_UI_COLORS["text_muted"]
-            self.canvas.create_rectangle(
-                px - 6,
-                y_pos - 6,
-                px + 6,
-                y_pos + 6,
-                fill=box_fill,
-                outline=box_outline,
-                width=1,
-                activefill=(LAYER_UI_COLORS["fill_active"] if active else box_fill),
-                activeoutline=(LAYER_UI_COLORS["outline_active"] if active else box_outline),
-                tags=("layer_handles", "layer_plus_box", tag),
-            )
-            self.canvas.create_text(
-                px,
-                y_pos,
-                text="+",
-                fill=text_fill,
-                activefill=text_fill,
-                font=("Segoe UI", 9, "bold"),
-                tags=("layer_handles", "layer_plus", tag),
-            )
-            if active:
-                hit = (card.make_hitbox(kind=kind, boundary=int(boundary), bbox=(px - 10, y_pos - 10, px + 10, y_pos + 10), extra={"tag": tag}) if card is not None else {"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (px - 10, y_pos - 10, px + 10, y_pos + 10)})
-                self._layer_handle_hitbox.append(hit)
-
-        def _draw_minus(tag: str, y_pos: float, boundary: int, kind: str, *, active: bool = True, x_pos: float | None = None):
-            px = float(plus_x if x_pos is None else x_pos)
-            box_fill = LAYER_UI_COLORS["fill"] if active else LAYER_UI_COLORS["fill"]
-            box_outline = LAYER_UI_COLORS["outline"] if active else LAYER_UI_COLORS["outline"]
-            text_fill = LAYER_UI_COLORS["text"] if active else LAYER_UI_COLORS["text_muted"]
-            self.canvas.create_rectangle(
-                px - 6,
-                y_pos - 6,
-                px + 6,
-                y_pos + 6,
-                fill=box_fill,
-                outline=box_outline,
-                width=1,
-                activefill=(LAYER_UI_COLORS["fill_active"] if active else box_fill),
-                activeoutline=(LAYER_UI_COLORS["outline_active"] if active else box_outline),
-                tags=("layer_handles", "layer_minus_box", tag),
-            )
-            self.canvas.create_text(
-                px,
-                y_pos,
-                text="−",
-                fill=text_fill,
-                activefill=text_fill,
-                font=("Segoe UI", 9, "bold"),
-                tags=("layer_handles", "layer_minus", tag),
-            )
-            if active:
-                hit = (card.make_hitbox(kind=kind, boundary=int(boundary), bbox=(px - 10, y_pos - 10, px + 10, y_pos + 10), extra={"tag": tag}) if card is not None else {"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (px - 10, y_pos - 10, px + 10, y_pos + 10)})
-                self._layer_handle_hitbox.append(hit)
-
-        if column.intervals:
-            top_y = self._depth_to_canvas_y(float(column.intervals[0].from_depth))
-            bot_y = self._depth_to_canvas_y(float(column.intervals[-1].to_depth))
-            if top_y is not None:
-                _draw_plus(f"layer_plus_top_{ti}", top_y + 6, 0, "plus_top", active=self._can_insert_layer_from_top(int(ti)))
-            if bot_y is not None:
-                end_tag = f"layer_end_handle_{ti}"
-                self.canvas.create_line(
-                    x0,
-                    bot_y,
-                    x1,
-                    bot_y,
-                    fill=LAYER_UI_COLORS["line"],
-                    width=1,
-                    dash=(3, 2),
-                    tags=("layer_handles", "layer_boundary_line"),
-                )
-                self.canvas.create_rectangle(
-                    handle_x - 5,
-                    bot_y - 5,
-                    handle_x + 5,
-                    bot_y + 5,
-                    fill=LAYER_UI_COLORS["fill"],
-                    outline=LAYER_UI_COLORS["outline"],
-                    width=1,
-                    activefill=LAYER_UI_COLORS["fill_active"],
-                    activeoutline=LAYER_UI_COLORS["outline_active"],
-                    activewidth=2,
-                    tags=("layer_handles", "layer_handle", end_tag),
-                )
-                bx0 = handle_x - 52
-                bx1 = handle_x - 12
-                self.canvas.create_rectangle(
-                    bx0,
-                    bot_y - 8,
-                    bx1,
-                    bot_y + 8,
-                    fill=LAYER_UI_COLORS["fill"],
-                    outline=LAYER_UI_COLORS["outline"],
-                    width=1,
-                    activefill=LAYER_UI_COLORS["fill_active"],
-                    activeoutline=LAYER_UI_COLORS["outline_active"],
-                    tags=("layer_handles", "layer_depth_box", end_tag),
-                )
-                self.canvas.create_text(
-                    (bx0 + bx1) / 2,
-                    bot_y,
-                    text=f"{float(column.column_depth_end):.2f}",
-                    fill=LAYER_UI_COLORS["text"],
-                    activefill=LAYER_UI_COLORS["text"],
-                    font=("Segoe UI", 7),
-                    tags=("layer_handles", "layer_depth_label", end_tag),
-                )
-                self._layer_handle_hitbox.append(card.make_hitbox(kind="column_end", boundary=int(len(column.intervals)), bbox=(handle_x - 6, bot_y - 6, handle_x + 6, bot_y + 6), extra={"tag": end_tag}) if card is not None else {"kind": "column_end", "ti": ti, "boundary": int(len(column.intervals)), "tag": end_tag, "bbox": (handle_x - 6, bot_y - 6, handle_x + 6, bot_y + 6)})
-                self._layer_depth_box_hitbox.append(card.make_hitbox(kind="column_end_depth_edit", boundary=int(len(column.intervals)), bbox=(bx0, bot_y - 9, bx1, bot_y + 9)) if card is not None else {"kind": "column_end_depth_edit", "ti": ti, "boundary": int(len(column.intervals)), "bbox": (bx0, bot_y - 9, bx1, bot_y + 9)})
-                _draw_plus(f"layer_plus_bottom_{ti}", bot_y, len(column.intervals), "plus_bottom", active=self._can_insert_layer_from_bottom(int(ti)))
-                _draw_minus(f"layer_minus_bottom_{ti}", bot_y, len(column.intervals) - 1, "minus_bottom", active=(len(column.intervals) > 1), x_pos=(plus_x + 14))
-
-        for bi in range(1, len(column.intervals)):
-            boundary = column.intervals[bi].from_depth
-            y = self._depth_to_canvas_y(boundary)
-            if y is None:
-                continue
-            h_tag = f"layer_handle_{ti}_{bi}"
-            p_tag = f"layer_plus_{ti}_{bi}"
-            m_tag = f"layer_minus_{ti}_{bi}"
-            self.canvas.create_line(
-                x0,
-                y,
-                x1,
-                y,
-                fill=LAYER_UI_COLORS["line"],
-                width=1,
-                dash=(3, 2),
-                tags=("layer_handles", "layer_boundary_line"),
-            )
-            self.canvas.create_rectangle(
-                handle_x - 5,
-                y - 5,
-                handle_x + 5,
-                y + 5,
-                fill=LAYER_UI_COLORS["fill"],
-                outline=LAYER_UI_COLORS["outline"],
-                width=1,
-                activefill=LAYER_UI_COLORS["fill_active"],
-                activeoutline=LAYER_UI_COLORS["outline_active"],
-                activewidth=2,
-                tags=("layer_handles", "layer_handle", h_tag),
-            )
-            bx0 = handle_x - 52
-            bx1 = handle_x - 12
-            self.canvas.create_rectangle(
-                bx0,
-                y - 8,
-                bx1,
-                y + 8,
-                fill=LAYER_UI_COLORS["fill"],
-                outline=LAYER_UI_COLORS["outline"],
-                width=1,
-                activefill=LAYER_UI_COLORS["fill_active"],
-                activeoutline=LAYER_UI_COLORS["outline_active"],
-                tags=("layer_handles", "layer_depth_box", h_tag),
-            )
-            self.canvas.create_text(
-                (bx0 + bx1) / 2,
-                y,
-                text=f"{float(boundary):.2f}",
-                fill=LAYER_UI_COLORS["text"],
-                activefill=LAYER_UI_COLORS["text"],
-                font=("Segoe UI", 7),
-                tags=("layer_handles", "layer_depth_label", h_tag),
-            )
-            self._layer_handle_hitbox.append(card.make_hitbox(kind="boundary", boundary=bi, bbox=(handle_x - 6, y - 6, handle_x + 6, y + 6), extra={"tag": h_tag}) if card is not None else {"kind": "boundary", "ti": ti, "boundary": bi, "tag": h_tag, "bbox": (handle_x - 6, y - 6, handle_x + 6, y + 6)})
-            self._layer_depth_box_hitbox.append(card.make_hitbox(kind="boundary_depth_edit", boundary=bi, bbox=(bx0, y - 9, bx1, y + 9)) if card is not None else {"kind": "boundary_depth_edit", "ti": ti, "boundary": bi, "bbox": (bx0, y - 9, bx1, y + 9)})
-            _draw_plus(p_tag, y, bi, "plus", active=self._can_split_layer_index(int(ti), int(bi)))
-            _draw_minus(m_tag, y + 14, bi, "minus", active=(len(column.intervals) > 1))
 
     def _draw_graph_layers(self):
         self._redraw_graphs_now()
@@ -7460,7 +7089,7 @@ class GeoCanvasEditor(tk.Tk):
             dt_line = re.sub(r"(\d{2}:\d{2}):\d{2}\b", r"\1", dt_line)
             if card is not None:
                 card.render_header(
-                    getattr(card, "header_canvas", None) or self.hcanvas,
+                    getattr(card, "header_canvas", None) or self.hcanvas,  # legacy fallback only if a card target is unavailable
                     title=f"Опыт {t.tid}",
                     datetime_text=dt_line,
                     header_fill=hdr_fill,
@@ -7646,7 +7275,7 @@ class GeoCanvasEditor(tk.Tk):
                     if not ex_on:
                         color = "#8a8a8a" if field != "depth" else "#9a9a9a"
                     if card is not None:
-                        card.render_body_cell(getattr(card, "body_canvas", None) or self.canvas, row_y0=float(by0), row_y1=float(by1), field=field, text=txt, fill=fill, text_color=color)
+                        card.render_body_cell(getattr(card, "body_canvas", None) or self.canvas, row_y0=float(by0), row_y1=float(by1), field=field, text=txt, fill=fill, text_color=color)  # legacy fallback only
                     else:
                         self.canvas.create_rectangle(bx0, by0, bx1, by1, fill=fill, outline=GUI_GRID)
                         self.canvas.create_text(bx1 - 4, (by0 + by1) / 2, text=txt, anchor="e", fill=color, font=("Segoe UI", 9))
