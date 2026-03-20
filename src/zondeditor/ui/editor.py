@@ -271,6 +271,7 @@ class GeoCanvasEditor(tk.Tk):
         self._header_sync_pending = False
         self._header_sync_mode = str(os.getenv("ZOND_HEADER_SYNC_MODE", "legacy") or "legacy").strip().lower()
         self._header_sync_debug = str(os.getenv("ZOND_DEBUG_HEADER_SYNC", "") or "").strip().lower() in {"1", "true", "yes", "on"}
+        self._viewport_selfcheck_debug = str(os.getenv("ZOND_VIEWPORT_SELFCHECK", "") or "").strip().lower() in {"1", "true", "yes", "on"}
         self._header_sync_wheel_seq = 0
         self._header_sync_source_counts: dict[str, int] = {}
         self._active_test_idx: int | None = None
@@ -2156,6 +2157,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.soundings_viewport.xview(*args)
             except Exception:
                 return
+            self._dev_log_viewport_state("xview_proxy")
 
         def _on_xscroll_command(first, last):
             try:
@@ -2163,6 +2165,7 @@ class GeoCanvasEditor(tk.Tk):
                     self.hscroll.set(first, last)
             except Exception:
                 pass
+            self._dev_log_viewport_state("xscroll_command")
 
         self._xview_proxy = _xview_proxy
         self._on_xscroll_command = _on_xscroll_command
@@ -4531,6 +4534,90 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             return (0.0, 1.0)
 
+    def _body_view_origin(self) -> tuple[float, float]:
+        try:
+            vx = float(self._viewport_x0())
+        except Exception:
+            vx = 0.0
+        try:
+            vy = float(self.canvas.canvasy(0))
+        except Exception:
+            vy = 0.0
+        return vx, vy
+
+    def _body_world_to_local(self, x: float, y: float) -> tuple[float, float]:
+        vx, vy = self._body_view_origin()
+        return float(x) - vx, float(y) - vy
+
+    def _body_world_to_root(self, x: float, y: float) -> tuple[int, int]:
+        lx, ly = self._body_world_to_local(x, y)
+        return int(self.canvas.winfo_rootx() + lx), int(self.canvas.winfo_rooty() + ly)
+
+    def _header_world_to_root(self, x: float, y: float) -> tuple[int, int]:
+        try:
+            vx = float(self._viewport_x0())
+        except Exception:
+            vx = 0.0
+        lx = float(x) - vx
+        return int(self.hcanvas.winfo_rootx() + lx), int(self.hcanvas.winfo_rooty() + float(y))
+
+    def _event_body_world_xy(self, x: float, y: float) -> tuple[float, float]:
+        vx, vy = self._body_view_origin()
+        return float(x) + vx, float(y) + vy
+
+    def _event_header_world_xy(self, x: float, y: float) -> tuple[float, float]:
+        try:
+            vx = float(self._viewport_x0())
+        except Exception:
+            vx = 0.0
+        return float(x) + vx, float(y)
+
+    def _viewport_debug_snapshot(self) -> dict[str, object]:
+        view = self._viewport_xview()
+        visible_x0 = self._viewport_x0()
+        try:
+            visible_w = float(self.soundings_viewport.canvas.winfo_width() or 0)
+        except Exception:
+            visible_w = 0.0
+        visible = (visible_x0, visible_x0 + max(0.0, visible_w))
+        first_card = None
+        last_card = None
+        try:
+            if getattr(self, "display_cols", []):
+                first_card = self._header_bbox(0)
+                last_card = self._header_bbox(len(self.display_cols) - 1)
+        except Exception:
+            pass
+        editor_bbox = None
+        try:
+            ed = getattr(self, "_editing", None)
+            ew = ed[3] if ed and len(ed) >= 4 else None
+            if ew is not None and hasattr(ew, "place_info"):
+                info = ew.place_info()
+                editor_bbox = {
+                    "x": float(info.get("x", 0) or 0),
+                    "y": float(info.get("y", 0) or 0),
+                    "width": float(info.get("width", 0) or 0),
+                    "height": float(info.get("height", 0) or 0),
+                }
+        except Exception:
+            editor_bbox = None
+        return {
+            "x_fraction": view,
+            "visible_x": visible,
+            "first_card": first_card,
+            "last_card": last_card,
+            "active_inline_editor": editor_bbox,
+        }
+
+    def _dev_log_viewport_state(self, source: str):
+        if not bool(getattr(self, "_viewport_selfcheck_debug", False)):
+            return
+        try:
+            print(f"[VIEWPORT] source={source} snapshot={self._viewport_debug_snapshot()}")
+        except Exception:
+            pass
+
     def _graph_rect_for_test(self, ti: int, r: int | None = None):
         try:
             col = int(self.display_cols.index(ti))
@@ -4588,7 +4675,7 @@ class GeoCanvasEditor(tk.Tk):
         w_total = max(1, int(w))
 
         try:
-            vw = int(self.canvas.winfo_width() or 1)
+            vw = int(self.soundings_viewport.canvas.winfo_width() or 1)
         except Exception:
             vw = 1
         need_h = (w_total > max(vw, 1))
@@ -4666,6 +4753,7 @@ class GeoCanvasEditor(tk.Tk):
                 self._hscroll_hidden = False
 
         self._sync_header_body_after_scroll()
+        self._dev_log_viewport_state("update_scrollregion")
 
     def _sorted_display_indices(self) -> list[int]:
         """Return display indices for tests using current sort mode."""
@@ -5818,8 +5906,7 @@ class GeoCanvasEditor(tk.Tk):
             # Fallback: если hit-test попал в interval рядом с чипом ИГЭ,
             # открываем picker как для label-клика.
             try:
-                cx = float(self.canvas.canvasx(event.x))
-                cy = float(self.canvas.canvasy(event.y))
+                cx, cy = self._event_body_world_xy(event.x, event.y)
                 label_hit = None
                 for hit in (getattr(self, "_layer_label_hitbox", []) or []):
                     if int(hit.get("ti", -1)) != int(ti):
@@ -6041,12 +6128,7 @@ class GeoCanvasEditor(tk.Tk):
         if current_label in values:
             cb.set(current_label)
         def _canvas_to_root(xc: float, yc: float) -> tuple[int, int]:
-            # Перевод canvas-координат (с учетом текущего x/y scroll) в root-screen координаты.
-            vx = float(self.canvas.canvasx(0.0))
-            vy = float(self.canvas.canvasy(0.0))
-            rx = int(self.canvas.winfo_rootx() + (float(xc) - vx))
-            ry = int(self.canvas.winfo_rooty() + (float(yc) - vy))
-            return rx, ry
+            return self._body_world_to_root(float(xc), float(yc))
 
         gx0 = int(event.x_root)
         gy0 = int(event.y_root)
@@ -6471,8 +6553,7 @@ class GeoCanvasEditor(tk.Tk):
 
     def _place_boundary_depth_editor(self, entry, bx0: float, by0: float, bx1: float, by1: float):
         try:
-            vx0 = float(bx0) - float(self._viewport_x0())
-            vy0 = float(by0) - float(self.canvas.canvasy(0))
+            vx0, vy0 = self._body_world_to_local(float(bx0), float(by0))
             root_x = int(self.canvas.winfo_rootx() - self.winfo_rootx() + vx0)
             root_y = int(self.canvas.winfo_rooty() - self.winfo_rooty() + vy0)
             entry.place(
@@ -7401,8 +7482,7 @@ class GeoCanvasEditor(tk.Tk):
         col_w = self._table_col_width()
 
         if w is getattr(self, "hcanvas", None):
-            cx = self.hcanvas.canvasx(x)
-            cy = self.hcanvas.canvasy(y)
+            cx, cy = self._event_header_world_xy(x, y)
             y0 = self.pad_y  # верхний отступ внутри шапки
 
             self._refresh_display_order()
@@ -7425,8 +7505,7 @@ class GeoCanvasEditor(tk.Tk):
             return None
 
         # --- таблица (числа) ---
-        cx = self.canvas.canvasx(x)
-        cy = self.canvas.canvasy(y)
+        cx, cy = self._event_body_world_xy(x, y)
 
         for hit in (getattr(self, "_layer_depth_box_hitbox", []) or []):
             bx0, by0, bx1, by1 = hit.get("bbox", (0, 0, 0, 0))
@@ -8102,8 +8181,7 @@ class GeoCanvasEditor(tk.Tk):
         self._ensure_cell_visible(col, display_row, field)
 
         bx0, by0, bx1, by1 = self._cell_bbox(col, display_row, field)
-        vx0 = bx0 - self._viewport_x0()
-        vy0 = by0 - self.canvas.canvasy(0)
+        vx0, vy0 = self._body_world_to_local(bx0, by0)
 
         vals = (getattr(t, "qc", []) or []) if field == "qc" else (getattr(t, "fs", []) or [])
         current_raw = vals[row] if 0 <= row < len(vals) else ""
@@ -8188,8 +8266,7 @@ class GeoCanvasEditor(tk.Tk):
         self._ensure_cell_visible(col, display_row, "depth")
 
         bx0, by0, bx1, by1 = self._cell_bbox(col, display_row, "depth")
-        vx0 = bx0 - self._viewport_x0()
-        vy0 = by0 - self.canvas.canvasy(0)
+        vx0, vy0 = self._body_world_to_local(bx0, by0)
 
         current = str(t.depth[0]).strip()
         e = tk.Entry(self.canvas, validate="key", validatecommand=(self.register(_validate_depth_0_4_key), "%P"))
@@ -8742,7 +8819,7 @@ class GeoCanvasEditor(tk.Tk):
 
         # ограничим по правому краю
         try:
-            view_w = float(self.canvas.winfo_width())
+            view_w = float(self.soundings_viewport.canvas.winfo_width())
         except Exception:
             view_w = 0.0
 
@@ -9337,11 +9414,11 @@ class GeoCanvasEditor(tk.Tk):
             dlg.update_idletasks()
             x0, y0, x1, y1 = self._header_bbox(max(0, int(ti)))
             try:
-                x_view = float(self._viewport_x0())
+                sx, sy = self._header_world_to_root(float(x0), float(y0))
             except Exception:
-                x_view = 0.0
-            sx = self.hcanvas.winfo_rootx() + int(x0 - x_view) + 10
-            sy = self.hcanvas.winfo_rooty() + int(y0) + 10
+                sx, sy = int(self.hcanvas.winfo_rootx()), int(self.hcanvas.winfo_rooty())
+            sx += 10
+            sy += 10
             dlg.geometry(f"+{sx}+{sy}")
         except Exception:
             # fallback: центрируем по основному окну
