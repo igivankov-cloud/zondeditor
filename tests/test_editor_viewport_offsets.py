@@ -270,7 +270,7 @@ def test_mousewheel_shift_routes_only_to_horizontal_handler():
     assert calls == [("begin", "mousewheel_y"), ("x", 120)]
 
 
-def test_independent_vertical_scroll_per_card_and_preserve_restore_active_y():
+def test_shared_vertical_scroll_is_preserved_across_cards_on_rebuild():
     editor = _make_editor()
     editor.display_cols = [0, 1]
     editor.tests = [object(), object()]
@@ -286,15 +286,14 @@ def test_independent_vertical_scroll_per_card_and_preserve_restore_active_y():
 
     card0 = editor._card_for_test(0)
     card1 = editor._card_for_test(1)
-    card0.body_yview_moveto(0.25)
-    card1.body_yview_moveto(0.5)
+    editor._apply_shared_body_yview_fraction(0.25)
     editor._active_test_idx = 1
 
     editor._rebuild_sounding_cards()
 
     assert round(editor._card_for_test(0).body_yview()[0], 2) == 0.25
-    assert round(editor._card_for_test(1).body_yview()[0], 2) == 0.5
-    assert round(editor._viewport_debug_snapshot()["active_card_body_yview"][0], 2) == 0.5
+    assert round(editor._card_for_test(1).body_yview()[0], 2) == 0.25
+    assert round(editor._viewport_debug_snapshot()["active_card_body_yview"][0], 2) == 0.25
 
 
 def test_editor_placement_and_hit_testing_after_local_card_scroll():
@@ -556,7 +555,7 @@ def test_mousewheel_uses_hovered_body_canvas_not_active_card():
     result = editor._on_mousewheel(SimpleNamespace(delta=-120, state=0, widget=card1.body_canvas))
 
     assert result == "break"
-    assert round(card0.body_yview()[0], 2) == 0.0
+    assert round(card0.body_yview()[0], 2) == round(card1.body_yview()[0], 2)
     assert round(card1.body_yview()[0], 2) > 0.0
 
 
@@ -581,3 +580,95 @@ def test_card_body_scrollregion_tracks_content_height_after_rebuild():
     card.set_body_scroll_context(view_height=120.0, content_height=400.0)
 
     assert card.dev_selfcheck_snapshot()["body_yview"] == (0.0, 0.3)
+
+
+
+def test_redraw_graphs_now_does_not_crash_when_graphs_and_layers_are_disabled():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(qc=["10"], fs=["5"], depth=["0.00"], tid=1)]
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.show_graphs = False
+    editor.show_geology_column = False
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 320), xview_fractions=lambda: (0.0, 1.0))
+    editor._grid_units = [("row", 0)]
+    editor._grid_row_maps = {0: {0: 0}}
+    editor._row_y_bounds = lambda row: (0.0, 22.0)
+    editor._calc_layer_params_for_all_tests = lambda: None
+    editor._recompute_graph_scales = lambda: setattr(editor, "graph_qc_max_mpa", 30.0) or setattr(editor, "graph_fs_max_kpa", 500.0)
+    editor._calc_qc_fs_from_del = lambda q, f: (float(q), float(f))
+    editor._depth_to_canvas_y = lambda d: float(d) * 100.0
+    editor._refresh_display_order = lambda: None
+    editor._graph_rect_for_test = lambda ti: (226.0, 376.0, 0.0, 100.0)
+    editor.canvas = SimpleNamespace(delete=lambda *args, **kwargs: None)
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas()
+
+    editor._redraw_graphs_now()
+
+    assert editor._layer_plot_hitbox == []
+    assert editor._layer_handle_hitbox == []
+    assert editor._layer_depth_box_hitbox == []
+
+
+
+def test_vertical_wheel_syncs_yview_across_all_cards():
+    editor = _make_editor()
+    editor.display_cols = [0, 1]
+    editor.tests = [object(), object()]
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 320), xview_fractions=lambda: (0.0, 1.0))
+    editor._rebuild_sounding_cards()
+    card0 = editor._card_for_test(0)
+    card1 = editor._card_for_test(1)
+    card0.body_canvas = _DummyBodyCanvas()
+    card1.body_canvas = _DummyBodyCanvas()
+    card0.set_body_scroll_context(view_height=100.0, content_height=400.0)
+    card1.set_body_scroll_context(view_height=100.0, content_height=400.0)
+
+    result = editor._on_mousewheel(SimpleNamespace(delta=-120, state=0, widget=card1.body_canvas))
+
+    assert result == "break"
+    assert round(card0.body_yview()[0], 2) == round(card1.body_yview()[0], 2)
+    assert round(card1.body_yview()[0], 2) > 0.0
+
+
+
+def test_body_alignment_stays_synced_after_shared_vertical_scroll():
+    editor = _make_editor()
+    editor.display_cols = [0, 1]
+    editor.tests = [object(), object()]
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 320), xview_fractions=lambda: (0.0, 1.0))
+    editor._rebuild_sounding_cards()
+    card0 = editor._card_for_test(0)
+    card1 = editor._card_for_test(1)
+    card0.body_canvas = _DummyBodyCanvas(rootx=1000, rooty=2000)
+    card1.body_canvas = _DummyBodyCanvas(rootx=1400, rooty=2000)
+    card0.set_body_scroll_context(view_height=100.0, content_height=400.0)
+    card1.set_body_scroll_context(view_height=100.0, content_height=400.0)
+
+    editor._apply_shared_body_yview_fraction(0.25)
+
+    assert card0.body_world_to_local(70.0, 130.0)[1] == 30.0
+    assert card1.body_world_to_local(card1.geometry.card_x0 + 20.0, 130.0)[1] == 30.0
+    assert editor._body_world_to_root(card1.geometry.card_x0 + 20.0, 130.0, ti=1) == (1420, 2030)

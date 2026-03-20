@@ -4525,6 +4525,12 @@ class GeoCanvasEditor(tk.Tk):
         cards: dict[int, SoundingCard] = {}
         previous = dict(self.__dict__.get("_sounding_cards", {}) or {})
         preserved_y = {int(ti): tuple(card.body_yview()) for ti, card in previous.items() if hasattr(card, "body_yview")}
+        shared_start = float(self.__dict__.get("_shared_body_yview_fraction", 0.0) or 0.0)
+        if preserved_y:
+            try:
+                shared_start = float(next(iter(preserved_y.values()))[0])
+            except Exception:
+                pass
         master = getattr(self.soundings_viewport, "strip", None)
         view_h = float(getattr(self, "_card_body_view_height", lambda: getattr(self.canvas, "winfo_height", lambda: self._total_body_height())())())
         body_h = float(self._total_body_height())
@@ -4534,7 +4540,7 @@ class GeoCanvasEditor(tk.Tk):
                 card = SoundingCard(master, editor=self, test_index=int(ti), geometry=self._sounding_card_geometry(col))
             else:
                 card.update_geometry(self._sounding_card_geometry(col))
-            start = (preserved_y.get(int(ti), (0.0, 0.0))[0] if int(ti) in preserved_y else 0.0)
+            start = shared_start
             card.set_body_scroll_context(view_height=view_h, content_height=body_h)
             if start:
                 card.body_yview_moveto(start)
@@ -4549,6 +4555,7 @@ class GeoCanvasEditor(tk.Tk):
                 pass
             cards[int(ti)] = card
         self._sounding_cards = cards
+        self._shared_body_yview_fraction = shared_start
         return cards
 
     def _bind_card_targets(self, card: SoundingCard):
@@ -4647,6 +4654,46 @@ class GeoCanvasEditor(tk.Tk):
 
     def _card_yview_snapshot(self) -> dict[int, tuple[float, float]]:
         return {int(ti): tuple(card.body_yview()) for ti, card in (self.__dict__.get("_sounding_cards", {}) or {}).items() if hasattr(card, "body_yview")}
+
+    def _shared_body_yview_fraction(self) -> float:
+        stored = self.__dict__.get("_shared_body_yview_fraction", None)
+        if stored is not None:
+            try:
+                return float(stored)
+            except Exception:
+                pass
+        snapshots = self._card_yview_snapshot()
+        if snapshots:
+            first_key = sorted(snapshots.keys())[0]
+            try:
+                return float(snapshots[first_key][0])
+            except Exception:
+                return 0.0
+        return 0.0
+
+    def _apply_shared_body_yview_fraction(self, fraction: float):
+        frac = 0.0 if float(fraction) < 0.0 else (1.0 if float(fraction) > 1.0 else float(fraction))
+        self._shared_body_yview_fraction = frac
+        for card in (self.__dict__.get("_sounding_cards", {}) or {}).values():
+            if hasattr(card, "body_yview_moveto"):
+                card.body_yview_moveto(frac)
+        return frac
+
+    def _scroll_all_cards_body_yview(self, delta: int, what: str = "units"):
+        cards = list((self.__dict__.get("_sounding_cards", {}) or {}).values())
+        if not cards:
+            return None
+        anchor = self._card_for_widget(getattr(self, "_evt_widget", None)) or self._active_body_card() or cards[0]
+        if anchor is None or not hasattr(anchor, "body_yview_scroll"):
+            return None
+        anchor.body_yview_scroll(delta, what)
+        frac = float(anchor.body_yview()[0]) if hasattr(anchor, "body_yview") else self._shared_body_yview_fraction()
+        self._shared_body_yview_fraction = frac
+        for card in cards:
+            if card is anchor or not hasattr(card, "body_yview_moveto"):
+                continue
+            card.body_yview_moveto(frac)
+        return frac
 
     def _card_for_widget(self, widget) -> SoundingCard | None:
         for ti in getattr(self, "display_cols", []) or []:
@@ -5507,6 +5554,10 @@ class GeoCanvasEditor(tk.Tk):
             show_graphs = bool(getattr(self, "show_graphs", False))
             show_geology = bool(getattr(self, "show_geology_column", True))
 
+            interval_specs = []
+            overlay_specs = []
+            layer_spans = []
+            handle_positions = []
             y_points = []
             qc_vals = []
             fs_vals = []
@@ -5559,7 +5610,6 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 gwl_canvas_y = None
 
-            interval_specs = []
             if show_geology:
                 column = self._ensure_test_experience_column(t)
                 for interval_index, lyr in enumerate(column.intervals):
@@ -5632,7 +5682,6 @@ class GeoCanvasEditor(tk.Tk):
                 )
                 card.redraw_if_needed("graph")
             if show_geology:
-                overlay_specs = []
                 column = self._ensure_test_experience_column(t)
                 handle_x = x1 - 2
                 plus_x = x0 + 10
@@ -5671,13 +5720,15 @@ class GeoCanvasEditor(tk.Tk):
                 dbg = f"LAYERS:{len(t_layers)} EDIT:True TEST:{getattr(t, 'tid', ti)}"
                 dx0, dy0 = (card.body_world_to_local(x0, y0) if body_target is getattr(card, "body_canvas", None) else (x0, y0))
                 body_target.create_text(dx0 + 4, dy0 + 4, anchor="nw", text=dbg, fill="#8a3d00", font=("Segoe UI", 8, "bold"), tags=("layers_overlay", f"layers_overlay_{ti}"))
+            layer_spans = [(float(spec["y0"]), float(spec["y1"])) for spec in interval_specs]
+            handle_positions = [float(spec["bbox"][1] + spec["bbox"][3]) * 0.5 for spec in overlay_specs if spec.get("kind") in {"handle", "depth_box", "plus", "minus"}]
             if card is self._active_body_card():
                 self._log_active_card_body_debug(
                     card,
                     table_span=(0.0, float(self._total_body_height())),
                     graph_span=(float(y0), float(y1)),
-                    interval_spans=[(float(spec["y0"]), float(spec["y1"])) for spec in interval_specs],
-                    handle_positions=[float(spec["bbox"][1] + spec["bbox"][3]) * 0.5 for spec in overlay_specs if spec.get("kind") in {"handle", "depth_box", "plus", "minus"}],
+                    interval_spans=layer_spans,
+                    handle_positions=handle_positions,
                 )
 
     def _draw_graph_layers(self):
@@ -7079,7 +7130,7 @@ class GeoCanvasEditor(tk.Tk):
             frac = 0.0 if frac < 0.0 else (1.0 if frac > 1.0 else frac)
             try:
                 if card is not None and hasattr(card, "body_yview_moveto"):
-                    card.body_yview_moveto(frac)
+                    self._apply_shared_body_yview_fraction(frac)
                 else:
                     cnv.yview_moveto(frac)
             except Exception:
@@ -8669,10 +8720,8 @@ class GeoCanvasEditor(tk.Tk):
             return self._on_mousewheel_x(event)
         delta = int(-1 * (event.delta / 120)) if event.delta else 0
         if delta != 0:
-            card = self._card_for_widget(getattr(self, "_evt_widget", None)) or self._active_body_card()
-            if card is not None and hasattr(card, "body_yview_scroll"):
-                card.body_yview_scroll(delta, "units")
-            else:
+            frac = self._scroll_all_cards_body_yview(delta, "units")
+            if frac is None:
                 self.canvas.yview_scroll(delta, "units")
             self._sync_header_body_after_scroll()
         return "break"
@@ -8683,10 +8732,8 @@ class GeoCanvasEditor(tk.Tk):
         self._end_edit(commit=True)
         if bool(getattr(self, "_shift_pressed", False)):
             return self._on_mousewheel_linux_x(direction)
-        card = self._card_for_widget(getattr(self, "_evt_widget", None)) or self._active_body_card()
-        if card is not None and hasattr(card, "body_yview_scroll"):
-            card.body_yview_scroll(direction, "units")
-        else:
+        frac = self._scroll_all_cards_body_yview(direction, "units")
+        if frac is None:
             self.canvas.yview_scroll(direction, "units")
         self._sync_header_body_after_scroll()
         return "break"
@@ -8724,7 +8771,7 @@ class GeoCanvasEditor(tk.Tk):
                 try:
                     card = self._active_body_card()
                     if card is not None and hasattr(card, "body_yview_moveto"):
-                        card.body_yview_moveto(frac)
+                        self._apply_shared_body_yview_fraction(frac)
                     else:
                         self.canvas.yview_moveto(frac)
                 except Exception:
