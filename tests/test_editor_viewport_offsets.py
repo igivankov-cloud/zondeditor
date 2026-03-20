@@ -44,6 +44,7 @@ class _DummyBodyCanvas:
         self.y_moves = []
         self.y_scrolls = []
         self.draw_calls = []
+        self._config = {}
         self._support_items = support_items
         self._items = []
         self._next_item_id = 1
@@ -59,6 +60,10 @@ class _DummyBodyCanvas:
 
     def yview_moveto(self, frac):
         self.y_moves.append(frac)
+        total = float((self._config.get("scrollregion") or (0, 0, 0, self._bbox_all[3]))[3])
+        height = float(self._config.get("height", self._height) or self._height)
+        max_y = max(0.0, total - height)
+        self._y0 = min(max(float(frac) * max(total, 1.0), 0.0), max_y)
 
     def yview_scroll(self, *args):
         self.y_scrolls.append(args)
@@ -68,6 +73,14 @@ class _DummyBodyCanvas:
 
     def winfo_rooty(self):
         return self._rooty
+
+    def configure(self, **kwargs):
+        self._config.update(kwargs)
+        if "height" in kwargs:
+            self._height = float(kwargs["height"])
+
+    def cget(self, key):
+        return self._config.get(key)
 
     def _add_item(self, item_type, *args, **kwargs):
         item_id = self._next_item_id
@@ -517,3 +530,54 @@ def test_redraw_preserves_host_window_items_and_clears_only_primitives():
     assert legacy_header_id not in editor.hcanvas.find_all()
     assert body_window_id in editor.canvas.find_all()
     assert header_window_id in editor.hcanvas.find_all()
+
+
+
+def test_mousewheel_uses_hovered_body_canvas_not_active_card():
+    editor = _make_editor()
+    editor.display_cols = [0, 1]
+    editor.tests = [object(), object()]
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 320), xview_fractions=lambda: (0.0, 1.0))
+    editor._rebuild_sounding_cards()
+    card0 = editor._card_for_test(0)
+    card1 = editor._card_for_test(1)
+    card0.body_canvas = _DummyBodyCanvas()
+    card1.body_canvas = _DummyBodyCanvas()
+    card0.set_body_scroll_context(view_height=100.0, content_height=400.0)
+    card1.set_body_scroll_context(view_height=100.0, content_height=400.0)
+
+    result = editor._on_mousewheel(SimpleNamespace(delta=-120, state=0, widget=card1.body_canvas))
+
+    assert result == "break"
+    assert round(card0.body_yview()[0], 2) == 0.0
+    assert round(card1.body_yview()[0], 2) > 0.0
+
+
+
+def test_card_body_scrollregion_tracks_content_height_after_rebuild():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [object()]
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.canvas = _DummyBodyCanvas(height=120)
+    editor.hcanvas = SimpleNamespace()
+    editor.soundings_viewport = SimpleNamespace(strip=None)
+    editor._total_body_height = lambda: 400
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas()
+    card.set_body_scroll_context(view_height=120.0, content_height=400.0)
+
+    assert card.dev_selfcheck_snapshot()["body_yview"] == (0.0, 0.3)

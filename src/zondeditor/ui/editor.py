@@ -5457,6 +5457,19 @@ class GeoCanvasEditor(tk.Tk):
             scale_info={"usage": HATCH_USAGE_EDITOR_EXPANDED, "layer_height_px": float(y1 - y0), "logical_rect": tuple(logical_rect) if logical_rect is not None else (float(x0), float(y0), float(x1), float(y1))},
         )
 
+    def _log_active_card_body_debug(self, card: SoundingCard | None, *, table_span=None, graph_span=None, interval_spans=None, handle_positions=None):
+        if not bool(self.__dict__.get("_viewport_selfcheck_debug", False)) or card is None:
+            return
+        snapshot = card.dev_selfcheck_snapshot() if hasattr(card, "dev_selfcheck_snapshot") else {}
+        print(
+            f"[CARDY] ti={card.test_index} view_h={snapshot.get('body_view_height')} content_h={snapshot.get('body_content_height')} "
+            f"yview={snapshot.get('body_yview')} scrollregion={snapshot.get('body_scrollregion')} table={table_span} graph={graph_span} "
+            f"intervals={interval_spans} handles={handle_positions} flags={{'show_graphs': {bool(getattr(self, 'show_graphs', False))}, "
+            f"'show_geology_column': {bool(getattr(self, 'show_geology_column', True))}, 'show_layer_colors': {bool(getattr(self, 'show_layer_colors', False))}, "
+            f"'show_inclinometer': {bool(getattr(self, 'show_inclinometer', True))}}}",
+            file=sys.stderr,
+        )
+
     def _redraw_graphs_now(self):
         self._graph_redraw_after_id = None
         self._clear_graph_layers()
@@ -5589,6 +5602,7 @@ class GeoCanvasEditor(tk.Tk):
                     hatch_drawer=lambda rx0, ry0, rx1, ry1, soil_type, canvas=None, logical_rect=None: self._draw_layer_hatch(rx0, ry0, rx1, ry1, soil_type=soil_type, tags=("layers_overlay", f"layers_overlay_{ti}"), logical_rect=logical_rect or (x0, y0, x1, y1), canvas=canvas),
                     label_font_factory=lambda size: tkfont.Font(font=("Segoe UI", size, "bold")),
                     layer_ui_colors=LAYER_UI_COLORS,
+                    visible=show_geology,
                 )
                 card.redraw_if_needed("layers")
                 self._layer_plot_hitbox.extend(plot_hits)
@@ -5614,6 +5628,7 @@ class GeoCanvasEditor(tk.Tk):
                     frame_fill="#fbfdff",
                     frame_outline=GUI_GRID,
                     groundwater_level=gwl_canvas_y,
+                    visible=show_graphs,
                 )
                 card.redraw_if_needed("graph")
             if show_geology:
@@ -5647,7 +5662,7 @@ class GeoCanvasEditor(tk.Tk):
                         {"kind": "minus", "bbox": (plus_x - 6, yy + 8, plus_x + 6, yy + 20), "boundary": bi, "hit_kind": "minus", "tag": f"layer_minus_{ti}_{bi}"},
                     ])
                 card.invalidate_overlays()
-                handle_hits, depth_hits = card.render_overlays(body_target, overlay_specs=overlay_specs, layer_ui_colors=LAYER_UI_COLORS)
+                handle_hits, depth_hits = card.render_overlays(body_target, overlay_specs=overlay_specs, layer_ui_colors=LAYER_UI_COLORS, visible=show_geology)
                 card.redraw_if_needed("overlays")
                 self._layer_handle_hitbox.extend(handle_hits)
                 self._layer_depth_box_hitbox.extend(depth_hits)
@@ -5656,6 +5671,14 @@ class GeoCanvasEditor(tk.Tk):
                 dbg = f"LAYERS:{len(t_layers)} EDIT:True TEST:{getattr(t, 'tid', ti)}"
                 dx0, dy0 = (card.body_world_to_local(x0, y0) if body_target is getattr(card, "body_canvas", None) else (x0, y0))
                 body_target.create_text(dx0 + 4, dy0 + 4, anchor="nw", text=dbg, fill="#8a3d00", font=("Segoe UI", 8, "bold"), tags=("layers_overlay", f"layers_overlay_{ti}"))
+            if card is self._active_body_card():
+                self._log_active_card_body_debug(
+                    card,
+                    table_span=(0.0, float(self._total_body_height())),
+                    graph_span=(float(y0), float(y1)),
+                    interval_spans=[(float(spec["y0"]), float(spec["y1"])) for spec in interval_specs],
+                    handle_positions=[float(spec["bbox"][1] + spec["bbox"][3]) * 0.5 for spec in overlay_specs if spec.get("kind") in {"handle", "depth_box", "plus", "minus"}],
+                )
 
     def _draw_graph_layers(self):
         self._redraw_graphs_now()
@@ -8639,6 +8662,7 @@ class GeoCanvasEditor(tk.Tk):
     # ---------------- scrolling ----------------
     def _on_mousewheel(self, event):
         # скролл закрывает активную ячейку
+        self._evt_widget = getattr(event, "widget", None) or self.__dict__.get("_evt_widget", None)
         self._begin_scroll_debug_cycle("mousewheel_y")
         self._end_edit(commit=True)
         if bool(getattr(event, "state", 0) & 0x0001):

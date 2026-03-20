@@ -6,6 +6,8 @@ from src.zondeditor.ui.sounding_card import SoundingCard, SoundingCardGeometry
 class _DummyCanvas:
     def __init__(self):
         self.calls = []
+        self._config = {}
+        self._y0 = 0.0
 
     def create_rectangle(self, *args, **kwargs):
         self.calls.append(("rectangle", args, kwargs))
@@ -18,6 +20,23 @@ class _DummyCanvas:
 
     def delete(self, *args, **kwargs):
         self.calls.append(("delete", args, kwargs))
+
+    def configure(self, **kwargs):
+        self._config.update(kwargs)
+
+    def cget(self, key):
+        return self._config.get(key)
+
+    def yview_moveto(self, frac):
+        scrollregion = self._config.get("scrollregion", (0, 0, 0, 0))
+        total = float(scrollregion[3] if len(scrollregion) >= 4 else 0.0)
+        height = float(self._config.get("height", 0.0) or 0.0)
+        max_y = max(0.0, total - height)
+        self._y0 = min(max(float(frac) * max(total, 1.0), 0.0), max_y)
+        self.calls.append(("yview_moveto", (frac,), {}))
+
+    def canvasy(self, value):
+        return self._y0 + float(value)
 
 
 class _DummyFont:
@@ -514,3 +533,59 @@ def test_mount_targets_recreates_canvases_when_existing_master_is_wrong(monkeypa
     assert wrong_body_canvas.destroyed is True
     assert card.header_canvas is not wrong_header_canvas and card.header_canvas.master is header_host
     assert card.body_canvas is not wrong_body_canvas and card.body_canvas.master is body_host
+
+
+
+def test_body_scroll_syncs_canvas_view_and_local_y_pipeline():
+    editor = SimpleNamespace(
+        _header_world_to_root=lambda x, y: (int(x), int(y)),
+        _body_world_to_root=lambda x, y, ti=None: (int(x), int(y)),
+    )
+    g = SoundingCardGeometry(
+        card_x0=50.0,
+        card_y0=0.0,
+        card_width=326.0,
+        header_height=72.0,
+        body_height=300.0,
+        footer_height=0.0,
+        table_width=176.0,
+        graph_width=150.0,
+        depth_width=64.0,
+        value_width=56.0,
+    )
+    card = SoundingCard(None, editor=editor, test_index=13, geometry=g)
+    card.body_canvas = _DummyCanvas()
+    card.set_body_scroll_context(view_height=100.0, content_height=400.0)
+    card.body_yview_moveto(0.25)
+
+    assert round(card.body_canvasy(0), 2) == 100.0
+    assert card.body_world_to_local(70.0, 130.0) == (20.0, 30.0)
+    assert card.body_local_to_world(20.0, 30.0) == (70.0, 130.0)
+    assert card.dev_selfcheck_snapshot()["body_scrollregion"] == (0, 0, 326, 400)
+
+
+
+def test_card_body_renderers_respect_visibility_flags():
+    editor = SimpleNamespace(
+        _header_world_to_root=lambda x, y: (int(x), int(y)),
+        _body_world_to_root=lambda x, y, ti=None: (int(x), int(y)),
+    )
+    g = SoundingCardGeometry(
+        card_x0=50.0,
+        card_y0=0.0,
+        card_width=326.0,
+        header_height=72.0,
+        body_height=300.0,
+        footer_height=0.0,
+        table_width=176.0,
+        graph_width=150.0,
+        depth_width=64.0,
+        value_width=56.0,
+    )
+    card = SoundingCard(None, editor=editor, test_index=14, geometry=g)
+    canvas = _DummyCanvas()
+
+    assert card.render_graph(canvas, rect=(226.0, 0.0, 376.0, 100.0), y_points=[20.0], qc_values=[1.0], fs_values=[2.0], qmax=5.0, fmax=50.0, qc_color="#0a0", fs_color="#00a", frame_fill="#fff", frame_outline="#ccc", visible=False) == (226.0, 0.0, 376.0, 100.0)
+    assert card.render_ige(canvas, intervals=[{"interval_index": 0, "ige_id": "ИГЭ-1", "soil_type": "sand", "top": 0.0, "bot": 1.0, "depth": 0.5, "x0": 226.0, "x1": 376.0, "y0": 0.0, "y1": 120.0}], fill_resolver=lambda soil: "#eee", hatch_drawer=lambda *args, **kwargs: None, label_font_factory=lambda size: _DummyFont(size), layer_ui_colors={"fill": "#eef3f8", "fill_active": "#e3ebf3", "outline": "#b7c4d1", "outline_active": "#97a8ba", "text": "#4d5c6b", "text_muted": "#9aa7b4", "line": "#aebbc8", "focus": "#7f94a9"}, visible=False) == ([], [])
+    assert card.render_overlays(canvas, overlay_specs=[{"kind": "line", "points": (226.0, 120.0, 376.0, 120.0)}], layer_ui_colors={"fill": "#eef3f8", "fill_active": "#e3ebf3", "outline": "#b7c4d1", "outline_active": "#97a8ba", "text": "#4d5c6b", "text_muted": "#9aa7b4", "line": "#aebbc8", "focus": "#7f94a9"}, visible=False) == ([], [])
+    assert canvas.calls == []

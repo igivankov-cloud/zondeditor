@@ -217,6 +217,7 @@ class SoundingCard:
             width=int(self.geometry.card_width),
             height=int(max(1.0, float(self._body_view_height or self.geometry.body_height))),
             scrollregion=(0, 0, int(self.geometry.card_width), int(max(self.geometry.body_height, self._body_content_height))),
+            yscrollincrement=1,
         )
         if header_canvas is not None and self._header_host is not None:
             try:
@@ -234,6 +235,7 @@ class SoundingCard:
                     self._body_host.coords(self._body_window_id, float(self.geometry.card_x0), 0.0)
             except Exception as exc:
                 self._log_mount_error("body create_window", exc, host=self._body_host, widget=body_canvas)
+        self._sync_body_canvas_view()
 
     def world_to_local(self, x: float, y: float) -> tuple[float, float]:
         return self.geometry.world_to_local(x, y)
@@ -247,13 +249,42 @@ class SoundingCard:
         if y0 is None:
             y0 = self._body_y0
         self._body_y0 = min(max(float(y0), 0.0), max_y0)
+        self._sync_body_canvas_view()
         return self.body_yview()
 
     def max_body_y0(self) -> float:
         return max(0.0, float(self._body_content_height) - float(self._body_view_height))
 
+    def _body_viewport_top(self) -> float:
+        if self.body_canvas is not None and hasattr(self.body_canvas, "canvasy"):
+            try:
+                return float(self.body_canvas.canvasy(0))
+            except Exception:
+                pass
+        return float(self._body_y0)
+
+    def _sync_body_canvas_view(self):
+        if self.body_canvas is None:
+            return
+        try:
+            self.body_canvas.configure(
+                height=int(max(1.0, float(self._body_view_height or self.geometry.body_height))),
+                scrollregion=(0, 0, int(self.geometry.card_width), int(max(self.geometry.body_height, self._body_content_height))),
+            )
+        except Exception as exc:
+            self._log_mount_error("sync body_canvas", exc, host=self._body_host, widget=self.body_canvas)
+        if hasattr(self.body_canvas, "yview_moveto"):
+            total = max(1.0, float(self._body_content_height))
+            frac = min(max(float(self._body_y0) / total, 0.0), 1.0)
+            try:
+                self.body_canvas.yview_moveto(frac)
+            except Exception as exc:
+                self._log_mount_error("sync body_canvas yview", exc, host=self._body_host, widget=self.body_canvas)
+
     def body_yview(self) -> tuple[float, float]:
         total = max(1.0, float(self._body_content_height))
+        top = self._body_viewport_top()
+        self._body_y0 = min(max(float(top), 0.0), self.max_body_y0())
         start = min(max(float(self._body_y0) / total, 0.0), 1.0)
         end = min(max((float(self._body_y0) + float(self._body_view_height)) / total, start), 1.0)
         return (start, end)
@@ -261,21 +292,23 @@ class SoundingCard:
     def body_yview_moveto(self, fraction: float):
         total = max(1.0, float(self._body_content_height))
         self._body_y0 = min(max(float(fraction) * total, 0.0), self.max_body_y0())
+        self._sync_body_canvas_view()
         return self.body_yview()
 
     def body_yview_scroll(self, number: int, what: str = "units"):
         step = 24.0 if str(what) == "units" else max(1.0, float(self._body_view_height) * 0.9)
         self._body_y0 = min(max(float(self._body_y0) + (float(number) * step), 0.0), self.max_body_y0())
+        self._sync_body_canvas_view()
         return self.body_yview()
 
     def body_canvasy(self, value: float) -> float:
-        return float(self._body_y0) + float(value)
+        return float(self._body_viewport_top()) + float(value)
 
     def body_world_to_local(self, x: float, y: float) -> tuple[float, float]:
-        return float(x) - float(self.geometry.card_x0), float(y) - float(self._body_y0)
+        return float(x) - float(self.geometry.card_x0), float(y) - float(self._body_viewport_top())
 
     def body_local_to_world(self, x: float, y: float) -> tuple[float, float]:
-        return float(self.geometry.card_x0) + float(x), float(self._body_y0) + float(y)
+        return float(self.geometry.card_x0) + float(x), float(self._body_viewport_top()) + float(y)
 
     def body_world_to_root(self, x: float, y: float) -> tuple[int, int]:
         if self.body_canvas is not None:
@@ -574,12 +607,20 @@ class SoundingCard:
         }
 
     def dev_selfcheck_snapshot(self) -> dict[str, object]:
+        scrollregion = None
+        if self.body_canvas is not None and hasattr(self.body_canvas, "cget"):
+            try:
+                scrollregion = self.body_canvas.cget("scrollregion")
+            except Exception:
+                scrollregion = None
         return {
             "card": int(self.test_index),
             "body_view_height": float(self._body_view_height),
             "body_content_height": float(self._body_content_height),
             "body_y0": float(self._body_y0),
+            "body_view_top": float(self._body_viewport_top()),
             "body_yview": self.body_yview(),
+            "body_scrollregion": scrollregion,
             "invalid_parts": sorted(self._invalid_parts),
         }
 
@@ -595,6 +636,7 @@ class SoundingCard:
         canvas=None,
         *,
         rect: tuple[float, float, float, float],
+        visible: bool = True,
         y_points: list[float],
         qc_values: list[float],
         fs_values: list[float],
@@ -608,6 +650,8 @@ class SoundingCard:
         groundwater_color: str = "#2f6fff",
         nodata_text: str = "нет данных",
     ):
+        if not visible:
+            return rect
         canvas = self.body_render_canvas(canvas)
         x0, y0, x1, y1 = self._map_body_rect(canvas, tuple(float(v) for v in rect))
         canvas.create_rectangle(x0, y0, x1, y1, fill=frame_fill, outline=frame_outline)
@@ -648,11 +692,14 @@ class SoundingCard:
         canvas=None,
         *,
         intervals: list[dict],
+        visible: bool = True,
         fill_resolver,
         hatch_drawer,
         label_font_factory,
         layer_ui_colors: dict[str, str],
     ) -> tuple[list[dict], list[dict]]:
+        if not visible:
+            return [], []
         canvas = self.body_render_canvas(canvas)
         label_spans: list[dict] = []
         plot_hitboxes: list[dict] = []
@@ -690,7 +737,10 @@ class SoundingCard:
         *,
         overlay_specs: list[dict],
         layer_ui_colors: dict[str, str],
+        visible: bool = True,
     ) -> tuple[list[dict], list[dict]]:
+        if not visible:
+            return [], []
         canvas = self.body_render_canvas(canvas)
         handle_hits: list[dict] = []
         depth_hits: list[dict] = []
