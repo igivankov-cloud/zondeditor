@@ -144,6 +144,53 @@ class SoundingCard:
             self.header_canvas = tk.Canvas(self.header_frame, highlightthickness=0, background="white")
             self.body_canvas = tk.Canvas(self.host, highlightthickness=0, background="white")
             self.footer_frame = ttk.Frame(self.host)
+        self._header_window_id = None
+        self._body_window_id = None
+        self._header_host = None
+        self._body_host = None
+
+    def update_geometry(self, geometry: SoundingCardGeometry):
+        self.geometry = geometry
+
+    def mount_targets(self, *, header_host=None, body_host=None, body_view_height: float | None = None):
+        self._header_host = header_host or self._header_host
+        self._body_host = body_host or self._body_host
+        if body_view_height is not None:
+            self.set_body_scroll_context(view_height=float(body_view_height))
+        if self.header_canvas is not None:
+            try:
+                self.header_canvas.configure(
+                    width=int(self.geometry.table_width),
+                    height=int(self.geometry.header_height),
+                    scrollregion=(0, 0, int(self.geometry.table_width), int(self.geometry.header_height)),
+                )
+            except Exception:
+                pass
+        if self.body_canvas is not None:
+            try:
+                self.body_canvas.configure(
+                    width=int(self.geometry.card_width),
+                    height=int(max(1.0, float(self._body_view_height or self.geometry.body_height))),
+                    scrollregion=(0, 0, int(self.geometry.card_width), int(max(self.geometry.body_height, self._body_content_height))),
+                )
+            except Exception:
+                pass
+        if self.header_canvas is not None and self._header_host is not None:
+            try:
+                if self._header_window_id is None:
+                    self._header_window_id = self._header_host.create_window((float(self.geometry.card_x0), 0.0), window=self.header_canvas, anchor="nw")
+                else:
+                    self._header_host.coords(self._header_window_id, float(self.geometry.card_x0), 0.0)
+            except Exception:
+                pass
+        if self.body_canvas is not None and self._body_host is not None:
+            try:
+                if self._body_window_id is None:
+                    self._body_window_id = self._body_host.create_window((float(self.geometry.card_x0), 0.0), window=self.body_canvas, anchor="nw")
+                else:
+                    self._body_host.coords(self._body_window_id, float(self.geometry.card_x0), 0.0)
+            except Exception:
+                pass
 
     def world_to_local(self, x: float, y: float) -> tuple[float, float]:
         return self.geometry.world_to_local(x, y)
@@ -260,11 +307,23 @@ class SoundingCard:
     def redraw_if_needed(self, *parts: str) -> tuple[str, ...]:
         requested = {str(part) for part in (parts or self.REDRAW_PARTS)}
         ready = tuple(part for part in self.REDRAW_PARTS if part in requested and part in self._invalid_parts)
+        if bool(getattr(getattr(self, "editor", None), "__dict__", {}).get("_viewport_selfcheck_debug", False)):
+            try:
+                print(f"[CARDREDRAW] before card={self.test_index} requested={sorted(requested)} invalid={sorted(self._invalid_parts)}")
+            except Exception:
+                pass
         for part in ready:
             callback = self._redraw_callbacks.get(part)
             if callable(callback):
                 callback()
             self._invalid_parts.discard(part)
+        if bool(getattr(getattr(self, "editor", None), "__dict__", {}).get("_viewport_selfcheck_debug", False)):
+            try:
+                header_items = (len(self.header_canvas.find_all()) if self.header_canvas is not None and hasattr(self.header_canvas, "find_all") else None)
+                body_items = (len(self.body_canvas.find_all()) if self.body_canvas is not None and hasattr(self.body_canvas, "find_all") else None)
+                print(f"[CARDREDRAW] after card={self.test_index} redrawn={list(ready)} invalid={sorted(self._invalid_parts)} header_items={header_items} body_items={body_items}")
+            except Exception:
+                pass
         return ready
 
     def contains_world(self, x: float, y: float) -> bool:

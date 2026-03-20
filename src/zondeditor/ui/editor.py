@@ -4529,14 +4529,47 @@ class GeoCanvasEditor(tk.Tk):
         view_h = float(getattr(self, "_card_body_view_height", lambda: getattr(self.canvas, "winfo_height", lambda: self._total_body_height())())())
         body_h = float(self._total_body_height())
         for col, ti in enumerate(getattr(self, "display_cols", []) or []):
-            card = SoundingCard(master, editor=self, test_index=int(ti), geometry=self._sounding_card_geometry(col))
+            card = previous.get(int(ti))
+            if card is None:
+                card = SoundingCard(master, editor=self, test_index=int(ti), geometry=self._sounding_card_geometry(col))
+            else:
+                card.update_geometry(self._sounding_card_geometry(col))
             start = (preserved_y.get(int(ti), (0.0, 0.0))[0] if int(ti) in preserved_y else 0.0)
             card.set_body_scroll_context(view_height=view_h, content_height=body_h)
             if start:
                 card.body_yview_moveto(start)
+            try:
+                card.mount_targets(
+                    header_host=getattr(self, "hcanvas", None),
+                    body_host=getattr(self, "canvas", None),
+                    body_view_height=view_h,
+                )
+                self._bind_card_targets(card)
+            except Exception:
+                pass
             cards[int(ti)] = card
         self._sounding_cards = cards
         return cards
+
+    def _bind_card_targets(self, card: SoundingCard):
+        for widget, wheel_cb, linux_cb in (
+            (getattr(card, "body_canvas", None), self._on_mousewheel, self._on_mousewheel_linux),
+            (getattr(card, "header_canvas", None), self._on_mousewheel_x, self._on_mousewheel_linux_x),
+        ):
+            if widget is None:
+                continue
+            try:
+                widget.bind("<Button-1>", self._on_left_click)
+                widget.bind("<Motion>", self._on_motion)
+                widget.bind("<Leave>", lambda _e: self._set_hover(None))
+            except Exception:
+                pass
+            try:
+                widget.bind("<MouseWheel>", wheel_cb)
+                widget.bind("<Button-4>", lambda e, cb=linux_cb: cb(-1))
+                widget.bind("<Button-5>", lambda e, cb=linux_cb: cb(1))
+            except Exception:
+                pass
 
     def _card_for_test(self, ti: int) -> SoundingCard | None:
         cards = self.__dict__.get("_sounding_cards", None) or {}
@@ -4550,6 +4583,12 @@ class GeoCanvasEditor(tk.Tk):
         card = SoundingCard(getattr(self.soundings_viewport, "strip", None), editor=self, test_index=int(ti), geometry=self._sounding_card_geometry(col))
         try:
             card.set_body_scroll_context(view_height=self._card_body_view_height(), content_height=float(self._total_body_height()))
+            card.mount_targets(
+                header_host=getattr(self, "hcanvas", None),
+                body_host=getattr(self, "canvas", None),
+                body_view_height=self._card_body_view_height(),
+            )
+            self._bind_card_targets(card)
         except Exception:
             pass
         cards[int(ti)] = card
@@ -5439,6 +5478,14 @@ class GeoCanvasEditor(tk.Tk):
             if card is None:
                 continue
             body_target = getattr(card, "body_canvas", None) or self.canvas  # legacy fallback only if a card target is unavailable
+            if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+                try:
+                    print(
+                        f"[CARDTARGET] ti={int(ti)} body_target={body_target} "
+                        f"header_target={getattr(card, 'header_canvas', None)} invalid_before={sorted(getattr(card, '_invalid_parts', []))}"
+                    )
+                except Exception:
+                    pass
             rect = self._graph_rect_for_test(ti)
             if not rect:
                 continue
@@ -7295,6 +7342,9 @@ class GeoCanvasEditor(tk.Tk):
                     card.header_canvas.create_rectangle(hx0, hy0, hx1, hy1, fill="#d0d0d0", outline="", stipple="gray50")
                 else:
                     self.hcanvas.create_rectangle(x0, y0, x1, y1, fill="#d0d0d0", outline="", stipple="gray50")
+
+            if card is not None:
+                card.redraw_if_needed("body")
 
         self._update_scrollregion()
         if self._is_graph_panel_visible():
