@@ -4639,8 +4639,11 @@ class GeoCanvasEditor(tk.Tk):
                 last = self._card_for_test(int(cols[-1]))
                 first_card = (first.geometry.card_bounds_world if first is not None else None)
                 last_card = (last.geometry.card_bounds_world if last is not None else None)
+                ownership = (first.render_ownership_snapshot() if first is not None else None)
         except Exception:
             pass
+        else:
+            ownership = ownership if 'ownership' in locals() else None
         editor_bbox = None
         try:
             ed = getattr(self, "_editing", None)
@@ -4661,6 +4664,7 @@ class GeoCanvasEditor(tk.Tk):
             "first_card": first_card,
             "last_card": last_card,
             "active_inline_editor": editor_bbox,
+            "ownership": ownership if 'ownership' in locals() else None,
         }
 
     def _dev_log_viewport_state(self, source: str):
@@ -5639,6 +5643,7 @@ class GeoCanvasEditor(tk.Tk):
         if self._is_test_locked(ti):
             return
         t = self.tests[ti]
+        card = self._card_for_test(int(ti))
         column = self._ensure_test_experience_column(t)
         x0, x1, _y0, _y1 = rect
         # Ручка границы: центр по правому краю колонки слоёв, слегка внутри.
@@ -5672,7 +5677,8 @@ class GeoCanvasEditor(tk.Tk):
                 tags=("layer_handles", "layer_plus", tag),
             )
             if active:
-                self._layer_handle_hitbox.append({"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (px - 10, y_pos - 10, px + 10, y_pos + 10)})
+                hit = (card.make_hitbox(kind=kind, boundary=int(boundary), bbox=(px - 10, y_pos - 10, px + 10, y_pos + 10), extra={"tag": tag}) if card is not None else {"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (px - 10, y_pos - 10, px + 10, y_pos + 10)})
+                self._layer_handle_hitbox.append(hit)
 
         def _draw_minus(tag: str, y_pos: float, boundary: int, kind: str, *, active: bool = True, x_pos: float | None = None):
             px = float(plus_x if x_pos is None else x_pos)
@@ -5701,7 +5707,8 @@ class GeoCanvasEditor(tk.Tk):
                 tags=("layer_handles", "layer_minus", tag),
             )
             if active:
-                self._layer_handle_hitbox.append({"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (px - 10, y_pos - 10, px + 10, y_pos + 10)})
+                hit = (card.make_hitbox(kind=kind, boundary=int(boundary), bbox=(px - 10, y_pos - 10, px + 10, y_pos + 10), extra={"tag": tag}) if card is not None else {"kind": kind, "ti": ti, "boundary": int(boundary), "tag": tag, "bbox": (px - 10, y_pos - 10, px + 10, y_pos + 10)})
+                self._layer_handle_hitbox.append(hit)
 
         if column.intervals:
             top_y = self._depth_to_canvas_y(float(column.intervals[0].from_depth))
@@ -5756,8 +5763,8 @@ class GeoCanvasEditor(tk.Tk):
                     font=("Segoe UI", 7),
                     tags=("layer_handles", "layer_depth_label", end_tag),
                 )
-                self._layer_handle_hitbox.append({"kind": "column_end", "ti": ti, "boundary": int(len(column.intervals)), "tag": end_tag, "bbox": (handle_x - 6, bot_y - 6, handle_x + 6, bot_y + 6)})
-                self._layer_depth_box_hitbox.append({"kind": "column_end_depth_edit", "ti": ti, "boundary": int(len(column.intervals)), "bbox": (bx0, bot_y - 9, bx1, bot_y + 9)})
+                self._layer_handle_hitbox.append(card.make_hitbox(kind="column_end", boundary=int(len(column.intervals)), bbox=(handle_x - 6, bot_y - 6, handle_x + 6, bot_y + 6), extra={"tag": end_tag}) if card is not None else {"kind": "column_end", "ti": ti, "boundary": int(len(column.intervals)), "tag": end_tag, "bbox": (handle_x - 6, bot_y - 6, handle_x + 6, bot_y + 6)})
+                self._layer_depth_box_hitbox.append(card.make_hitbox(kind="column_end_depth_edit", boundary=int(len(column.intervals)), bbox=(bx0, bot_y - 9, bx1, bot_y + 9)) if card is not None else {"kind": "column_end_depth_edit", "ti": ti, "boundary": int(len(column.intervals)), "bbox": (bx0, bot_y - 9, bx1, bot_y + 9)})
                 _draw_plus(f"layer_plus_bottom_{ti}", bot_y, len(column.intervals), "plus_bottom", active=self._can_insert_layer_from_bottom(int(ti)))
                 _draw_minus(f"layer_minus_bottom_{ti}", bot_y, len(column.intervals) - 1, "minus_bottom", active=(len(column.intervals) > 1), x_pos=(plus_x + 14))
 
@@ -5815,8 +5822,8 @@ class GeoCanvasEditor(tk.Tk):
                 font=("Segoe UI", 7),
                 tags=("layer_handles", "layer_depth_label", h_tag),
             )
-            self._layer_handle_hitbox.append({"kind": "boundary", "ti": ti, "boundary": bi, "tag": h_tag, "bbox": (handle_x - 6, y - 6, handle_x + 6, y + 6)})
-            self._layer_depth_box_hitbox.append({"kind": "boundary_depth_edit", "ti": ti, "boundary": bi, "bbox": (bx0, y - 9, bx1, y + 9)})
+            self._layer_handle_hitbox.append(card.make_hitbox(kind="boundary", boundary=bi, bbox=(handle_x - 6, y - 6, handle_x + 6, y + 6), extra={"tag": h_tag}) if card is not None else {"kind": "boundary", "ti": ti, "boundary": bi, "tag": h_tag, "bbox": (handle_x - 6, y - 6, handle_x + 6, y + 6)})
+            self._layer_depth_box_hitbox.append(card.make_hitbox(kind="boundary_depth_edit", boundary=bi, bbox=(bx0, y - 9, bx1, y + 9)) if card is not None else {"kind": "boundary_depth_edit", "ti": ti, "boundary": bi, "bbox": (bx0, y - 9, bx1, y + 9)})
             _draw_plus(p_tag, y, bi, "plus", active=self._can_split_layer_index(int(ti), int(bi)))
             _draw_minus(m_tag, y + 14, bi, "minus", active=(len(column.intervals) > 1))
 
@@ -7248,6 +7255,10 @@ class GeoCanvasEditor(tk.Tk):
         grid = getattr(self, "_grid_base", []) or []
 
         self._refresh_display_order()
+        try:
+            self._rebuild_sounding_cards()
+        except Exception:
+            pass
 
         # фиксируем высоту шапки под текущие параметры
         try:
@@ -7258,6 +7269,7 @@ class GeoCanvasEditor(tk.Tk):
         diagnostics = self._diagnostics_report()
         for col, ti in enumerate(self.display_cols):
             t = self.tests[ti]
+            card = self._card_for_test(int(ti))
             x0, y0, x1, y1 = self._header_bbox(col)
 
             # checked = will be exported
@@ -7273,78 +7285,32 @@ class GeoCanvasEditor(tk.Tk):
             hdr_text = "#111" if ex_on else "#8a8a8a"
             hdr_icon = "#444" if ex_on else "#8a8a8a"
 
-            # --- ШАПКА (hcanvas) ---
-            self.hcanvas.create_rectangle(x0, y0, x1, y1, fill=hdr_fill, outline=GUI_GRID)
-
             dt_val = getattr(t, "dt", "") or ""
-            # t.dt может быть строкой из GEO или уже datetime (после редактирования)
             if isinstance(dt_val, datetime.datetime):
                 dt_line = dt_val.strftime("%d.%m.%Y %H:%M:%S")
             elif isinstance(dt_val, datetime.date):
                 dt_line = dt_val.strftime("%d.%m.%Y 00:00:00")
             else:
                 dt_line = str(dt_val).strip()
-
-            # display without seconds (HH:MM)
             dt_line = re.sub(r"(\d{2}:\d{2}):\d{2}\b", r"\1", dt_line)
-
-            # --- export checkbox (Win11 style) ---
-            top_pad = 8
-            row_center_y = y0 + top_pad + 6  # aligns checkbox and title vertically
-            cb_s = 14
-            cb_x0 = x0 + 6
-            cb_y0 = int(row_center_y - cb_s/2)
-
-            # рамка чекбокса (без hover-подсветки фоном)
-            self.hcanvas.create_rectangle(cb_x0, cb_y0, cb_x0 + cb_s, cb_y0 + cb_s,
-                                          fill="white", outline="#b9b9b9")
-            if ex_on:
-                self.hcanvas.create_line(cb_x0 + 3, cb_y0 + 7, cb_x0 + 6, cb_y0 + 10,
-                                         cb_x0 + 11, cb_y0 + 4,
-                                         fill="#2563eb", width=2, capstyle="round", joinstyle="round")
-
-            # Title and datetime
-            title_x = cb_x0 + cb_s + 8
-            self.hcanvas.create_text(title_x, row_center_y, anchor="w",
-                                     text=f"Опыт {t.tid}", font=("Segoe UI", 9, "bold"), fill=hdr_text)
-            if dt_line:
-                self.hcanvas.create_text(title_x, row_center_y + 18, anchor="w",
-                                         text=dt_line, font=("Segoe UI", 9), fill=hdr_text)
-
-            # header actions (Win11-like icons + hover)
-            ico_y = y0 + 14
-            ico_font = _pick_icon_font(12)
-
-            lock_on = bool(getattr(t, "locked", False))
-            lock_x, edit_x, dup_x, trash_x = (x1 - 92), (x1 - 66), (x1 - 40), (x1 - 14)
-            box_w, box_h = 22, 20
-
-            # hover background (только для иконок, не для галочки)
-            if getattr(self, "_hover", None) == ("lock", ti):
-                self.hcanvas.create_rectangle(lock_x - box_w/2, ico_y - box_h/2, lock_x + box_w/2, ico_y + box_h/2,
-                                              fill="#e9e9e9", outline="")
-            if getattr(self, "_hover", None) == ("edit", ti):
-                self.hcanvas.create_rectangle(edit_x - box_w/2, ico_y - box_h/2, edit_x + box_w/2, ico_y + box_h/2,
-                                              fill="#e9e9e9", outline="")
-            if getattr(self, "_hover", None) == ("dup", ti):
-                self.hcanvas.create_rectangle(dup_x - box_w/2, ico_y - box_h/2, dup_x + box_w/2, ico_y + box_h/2,
-                                              fill="#e9e9e9", outline="")
-            if getattr(self, "_hover", None) == ("trash", ti):
-                self.hcanvas.create_rectangle(trash_x - box_w/2, ico_y - box_h/2, trash_x + box_w/2, ico_y + box_h/2,
-                                              fill="#e9e9e9", outline="")
-
-            self.hcanvas.create_text(lock_x, ico_y, text=("🔒" if lock_on else "🔓"), font=("Segoe UI", 10), fill=hdr_icon, anchor="center")
-            self.hcanvas.create_text(edit_x, ico_y, text=ICON_CALENDAR, font=ico_font, fill=hdr_icon, anchor="center")
-            self.hcanvas.create_text(dup_x, ico_y, text=ICON_COPY, font=ico_font, fill=hdr_icon, anchor="center")
-            self.hcanvas.create_text(trash_x, ico_y, text=ICON_DELETE, font=ico_font, fill=hdr_icon, anchor="center")
-
-            # колонка заголовков (H/qc/fs) — в шапке и фиксирована
-            sh_y = y0 + self.hdr_h - top_pad
-            self.hcanvas.create_text(x0 + self.w_depth / 2, sh_y, text="H, м", font=("Segoe UI", 9), fill=hdr_text)
-            self.hcanvas.create_text(x0 + self.w_depth + self.w_val / 2, sh_y, text="qc", font=("Segoe UI", 9), fill=hdr_text)
-            self.hcanvas.create_text(x0 + self.w_depth + self.w_val + self.w_val / 2, sh_y, text="fs", font=("Segoe UI", 9), fill=hdr_text)
-            if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True)):
-                self.hcanvas.create_text(x0 + self.w_depth + self.w_val*2 + self.w_val/2, sh_y, text="U", font=("Segoe UI", 9), fill=hdr_text)
+            if card is not None:
+                card.render_header(
+                    self.hcanvas,
+                    title=f"Опыт {t.tid}",
+                    datetime_text=dt_line,
+                    header_fill=hdr_fill,
+                    header_text=hdr_text,
+                    header_icon=hdr_icon,
+                    export_on=bool(ex_on),
+                    lock_on=bool(getattr(t, "locked", False)),
+                    hover=getattr(self, "_hover", None),
+                    icon_calendar=ICON_CALENDAR,
+                    icon_copy=ICON_COPY,
+                    icon_delete=ICON_DELETE,
+                    icon_font=_pick_icon_font(12),
+                    hdr_h=float(self.hdr_h),
+                    show_inclinometer=str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True)),
+                )
 
             # --- ТАБЛИЦА (canvas) ---
             mp = self._grid_row_maps.get(ti, {})
@@ -7508,16 +7474,17 @@ class GeoCanvasEditor(tk.Tk):
                     except Exception:
                         pass
                     bx0, by0, bx1, by1 = self._cell_bbox(col, r, field)
-                    self.canvas.create_rectangle(bx0, by0, bx1, by1, fill=fill, outline=GUI_GRID)
                     if field == "depth":
-                        tx, anchor, color = bx1 - 4, "e", "#555"
+                        color = "#555"
                     else:
-                        tx, anchor, color = bx1 - 4, "e", "#000"
-                        if is_meter_row and field in ("qc", "fs"):
-                            color = "#666"
+                        color = "#666" if is_meter_row and field in ("qc", "fs") else "#000"
                     if not ex_on:
                         color = "#8a8a8a" if field != "depth" else "#9a9a9a"
-                    self.canvas.create_text(tx, (by0 + by1) / 2, text=txt, anchor=anchor, fill=color, font=("Segoe UI", 9))
+                    if card is not None:
+                        card.render_body_cell(self.canvas, row_y0=float(by0), row_y1=float(by1), field=field, text=txt, fill=fill, text_color=color)
+                    else:
+                        self.canvas.create_rectangle(bx0, by0, bx1, by1, fill=fill, outline=GUI_GRID)
+                        self.canvas.create_text(bx1 - 4, (by0 + by1) / 2, text=txt, anchor="e", fill=color, font=("Segoe UI", 9))
 
             if bool(getattr(t, "locked", False)):
                 body_h = float(self._total_body_height())

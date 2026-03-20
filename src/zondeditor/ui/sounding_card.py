@@ -227,3 +227,100 @@ class SoundingCard:
         if section == "header":
             return self.editor._header_world_to_root(x, y)
         return self.editor._body_world_to_root(x, y)
+
+    def make_hitbox(self, *, kind: str, bbox: tuple[float, float, float, float], boundary: int | None = None, extra: dict | None = None) -> dict:
+        data = {
+            "kind": str(kind),
+            "ti": int(self.test_index),
+            "bbox": tuple(float(v) for v in bbox),
+        }
+        if boundary is not None:
+            data["boundary"] = int(boundary)
+        if extra:
+            data.update(dict(extra))
+        return data
+
+    def render_header(
+        self,
+        canvas,
+        *,
+        title: str,
+        datetime_text: str,
+        header_fill: str,
+        header_text: str,
+        header_icon: str,
+        export_on: bool,
+        lock_on: bool,
+        hover: tuple | None,
+        icon_calendar: str,
+        icon_copy: str,
+        icon_delete: str,
+        icon_font,
+        hdr_h: float,
+        show_inclinometer: bool,
+    ) -> dict[str, tuple[float, float, float, float]]:
+        x0, y0, x1, y1 = self.geometry.header_bounds_world
+        canvas.create_rectangle(x0, y0, x1, y1, fill=header_fill, outline="#d9d9d9")
+
+        top_pad = 8.0
+        row_center_y = y0 + top_pad + 6.0
+        cb_s = 14.0
+        cb_x0 = x0 + 6.0
+        cb_y0 = row_center_y - cb_s / 2.0
+        canvas.create_rectangle(cb_x0, cb_y0, cb_x0 + cb_s, cb_y0 + cb_s, fill="white", outline="#b9b9b9")
+        if export_on:
+            canvas.create_line(cb_x0 + 3, cb_y0 + 7, cb_x0 + 6, cb_y0 + 10, cb_x0 + 11, cb_y0 + 4, fill="#2563eb", width=2, capstyle="round", joinstyle="round")
+
+        title_x = cb_x0 + cb_s + 8.0
+        canvas.create_text(title_x, row_center_y, anchor="w", text=title, font=("Segoe UI", 9, "bold"), fill=header_text)
+        if datetime_text:
+            canvas.create_text(title_x, row_center_y + 18.0, anchor="w", text=datetime_text, font=("Segoe UI", 9), fill=header_text)
+
+        ico_y = y0 + 14.0
+        lock_x, edit_x, dup_x, trash_x = (x1 - 92.0), (x1 - 66.0), (x1 - 40.0), (x1 - 14.0)
+        box_w, box_h = 22.0, 20.0
+        controls = {
+            "lock": (lock_x - box_w / 2, ico_y - box_h / 2, lock_x + box_w / 2, ico_y + box_h / 2),
+            "edit": (edit_x - box_w / 2, ico_y - box_h / 2, edit_x + box_w / 2, ico_y + box_h / 2),
+            "dup": (dup_x - box_w / 2, ico_y - box_h / 2, dup_x + box_w / 2, ico_y + box_h / 2),
+            "trash": (trash_x - box_w / 2, ico_y - box_h / 2, trash_x + box_w / 2, ico_y + box_h / 2),
+        }
+        for kind, rect in controls.items():
+            if hover == (kind, self.test_index):
+                canvas.create_rectangle(*rect, fill="#e9e9e9", outline="")
+        canvas.create_text(lock_x, ico_y, text=("🔒" if lock_on else "🔓"), font=("Segoe UI", 10), fill=header_icon, anchor="center")
+        canvas.create_text(edit_x, ico_y, text=icon_calendar, font=icon_font, fill=header_icon, anchor="center")
+        canvas.create_text(dup_x, ico_y, text=icon_copy, font=icon_font, fill=header_icon, anchor="center")
+        canvas.create_text(trash_x, ico_y, text=icon_delete, font=icon_font, fill=header_icon, anchor="center")
+
+        sh_y = y0 + hdr_h - top_pad
+        canvas.create_text(x0 + self.geometry.depth_width / 2, sh_y, text="H, м", font=("Segoe UI", 9), fill=header_text)
+        canvas.create_text(x0 + self.geometry.depth_width + self.geometry.value_width / 2, sh_y, text="qc", font=("Segoe UI", 9), fill=header_text)
+        canvas.create_text(x0 + self.geometry.depth_width + self.geometry.value_width + self.geometry.value_width / 2, sh_y, text="fs", font=("Segoe UI", 9), fill=header_text)
+        if show_inclinometer:
+            canvas.create_text(x0 + self.geometry.depth_width + self.geometry.value_width * 2 + self.geometry.value_width / 2, sh_y, text="U", font=("Segoe UI", 9), fill=header_text)
+        return {"header": (x0, y0, x1, y1), "export": (cb_x0, cb_y0, cb_x0 + cb_s, cb_y0 + cb_s), **controls}
+
+    def render_body_cell(self, canvas, *, row_y0: float, row_y1: float, field: str, text: str, fill: str, text_color: str):
+        x0, y0, x1, y1 = self.geometry.cell_bbox_world(row_y0, row_y1, field)
+        canvas.create_rectangle(x0, y0, x1, y1, fill=fill, outline="#d9d9d9")
+        anchor = "e"
+        tx = x1 - 4.0
+        if field == "depth":
+            text_color = text_color or "#555"
+        canvas.create_text(tx, (y0 + y1) / 2.0, text=text, anchor=anchor, fill=text_color, font=("Segoe UI", 9))
+        return (x0, y0, x1, y1)
+
+    def render_ownership_snapshot(self) -> dict[str, object]:
+        return {
+            "card": int(self.test_index),
+            "owned": ["header", "body_table_cells", "card_hit_testing", "editor_rects", "popup_anchors"],
+            "legacy": ["graphs", "ige_layers", "layer_handles", "global_canvas_lifecycle"],
+        }
+
+    def future_graph_interface(self) -> dict[str, str]:
+        return {
+            "graph_rect": "card.graph_bbox_world(...)",
+            "layer_overlay_targets": "card.make_hitbox(...) + future card.render_graph_overlay(...)",
+            "graph_lines": "future card.render_graph(...)",
+        }

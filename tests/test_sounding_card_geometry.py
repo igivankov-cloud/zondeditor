@@ -3,6 +3,20 @@ from types import SimpleNamespace
 from src.zondeditor.ui.sounding_card import SoundingCard, SoundingCardGeometry
 
 
+class _DummyCanvas:
+    def __init__(self):
+        self.calls = []
+
+    def create_rectangle(self, *args, **kwargs):
+        self.calls.append(("rectangle", args, kwargs))
+
+    def create_line(self, *args, **kwargs):
+        self.calls.append(("line", args, kwargs))
+
+    def create_text(self, *args, **kwargs):
+        self.calls.append(("text", args, kwargs))
+
+
 def test_sounding_card_geometry_returns_local_and_world_bounds():
     g = SoundingCardGeometry(
         card_x0=120.0,
@@ -92,3 +106,73 @@ def test_sounding_card_hit_testing_and_editor_rects():
     assert card.depth0_editor_rect(22.0, 44.0) == (201.0, 23.0, 263.0, 43.0)
     assert card.header_anchor_root(dx=10.0, dy=8.0) == (1210, 2008)
     assert card.popup_anchor_root(240.0, 50.0, section="body") == (3240, 4050)
+
+
+def test_sounding_card_render_header_and_body_cell_emit_card_local_bounds():
+    editor = SimpleNamespace(
+        _header_world_to_root=lambda x, y: (int(x), int(y)),
+        _body_world_to_root=lambda x, y: (int(x), int(y)),
+    )
+    g = SoundingCardGeometry(
+        card_x0=200.0,
+        card_y0=0.0,
+        card_width=310.0,
+        header_height=72.0,
+        body_height=400.0,
+        footer_height=0.0,
+        table_width=176.0,
+        graph_width=134.0,
+        depth_width=64.0,
+        value_width=56.0,
+    )
+    card = SoundingCard(None, editor=editor, test_index=7, geometry=g)
+    canvas = _DummyCanvas()
+
+    hitboxes = card.render_header(
+        canvas,
+        title="Опыт 7",
+        datetime_text="01.01.2026 10:00",
+        header_fill="#fff",
+        header_text="#111",
+        header_icon="#444",
+        export_on=True,
+        lock_on=False,
+        hover=None,
+        icon_calendar="📅",
+        icon_copy="⧉",
+        icon_delete="🗑",
+        icon_font=("Segoe UI Symbol", 12),
+        hdr_h=64.0,
+        show_inclinometer=False,
+    )
+    rect = card.render_body_cell(canvas, row_y0=22.0, row_y1=44.0, field="qc", text="12", fill="#fff", text_color="#000")
+
+    assert hitboxes["header"] == (200.0, 0.0, 376.0, 72.0)
+    assert hitboxes["edit"] == (299.0, 4.0, 321.0, 24.0)
+    assert rect == (264.0, 22.0, 320.0, 44.0)
+    assert any(call[0] == "rectangle" for call in canvas.calls)
+    assert any(call[0] == "text" for call in canvas.calls)
+
+
+def test_sounding_card_make_hitbox_is_card_local_owner_api():
+    editor = SimpleNamespace(
+        _header_world_to_root=lambda x, y: (int(x), int(y)),
+        _body_world_to_root=lambda x, y: (int(x), int(y)),
+    )
+    g = SoundingCardGeometry(
+        card_x0=50.0,
+        card_y0=0.0,
+        card_width=326.0,
+        header_height=72.0,
+        body_height=300.0,
+        footer_height=0.0,
+        table_width=176.0,
+        graph_width=150.0,
+        depth_width=64.0,
+        value_width=56.0,
+    )
+    card = SoundingCard(None, editor=editor, test_index=3, geometry=g)
+
+    hit = card.make_hitbox(kind="boundary", bbox=(310.0, 80.0, 330.0, 100.0), boundary=2, extra={"tag": "h1"})
+
+    assert hit == {"kind": "boundary", "ti": 3, "bbox": (310.0, 80.0, 330.0, 100.0), "boundary": 2, "tag": "h1"}
