@@ -35,7 +35,7 @@ class _DummyViewport:
 
 
 class _DummyBodyCanvas:
-    def __init__(self, *, bbox_all=(0, 0, 1000, 500), height=120, y0=0.0, rootx=0, rooty=0):
+    def __init__(self, *, bbox_all=(0, 0, 1000, 500), height=120, y0=0.0, rootx=0, rooty=0, support_items=False):
         self._bbox_all = bbox_all
         self._height = height
         self._y0 = y0
@@ -44,6 +44,9 @@ class _DummyBodyCanvas:
         self.y_moves = []
         self.y_scrolls = []
         self.draw_calls = []
+        self._support_items = support_items
+        self._items = []
+        self._next_item_id = 1
 
     def bbox(self, _tag):
         return self._bbox_all
@@ -66,17 +69,49 @@ class _DummyBodyCanvas:
     def winfo_rooty(self):
         return self._rooty
 
+    def _add_item(self, item_type, *args, **kwargs):
+        item_id = self._next_item_id
+        self._next_item_id += 1
+        self._items.append({"id": item_id, "type": item_type, "args": args, "kwargs": kwargs})
+        self.draw_calls.append((item_type, args, kwargs))
+        return item_id
+
     def create_rectangle(self, *args, **kwargs):
+        if self._support_items:
+            return self._add_item("rectangle", *args, **kwargs)
         self.draw_calls.append(("rectangle", args, kwargs))
 
     def create_line(self, *args, **kwargs):
+        if self._support_items:
+            return self._add_item("line", *args, **kwargs)
         self.draw_calls.append(("line", args, kwargs))
 
     def create_text(self, *args, **kwargs):
+        if self._support_items:
+            return self._add_item("text", *args, **kwargs)
         self.draw_calls.append(("text", args, kwargs))
+
+    def create_window(self, *args, **kwargs):
+        return self._add_item("window", *args, **kwargs)
+
+    def find_all(self):
+        return tuple(item["id"] for item in self._items)
+
+    def type(self, item_id):
+        for item in self._items:
+            if item["id"] == item_id:
+                return item["type"]
+        raise KeyError(item_id)
 
     def delete(self, *args, **kwargs):
         self.draw_calls.append(("delete", args, kwargs))
+        if not self._support_items:
+            return
+        if args == ("all",):
+            self._items.clear()
+            return
+        ids = {arg for arg in args if isinstance(arg, int)}
+        self._items = [item for item in self._items if item["id"] not in ids]
 
 
 class _DummyScrollbar:
@@ -407,3 +442,78 @@ def test_redraw_uses_card_hosted_header_and_body_targets_not_shared_canvases():
 
     assert any(call[0] == "rectangle" for call in card.header_canvas.draw_calls)
     assert any(call[0] == "rectangle" for call in card.body_canvas.draw_calls)
+
+
+
+def test_canvas_delete_all_removes_card_window_items_on_host_canvas():
+    host = _DummyBodyCanvas(support_items=True)
+    primitive_id = host.create_rectangle(0, 0, 10, 10)
+    window_id = host.create_window((20, 0), window=object(), anchor="nw")
+
+    assert host.find_all() == (primitive_id, window_id)
+
+    host.delete("all")
+
+    assert host.find_all() == ()
+
+
+
+def test_clear_host_canvas_primitives_preserves_card_window_items():
+    editor = _make_editor()
+    host = _DummyBodyCanvas(support_items=True)
+    primitive_id = host.create_rectangle(0, 0, 10, 10)
+    window_id = host.create_window((20, 0), window=object(), anchor="nw")
+    card = SimpleNamespace(_body_host=host, _body_window_id=window_id, _header_host=None, _header_window_id=None)
+    editor._sounding_cards = {0: card}
+
+    editor._clear_host_canvas_primitives(host, label="body_host")
+
+    assert host.find_all() == (window_id,)
+    delete_calls = [call for call in host.draw_calls if call[0] == "delete"]
+    assert delete_calls[-1][1] == (primitive_id,)
+
+
+
+def test_redraw_preserves_host_window_items_and_clears_only_primitives():
+    editor = _make_editor()
+    editor.tests = [SimpleNamespace(tid=1, dt="01.01.2026 10:00", export_on=True, locked=False, qc=["10"], fs=["5"], depth=["0.00"])]
+    editor.display_cols = [0]
+    editor.flags = {1: SimpleNamespace(invalid=False, force_cells=set(), interp_cells=set(), user_cells=set(), algo_cells=set())}
+    editor._build_grid = lambda: setattr(editor, "_grid_base", [0.0]) or setattr(editor, "_grid", [0]) or setattr(editor, "_grid_row_maps", {0: {0: 0}}) or setattr(editor, "_grid_start_rows", {0: 0}) or setattr(editor, "_grid_units", [("row", 0)])
+    editor._diagnostics_report = lambda: SimpleNamespace(by_test={1: SimpleNamespace(invalid=False, missing_rows=[])})
+    editor._header_fill_for_test = lambda **kwargs: "#fff"
+    editor._sync_view_ribbon_state = lambda: None
+    editor._sync_layers_panel = lambda: None
+    editor._update_scrollregion = lambda: None
+    editor._is_graph_panel_visible = lambda: False
+    editor._clear_graph_layers = lambda: None
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor._cell_bbox = lambda col, row, field: (200.0, 22.0, 256.0, 44.0)
+    editor.canvas = _DummyBodyCanvas(support_items=True)
+    editor.hcanvas = _DummyBodyCanvas(support_items=True)
+    legacy_body_id = editor.canvas.create_rectangle(0, 0, 10, 10)
+    legacy_header_id = editor.hcanvas.create_rectangle(0, 0, 10, 10)
+    body_window_id = editor.canvas.create_window((20, 0), window=object(), anchor="nw")
+    header_window_id = editor.hcanvas.create_window((20, 0), window=object(), anchor="nw")
+    editor.soundings_viewport = SimpleNamespace(strip=None)
+    editor._refresh_display_order = lambda: None
+    editor._rebuild_sounding_cards = lambda: {0: card}
+    card = editor._card_for_test(0)
+    card.header_canvas = _DummyBodyCanvas()
+    card.body_canvas = _DummyBodyCanvas()
+    card._header_host = editor.hcanvas
+    card._body_host = editor.canvas
+    card._header_window_id = header_window_id
+    card._body_window_id = body_window_id
+    editor._sounding_cards = {0: card}
+
+    editor._redraw()
+
+    assert legacy_body_id not in editor.canvas.find_all()
+    assert legacy_header_id not in editor.hcanvas.find_all()
+    assert body_window_id in editor.canvas.find_all()
+    assert header_window_id in editor.hcanvas.find_all()

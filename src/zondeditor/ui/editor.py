@@ -7062,6 +7062,67 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
 
+    def _canvas_item_count(self, canvas):
+        if canvas is None or not hasattr(canvas, "find_all"):
+            return None
+        try:
+            return len(canvas.find_all())
+        except Exception:
+            return None
+
+    def _card_window_ids_for_host(self, host):
+        ids: list[int] = []
+        for card in (getattr(self, "_sounding_cards", {}) or {}).values():
+            if host is getattr(card, "_header_host", None):
+                window_id = getattr(card, "_header_window_id", None)
+                if window_id is not None:
+                    ids.append(window_id)
+            if host is getattr(card, "_body_host", None):
+                window_id = getattr(card, "_body_window_id", None)
+                if window_id is not None:
+                    ids.append(window_id)
+        return tuple(ids)
+
+    def _clear_host_canvas_primitives(self, canvas, *, label: str):
+        if canvas is None:
+            return
+        before = self._canvas_item_count(canvas)
+        preserved = self._card_window_ids_for_host(canvas)
+        if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+            print(
+                f"[HOSTCLEANUP] {label} before_items={before} preserved_windows={list(preserved)}",
+                file=sys.stderr,
+            )
+        if hasattr(canvas, "find_all") and hasattr(canvas, "type") and hasattr(canvas, "delete"):
+            try:
+                for item_id in tuple(canvas.find_all()):
+                    if item_id in preserved:
+                        continue
+                    try:
+                        item_type = canvas.type(item_id)
+                    except Exception:
+                        item_type = None
+                    if item_type == "window":
+                        continue
+                    canvas.delete(item_id)
+            except Exception:
+                try:
+                    canvas.delete("all")
+                except Exception:
+                    pass
+        elif hasattr(canvas, "delete"):
+            try:
+                canvas.delete("all")
+            except Exception:
+                pass
+        after = self._canvas_item_count(canvas)
+        after_windows = self._card_window_ids_for_host(canvas)
+        if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+            print(
+                f"[HOSTCLEANUP] {label} after_items={after} preserved_windows={list(after_windows)}",
+                file=sys.stderr,
+            )
+
     def _header_bbox(self, col: int):
         try:
             ti = int((getattr(self, "display_cols", []) or [])[int(col)])
@@ -7076,15 +7137,15 @@ class GeoCanvasEditor(tk.Tk):
 
     def _redraw(self):
         self._sync_view_ribbon_state()
-        # два холста: hcanvas (фиксированная шапка) + canvas (данные)
+        self._refresh_display_order()
         try:
-            self.canvas.delete("all")
+            self._rebuild_sounding_cards()
         except Exception:
             pass
-        try:
-            self.hcanvas.delete("all")
-        except Exception:
-            pass
+        # card-based path mounts card canvases into host canvases via create_window;
+        # cleanup must preserve those window items and only clear primitive fallback drawings.
+        self._clear_host_canvas_primitives(self.canvas, label="body_host")
+        self._clear_host_canvas_primitives(self.hcanvas, label="header_host")
 
         if not self.tests:
             self._sync_layers_panel()
@@ -7094,12 +7155,6 @@ class GeoCanvasEditor(tk.Tk):
         self._build_grid()
         max_rows = len(getattr(self, "_grid", []) or [])
         grid = getattr(self, "_grid_base", []) or []
-
-        self._refresh_display_order()
-        try:
-            self._rebuild_sounding_cards()
-        except Exception:
-            pass
 
         # фиксируем высоту шапки под текущие параметры
         try:
