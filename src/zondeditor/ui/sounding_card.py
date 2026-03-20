@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import sys
 import tkinter as tk
 from tkinter import ttk
 
@@ -135,15 +136,13 @@ class SoundingCard:
         if master is None:
             self.host = None
             self.header_frame = None
-            self.header_canvas = None
-            self.body_canvas = None
             self.footer_frame = None
         else:
             self.host = ttk.Frame(master)
             self.header_frame = ttk.Frame(self.host)
-            self.header_canvas = tk.Canvas(self.header_frame, highlightthickness=0, background="white")
-            self.body_canvas = tk.Canvas(self.host, highlightthickness=0, background="white")
             self.footer_frame = ttk.Frame(self.host)
+        self.header_canvas = None
+        self.body_canvas = None
         self._header_window_id = None
         self._body_window_id = None
         self._header_host = None
@@ -152,45 +151,89 @@ class SoundingCard:
     def update_geometry(self, geometry: SoundingCardGeometry):
         self.geometry = geometry
 
+    def _widget_master(self, widget):
+        if widget is None:
+            return None
+        master = getattr(widget, "master", None)
+        if master is not None:
+            return master
+        try:
+            return widget.nametowidget(widget.winfo_parent())
+        except Exception:
+            return None
+
+    def _log_mount_error(self, target: str, exc: Exception, *, host=None, widget=None):
+        print(
+            f"[SoundingCard.mount_targets] {target} failed for card={self.test_index}: {exc}; "
+            f"host={host!r} host_widget={getattr(host, 'widgetName', None)!r} "
+            f"widget={widget!r} widget_master={self._widget_master(widget)!r}",
+            file=sys.stderr,
+        )
+
+    def _ensure_canvas_parent(self, attr_name: str, host, **kwargs):
+        canvas = getattr(self, attr_name)
+        master = self._widget_master(canvas)
+        if canvas is not None and host is not None and master is not host:
+            print(
+                f"[SoundingCard.mount_targets] recreating {attr_name} for card={self.test_index}: "
+                f"wrong_master={master!r} expected_host={host!r}",
+                file=sys.stderr,
+            )
+            try:
+                canvas.destroy()
+            except Exception as exc:
+                self._log_mount_error(f"destroy {attr_name}", exc, host=host, widget=canvas)
+            canvas = None
+            setattr(self, attr_name, None)
+        if canvas is None and host is not None:
+            try:
+                canvas = tk.Canvas(host, highlightthickness=0, background="white")
+                setattr(self, attr_name, canvas)
+            except Exception as exc:
+                self._log_mount_error(f"create {attr_name}", exc, host=host, widget=canvas)
+                return None
+        if canvas is not None:
+            try:
+                canvas.configure(**kwargs)
+            except Exception as exc:
+                self._log_mount_error(f"configure {attr_name}", exc, host=host, widget=canvas)
+        return canvas
+
     def mount_targets(self, *, header_host=None, body_host=None, body_view_height: float | None = None):
         self._header_host = header_host or self._header_host
         self._body_host = body_host or self._body_host
         if body_view_height is not None:
             self.set_body_scroll_context(view_height=float(body_view_height))
-        if self.header_canvas is not None:
-            try:
-                self.header_canvas.configure(
-                    width=int(self.geometry.table_width),
-                    height=int(self.geometry.header_height),
-                    scrollregion=(0, 0, int(self.geometry.table_width), int(self.geometry.header_height)),
-                )
-            except Exception:
-                pass
-        if self.body_canvas is not None:
-            try:
-                self.body_canvas.configure(
-                    width=int(self.geometry.card_width),
-                    height=int(max(1.0, float(self._body_view_height or self.geometry.body_height))),
-                    scrollregion=(0, 0, int(self.geometry.card_width), int(max(self.geometry.body_height, self._body_content_height))),
-                )
-            except Exception:
-                pass
-        if self.header_canvas is not None and self._header_host is not None:
+        header_canvas = self._ensure_canvas_parent(
+            "header_canvas",
+            self._header_host,
+            width=int(self.geometry.table_width),
+            height=int(self.geometry.header_height),
+            scrollregion=(0, 0, int(self.geometry.table_width), int(self.geometry.header_height)),
+        )
+        body_canvas = self._ensure_canvas_parent(
+            "body_canvas",
+            self._body_host,
+            width=int(self.geometry.card_width),
+            height=int(max(1.0, float(self._body_view_height or self.geometry.body_height))),
+            scrollregion=(0, 0, int(self.geometry.card_width), int(max(self.geometry.body_height, self._body_content_height))),
+        )
+        if header_canvas is not None and self._header_host is not None:
             try:
                 if self._header_window_id is None:
-                    self._header_window_id = self._header_host.create_window((float(self.geometry.card_x0), 0.0), window=self.header_canvas, anchor="nw")
+                    self._header_window_id = self._header_host.create_window((float(self.geometry.card_x0), 0.0), window=header_canvas, anchor="nw")
                 else:
                     self._header_host.coords(self._header_window_id, float(self.geometry.card_x0), 0.0)
-            except Exception:
-                pass
-        if self.body_canvas is not None and self._body_host is not None:
+            except Exception as exc:
+                self._log_mount_error("header create_window", exc, host=self._header_host, widget=header_canvas)
+        if body_canvas is not None and self._body_host is not None:
             try:
                 if self._body_window_id is None:
-                    self._body_window_id = self._body_host.create_window((float(self.geometry.card_x0), 0.0), window=self.body_canvas, anchor="nw")
+                    self._body_window_id = self._body_host.create_window((float(self.geometry.card_x0), 0.0), window=body_canvas, anchor="nw")
                 else:
                     self._body_host.coords(self._body_window_id, float(self.geometry.card_x0), 0.0)
-            except Exception:
-                pass
+            except Exception as exc:
+                self._log_mount_error("body create_window", exc, host=self._body_host, widget=body_canvas)
 
     def world_to_local(self, x: float, y: float) -> tuple[float, float]:
         return self.geometry.world_to_local(x, y)

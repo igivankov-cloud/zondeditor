@@ -378,3 +378,139 @@ def test_sounding_card_header_and_table_can_render_into_card_owned_targets():
 
     assert header_hits["header"] == (0.0, 0.0, 176.0, 72.0)
     assert rect == (64.0, 22.0, 120.0, 44.0)
+
+
+class _FakeFrame:
+    def __init__(self, master=None):
+        self.master = master
+
+
+class _FakeTkCanvas:
+    next_window_id = 1
+
+    def __init__(self, master=None, **kwargs):
+        self.master = master
+        self.kwargs = dict(kwargs)
+        self.configured = []
+        self.destroyed = False
+        self.windows = {}
+        self.coords_calls = []
+
+    def configure(self, **kwargs):
+        self.configured.append(dict(kwargs))
+        self.kwargs.update(kwargs)
+
+    def create_window(self, coords, window=None, anchor=None):
+        window_id = _FakeTkCanvas.next_window_id
+        _FakeTkCanvas.next_window_id += 1
+        self.windows[window_id] = {"coords": tuple(coords), "window": window, "anchor": anchor}
+        return window_id
+
+    def coords(self, window_id, x, y):
+        self.coords_calls.append((window_id, x, y))
+        self.windows[window_id]["coords"] = (x, y)
+
+    def destroy(self):
+        self.destroyed = True
+
+
+
+def test_mount_targets_lazily_creates_canvases_with_correct_hosts(monkeypatch):
+    import src.zondeditor.ui.sounding_card as sounding_card_module
+
+    monkeypatch.setattr(sounding_card_module.ttk, 'Frame', _FakeFrame)
+    monkeypatch.setattr(sounding_card_module.tk, 'Canvas', _FakeTkCanvas)
+
+    editor = SimpleNamespace(
+        _header_world_to_root=lambda x, y: (int(x), int(y)),
+        _body_world_to_root=lambda x, y, ti=None: (int(x), int(y)),
+    )
+    g = SoundingCardGeometry(
+        card_x0=50.0,
+        card_y0=0.0,
+        card_width=326.0,
+        header_height=72.0,
+        body_height=300.0,
+        footer_height=0.0,
+        table_width=176.0,
+        graph_width=150.0,
+        depth_width=64.0,
+        value_width=56.0,
+    )
+    card = SoundingCard(object(), editor=editor, test_index=11, geometry=g)
+    header_host = _FakeTkCanvas()
+    body_host = _FakeTkCanvas()
+
+    assert card.header_canvas is None
+    assert card.body_canvas is None
+
+    card.mount_targets(header_host=header_host, body_host=body_host, body_view_height=120.0)
+    header_canvas = card.header_canvas
+    body_canvas = card.body_canvas
+
+    assert header_canvas is not None and header_canvas.master is header_host
+    assert body_canvas is not None and body_canvas.master is body_host
+    assert card._header_window_id in header_host.windows
+    assert card._body_window_id in body_host.windows
+
+    old_header_window_id = card._header_window_id
+    old_body_window_id = card._body_window_id
+    card.update_geometry(SoundingCardGeometry(
+        card_x0=75.0,
+        card_y0=0.0,
+        card_width=330.0,
+        header_height=72.0,
+        body_height=300.0,
+        footer_height=0.0,
+        table_width=180.0,
+        graph_width=150.0,
+        depth_width=64.0,
+        value_width=56.0,
+    ))
+    card.mount_targets(header_host=header_host, body_host=body_host, body_view_height=120.0)
+
+    assert card._header_window_id == old_header_window_id
+    assert card._body_window_id == old_body_window_id
+    assert header_host.coords_calls[-1] == (old_header_window_id, 75.0, 0.0)
+    assert body_host.coords_calls[-1] == (old_body_window_id, 75.0, 0.0)
+
+
+
+def test_mount_targets_recreates_canvases_when_existing_master_is_wrong(monkeypatch):
+    import src.zondeditor.ui.sounding_card as sounding_card_module
+
+    monkeypatch.setattr(sounding_card_module.ttk, 'Frame', _FakeFrame)
+    monkeypatch.setattr(sounding_card_module.tk, 'Canvas', _FakeTkCanvas)
+
+    editor = SimpleNamespace(
+        _header_world_to_root=lambda x, y: (int(x), int(y)),
+        _body_world_to_root=lambda x, y, ti=None: (int(x), int(y)),
+    )
+    g = SoundingCardGeometry(
+        card_x0=50.0,
+        card_y0=0.0,
+        card_width=326.0,
+        header_height=72.0,
+        body_height=300.0,
+        footer_height=0.0,
+        table_width=176.0,
+        graph_width=150.0,
+        depth_width=64.0,
+        value_width=56.0,
+    )
+    card = SoundingCard(object(), editor=editor, test_index=12, geometry=g)
+    wrong_header_parent = _FakeFrame()
+    wrong_body_parent = _FakeFrame()
+    wrong_header_canvas = _FakeTkCanvas(wrong_header_parent)
+    wrong_body_canvas = _FakeTkCanvas(wrong_body_parent)
+    card.header_canvas = wrong_header_canvas
+    card.body_canvas = wrong_body_canvas
+
+    header_host = _FakeTkCanvas()
+    body_host = _FakeTkCanvas()
+    card.mount_targets(header_host=header_host, body_host=body_host, body_view_height=120.0)
+
+    assert wrong_header_canvas.destroyed is True
+    assert wrong_body_canvas.destroyed is True
+    assert card.header_canvas is not wrong_header_canvas and card.header_canvas.master is header_host
+    assert card.body_canvas is not wrong_body_canvas and card.body_canvas.master is body_host
