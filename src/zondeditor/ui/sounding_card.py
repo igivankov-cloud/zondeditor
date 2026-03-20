@@ -194,6 +194,32 @@ class SoundingCard:
         except TypeError:
             return self.editor._body_world_to_root(x, y)
 
+    def body_render_canvas(self, canvas=None):
+        return self.body_canvas if canvas is None else canvas
+
+    def clear_body_render_layers(self, *tags: str):
+        canvas = self.body_render_canvas()
+        if canvas is None:
+            return
+        for tag in tags or ("graph_axes", "graph_qc", "graph_fs", "graph_nodata", "layers_overlay", "layer_handles"):
+            try:
+                canvas.delete(tag)
+            except Exception:
+                pass
+
+    def _uses_body_canvas_coords(self, canvas) -> bool:
+        return canvas is not None and canvas is self.body_canvas
+
+    def _map_body_point(self, canvas, x: float, y: float) -> tuple[float, float]:
+        if self._uses_body_canvas_coords(canvas):
+            return self.body_world_to_local(x, y)
+        return float(x), float(y)
+
+    def _map_body_rect(self, canvas, rect: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+        x0, y0 = self._map_body_point(canvas, rect[0], rect[1])
+        x1, y1 = self._map_body_point(canvas, rect[2], rect[3])
+        return (x0, y0, x1, y1)
+
     def invalidate_body(self, *parts: str):
         targets = parts or ("body",)
         self._invalid_parts.update(str(part) for part in targets)
@@ -394,6 +420,16 @@ class SoundingCard:
     def render_ownership_snapshot(self) -> dict[str, object]:
         return {
             "card": int(self.test_index),
+            "sections": {
+                "header": "SoundingCard",
+                "body_table": "SoundingCard",
+                "graphs": "SoundingCard",
+                "ige_layers": "SoundingCard",
+                "overlays": "SoundingCard",
+                "popup_anchors": "SoundingCard",
+                "vertical_viewport": "SoundingCard",
+                "redraw_lifecycle": "SoundingCard",
+            },
             "owned": [
                 "header",
                 "body_canvas",
@@ -431,7 +467,7 @@ class SoundingCard:
 
     def render_graph(
         self,
-        canvas,
+        canvas=None,
         *,
         rect: tuple[float, float, float, float],
         y_points: list[float],
@@ -447,8 +483,11 @@ class SoundingCard:
         groundwater_color: str = "#2f6fff",
         nodata_text: str = "нет данных",
     ):
-        x0, y0, x1, y1 = [float(v) for v in rect]
+        canvas = self.body_render_canvas(canvas)
+        x0, y0, x1, y1 = self._map_body_rect(canvas, tuple(float(v) for v in rect))
         canvas.create_rectangle(x0, y0, x1, y1, fill=frame_fill, outline=frame_outline)
+        if groundwater_level is not None:
+            _gx, groundwater_level = self._map_body_point(canvas, rect[0], float(groundwater_level))
         if groundwater_level is not None and y0 <= float(groundwater_level) <= y1:
             canvas.create_line(x0 + 2, float(groundwater_level), x1 - 2, float(groundwater_level), fill=groundwater_color, width=2, dash=(6, 3))
         if not y_points:
@@ -467,10 +506,11 @@ class SoundingCard:
         qc_pts = []
         fs_pts = []
         for yy, qv, fv in zip(y_points, qc_values, fs_values):
-            if yy < y0 - 1e-6 or yy > y1 + 1e-6:
+            _pyx, pyy = self._map_body_point(canvas, rect[0], yy)
+            if pyy < y0 - 1e-6 or pyy > y1 + 1e-6:
                 continue
-            qc_pts.extend([_sx(qv, qmax), float(yy)])
-            fs_pts.extend([_sx(fv, fmax), float(yy)])
+            qc_pts.extend([_sx(qv, qmax), float(pyy)])
+            fs_pts.extend([_sx(fv, fmax), float(pyy)])
 
         if len(qc_pts) >= 4:
             canvas.create_line(*qc_pts, fill=qc_color, width=2, smooth=False)
@@ -480,7 +520,7 @@ class SoundingCard:
 
     def render_ige(
         self,
-        canvas,
+        canvas=None,
         *,
         intervals: list[dict],
         fill_resolver,
@@ -488,16 +528,17 @@ class SoundingCard:
         label_font_factory,
         layer_ui_colors: dict[str, str],
     ) -> tuple[list[dict], list[dict]]:
+        canvas = self.body_render_canvas(canvas)
         label_spans: list[dict] = []
         plot_hitboxes: list[dict] = []
         for interval in intervals:
-            x0 = float(interval["x0"]); x1 = float(interval["x1"])
-            y0 = float(interval["y0"]); y1 = float(interval["y1"])
+            world_rect = (float(interval["x0"]), float(interval["y0"]), float(interval["x1"]), float(interval["y1"]))
+            x0, y0, x1, y1 = self._map_body_rect(canvas, world_rect)
             soil_type = str(interval.get("soil_type") or "")
             fill_color = str(fill_resolver(soil_type))
             canvas.create_rectangle(x0, y0, x1, y1, fill=fill_color, outline="")
-            hatch_drawer(x0, y0, x1, y1, soil_type)
-            plot_hitboxes.append(self.make_hitbox(kind="interval", bbox=(x0, y0, x1, y1), extra={"interval_index": int(interval.get("interval_index", 0)), "ige_id": interval.get("ige_id"), "top": float(interval.get("top", 0.0)), "bot": float(interval.get("bot", 0.0))}))
+            hatch_drawer(x0, y0, x1, y1, soil_type, canvas=canvas, logical_rect=world_rect)
+            plot_hitboxes.append(self.make_hitbox(kind="interval", bbox=world_rect, extra={"interval_index": int(interval.get("interval_index", 0)), "ige_id": interval.get("ige_id"), "top": float(interval.get("top", 0.0)), "bot": float(interval.get("bot", 0.0))}))
             text = str(interval.get("ige_id") or "")
             if text and (y1 - y0) >= 8.0:
                 cx = (x0 + x1) * 0.5
@@ -514,38 +555,44 @@ class SoundingCard:
                         bbox = (cx - chip_w * 0.5, cy - chip_h * 0.5, cx + chip_w * 0.5, cy + chip_h * 0.5)
                         canvas.create_rectangle(*bbox, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"])
                         canvas.create_text(cx, cy, text=text, fill=layer_ui_colors["text"], activefill=layer_ui_colors["text"], font=("Segoe UI", font_size, "bold"))
-                        label_spans.append(self.make_hitbox(kind="label", bbox=(bbox[0] - 3.0, bbox[1] - 2.0, bbox[2] + 3.0, bbox[3] + 2.0), extra={"depth": float(interval.get("depth", 0.0))}))
+                        label_spans.append(self.make_hitbox(kind="label", bbox=(world_rect[0], world_rect[1], world_rect[2], world_rect[3]), extra={"depth": float(interval.get("depth", 0.0))}))
                         break
         return plot_hitboxes, label_spans
 
     def render_overlays(
         self,
-        canvas,
+        canvas=None,
         *,
         overlay_specs: list[dict],
         layer_ui_colors: dict[str, str],
     ) -> tuple[list[dict], list[dict]]:
+        canvas = self.body_render_canvas(canvas)
         handle_hits: list[dict] = []
         depth_hits: list[dict] = []
         for spec in overlay_specs:
             kind = str(spec.get("kind") or "")
             if kind == "line":
-                canvas.create_line(*spec["points"], fill=spec.get("fill", layer_ui_colors["line"]), width=spec.get("width", 1), dash=spec.get("dash"))
+                x0, y0 = self._map_body_point(canvas, spec["points"][0], spec["points"][1])
+                x1, y1 = self._map_body_point(canvas, spec["points"][2], spec["points"][3])
+                canvas.create_line(x0, y0, x1, y1, fill=spec.get("fill", layer_ui_colors["line"]), width=spec.get("width", 1), dash=spec.get("dash"))
                 continue
             if kind == "handle":
-                x0, y0, x1, y1 = spec["bbox"]
+                world_bbox = tuple(float(v) for v in spec["bbox"])
+                x0, y0, x1, y1 = self._map_body_rect(canvas, world_bbox)
                 canvas.create_rectangle(x0, y0, x1, y1, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"], activewidth=2)
-                handle_hits.append(self.make_hitbox(kind=str(spec.get("hit_kind", "boundary")), bbox=(x0 - 1, y0 - 1, x1 + 1, y1 + 1), boundary=spec.get("boundary"), extra={"tag": spec.get("tag")}))
+                handle_hits.append(self.make_hitbox(kind=str(spec.get("hit_kind", "boundary")), bbox=(world_bbox[0] - 1, world_bbox[1] - 1, world_bbox[2] + 1, world_bbox[3] + 1), boundary=spec.get("boundary"), extra={"tag": spec.get("tag")}))
                 continue
             if kind == "depth_box":
-                x0, y0, x1, y1 = spec["bbox"]
+                world_bbox = tuple(float(v) for v in spec["bbox"])
+                x0, y0, x1, y1 = self._map_body_rect(canvas, world_bbox)
                 canvas.create_rectangle(x0, y0, x1, y1, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"])
                 canvas.create_text((x0 + x1) / 2.0, (y0 + y1) / 2.0, text=str(spec.get("text", "")), fill=layer_ui_colors["text"], activefill=layer_ui_colors["text"], font=("Segoe UI", 7))
-                depth_hits.append(self.make_hitbox(kind=str(spec.get("hit_kind", "boundary_depth_edit")), bbox=(x0, y0 - 1.0, x1, y1 + 1.0), boundary=spec.get("boundary")))
+                depth_hits.append(self.make_hitbox(kind=str(spec.get("hit_kind", "boundary_depth_edit")), bbox=(world_bbox[0], world_bbox[1] - 1.0, world_bbox[2], world_bbox[3] + 1.0), boundary=spec.get("boundary")))
                 continue
             if kind in {"plus", "minus"}:
-                x0, y0, x1, y1 = spec["bbox"]
+                world_bbox = tuple(float(v) for v in spec["bbox"])
+                x0, y0, x1, y1 = self._map_body_rect(canvas, world_bbox)
                 canvas.create_rectangle(x0, y0, x1, y1, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"])
                 canvas.create_text((x0 + x1) / 2.0, (y0 + y1) / 2.0, text=("+" if kind == "plus" else "−"), fill=layer_ui_colors["text"], activefill=layer_ui_colors["text"], font=("Segoe UI", 9, "bold"))
-                handle_hits.append(self.make_hitbox(kind=str(spec.get("hit_kind", kind)), bbox=(x0 - 4.0, y0 - 4.0, x1 + 4.0, y1 + 4.0), boundary=spec.get("boundary"), extra={"tag": spec.get("tag")}))
+                handle_hits.append(self.make_hitbox(kind=str(spec.get("hit_kind", kind)), bbox=(world_bbox[0] - 4.0, world_bbox[1] - 4.0, world_bbox[2] + 4.0, world_bbox[3] + 4.0), boundary=spec.get("boundary"), extra={"tag": spec.get("tag")}))
         return handle_hits, depth_hits

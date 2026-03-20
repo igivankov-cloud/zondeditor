@@ -4722,6 +4722,7 @@ class GeoCanvasEditor(tk.Tk):
         return {
             "x_fraction": view,
             "visible_x": visible,
+            "active_card": (None if active_card is None else int(active_card.test_index)),
             "first_card": first_card,
             "last_card": last_card,
             "active_inline_editor": editor_bbox,
@@ -4945,6 +4946,10 @@ class GeoCanvasEditor(tk.Tk):
         self.graph_fs_max_kpa = float(fs_max)
 
     def _clear_graph_layers(self):
+        for ti in getattr(self, "display_cols", []) or []:
+            card = self._card_for_test(int(ti))
+            if card is not None and hasattr(card, "clear_body_render_layers"):
+                card.clear_body_render_layers("graph_axes", "graph_qc", "graph_fs", "graph_nodata", "layers_overlay", "layer_handles")
         for cnv in (getattr(self, "canvas", None), getattr(self, "hcanvas", None)):
             if cnv is None:
                 continue
@@ -5421,14 +5426,14 @@ class GeoCanvasEditor(tk.Tk):
             return "#ffffff"
         return str(SOIL_TYPE_TO_COLUMN_FILL.get(soil, "#ffffff"))
 
-    def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, soil_type: str, tags, logical_rect=None):
+    def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, soil_type: str, tags, logical_rect=None, canvas=None):
         # Единая система: внешние JSON-штриховки через domain.hatching registry.
         pattern = load_registered_hatch(str(soil_type or ""))
         if pattern is None:
             # Временный fallback: без штриховки, если внешний JSON не зарегистрирован.
             return
         render_hatch_pattern(
-            self.canvas,
+            canvas or self.canvas,
             (float(x0), float(y0), float(x1), float(y1)),
             pattern,
             tags=tags,
@@ -5616,6 +5621,7 @@ class GeoCanvasEditor(tk.Tk):
             card = self._card_for_test(int(ti))
             if card is None:
                 continue
+            body_target = getattr(card, "body_canvas", None) or self.canvas
             rect = self._graph_rect_for_test(ti)
             if not rect:
                 continue
@@ -5663,7 +5669,7 @@ class GeoCanvasEditor(tk.Tk):
                         qc_vals.append(float(qc_mpa))
                         fs_vals.append(float(fs_kpa))
 
-            plot_rect = (x0, x1, y0, y1)
+            plot_rect = (x0, y0, x1, y1)
             gwl_canvas_y = None
             try:
                 settings = dict(getattr(self, "cpt_calc_settings", {}) or {})
@@ -5711,14 +5717,16 @@ class GeoCanvasEditor(tk.Tk):
             plot_hits = []
             label_hits = []
             if show_geology:
+                card.invalidate_layers()
                 plot_hits, label_hits = card.render_ige(
-                    self.canvas,
+                    body_target,
                     intervals=interval_specs,
                     fill_resolver=self._geology_layer_fill_color,
-                    hatch_drawer=lambda rx0, ry0, rx1, ry1, soil_type: self._draw_layer_hatch(rx0, ry0, rx1, ry1, soil_type=soil_type, tags=("layers_overlay", f"layers_overlay_{ti}"), logical_rect=(x0, y0, x1, y1)),
+                    hatch_drawer=lambda rx0, ry0, rx1, ry1, soil_type, canvas=None, logical_rect=None: self._draw_layer_hatch(rx0, ry0, rx1, ry1, soil_type=soil_type, tags=("layers_overlay", f"layers_overlay_{ti}"), logical_rect=logical_rect or (x0, y0, x1, y1), canvas=canvas),
                     label_font_factory=lambda size: tkfont.Font(font=("Segoe UI", size, "bold")),
                     layer_ui_colors=LAYER_UI_COLORS,
                 )
+                card.redraw_if_needed("layers")
                 self._layer_plot_hitbox.extend(plot_hits)
                 self._layer_label_hitbox.extend(label_hits)
 
@@ -5728,8 +5736,9 @@ class GeoCanvasEditor(tk.Tk):
             fs_vals = [x[2] for x in packed]
 
             if show_graphs:
+                card.invalidate_graph()
                 card.render_graph(
-                    self.canvas,
+                    body_target,
                     rect=plot_rect,
                     y_points=y_points,
                     qc_values=qc_vals,
@@ -5742,6 +5751,7 @@ class GeoCanvasEditor(tk.Tk):
                     frame_outline=GUI_GRID,
                     groundwater_level=gwl_canvas_y,
                 )
+                card.redraw_if_needed("graph")
             if show_geology:
                 overlay_specs = []
                 column = self._ensure_test_experience_column(t)
@@ -5772,13 +5782,16 @@ class GeoCanvasEditor(tk.Tk):
                         {"kind": "plus", "bbox": (plus_x - 6, yy - 6, plus_x + 6, yy + 6), "boundary": bi, "hit_kind": "plus", "tag": f"layer_plus_{ti}_{bi}"},
                         {"kind": "minus", "bbox": (plus_x - 6, yy + 8, plus_x + 6, yy + 20), "boundary": bi, "hit_kind": "minus", "tag": f"layer_minus_{ti}_{bi}"},
                     ])
-                handle_hits, depth_hits = card.render_overlays(self.canvas, overlay_specs=overlay_specs, layer_ui_colors=LAYER_UI_COLORS)
+                card.invalidate_overlays()
+                handle_hits, depth_hits = card.render_overlays(body_target, overlay_specs=overlay_specs, layer_ui_colors=LAYER_UI_COLORS)
+                card.redraw_if_needed("overlays")
                 self._layer_handle_hitbox.extend(handle_hits)
                 self._layer_depth_box_hitbox.extend(depth_hits)
             if bool(getattr(self, "_debug_layers_overlay", False)) and bool(getattr(self, "compact_1m", False)) and bool(getattr(self, "expanded_meters", set())):
                 t_layers = self._ensure_test_layers(t)
                 dbg = f"LAYERS:{len(t_layers)} EDIT:True TEST:{getattr(t, 'tid', ti)}"
-                self.canvas.create_text(x0 + 4, y0 + 4, anchor="nw", text=dbg, fill="#8a3d00", font=("Segoe UI", 8, "bold"), tags=("layers_overlay", f"layers_overlay_{ti}"))
+                dx0, dy0 = (card.body_world_to_local(x0, y0) if body_target is getattr(card, "body_canvas", None) else (x0, y0))
+                body_target.create_text(dx0 + 4, dy0 + 4, anchor="nw", text=dbg, fill="#8a3d00", font=("Segoe UI", 8, "bold"), tags=("layers_overlay", f"layers_overlay_{ti}"))
 
     def _draw_layer_handles_for_test(self, ti: int, rect):
         if self._is_test_locked(ti):

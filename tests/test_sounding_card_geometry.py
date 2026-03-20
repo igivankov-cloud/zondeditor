@@ -16,6 +16,9 @@ class _DummyCanvas:
     def create_text(self, *args, **kwargs):
         self.calls.append(("text", args, kwargs))
 
+    def delete(self, *args, **kwargs):
+        self.calls.append(("delete", args, kwargs))
+
 
 class _DummyFont:
     def __init__(self, size):
@@ -285,3 +288,50 @@ def test_sounding_card_body_scroll_and_redraw_lifecycle_are_card_owned():
     assert calls[-2:] == ["graph", "layers"]
     assert snapshot["body_yview"] == card.body_yview()
     assert "card_redraw_lifecycle" in card.render_ownership_snapshot()["owned"]
+
+
+def test_sounding_card_body_canvas_is_render_target_for_graph_and_overlay_coords():
+    editor = SimpleNamespace(
+        _header_world_to_root=lambda x, y: (int(x), int(y)),
+        _body_world_to_root=lambda x, y, ti=None: (int(x), int(y)),
+    )
+    g = SoundingCardGeometry(
+        card_x0=50.0,
+        card_y0=0.0,
+        card_width=326.0,
+        header_height=72.0,
+        body_height=300.0,
+        footer_height=0.0,
+        table_width=176.0,
+        graph_width=150.0,
+        depth_width=64.0,
+        value_width=56.0,
+    )
+    card = SoundingCard(None, editor=editor, test_index=5, geometry=g)
+    card.body_canvas = _DummyCanvas()
+    card.set_body_scroll_context(view_height=100.0, content_height=400.0)
+    card.body_yview_moveto(0.25)
+
+    card.render_graph(
+        None,
+        rect=(226.0, 100.0, 376.0, 200.0),
+        y_points=[110.0, 130.0],
+        qc_values=[1.0, 2.0],
+        fs_values=[10.0, 20.0],
+        qmax=5.0,
+        fmax=50.0,
+        qc_color="#0a0",
+        fs_color="#00a",
+        frame_fill="#fff",
+        frame_outline="#ccc",
+        groundwater_level=120.0,
+    )
+    handle_hits, _depth_hits = card.render_overlays(
+        None,
+        overlay_specs=[{"kind": "handle", "bbox": (300.0, 120.0, 310.0, 130.0), "boundary": 1, "hit_kind": "boundary", "tag": "h"}],
+        layer_ui_colors={"fill": "#eef3f8", "fill_active": "#e3ebf3", "outline": "#b7c4d1", "outline_active": "#97a8ba", "text": "#4d5c6b", "text_muted": "#9aa7b4", "line": "#aebbc8", "focus": "#7f94a9"},
+    )
+
+    rect_call = next(call for call in card.body_canvas.calls if call[0] == "rectangle")
+    assert rect_call[1] == (176.0, 0.0, 326.0, 100.0)
+    assert handle_hits[0]["bbox"] == (299.0, 119.0, 311.0, 131.0)

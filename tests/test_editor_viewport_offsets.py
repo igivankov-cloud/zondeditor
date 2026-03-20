@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from src.zondeditor.ui.editor import GeoCanvasEditor
+import src.zondeditor.ui.editor as editor_module
 
 
 class _DummyViewportCanvas:
@@ -42,6 +43,7 @@ class _DummyBodyCanvas:
         self._rooty = rooty
         self.y_moves = []
         self.y_scrolls = []
+        self.draw_calls = []
 
     def bbox(self, _tag):
         return self._bbox_all
@@ -63,6 +65,18 @@ class _DummyBodyCanvas:
 
     def winfo_rooty(self):
         return self._rooty
+
+    def create_rectangle(self, *args, **kwargs):
+        self.draw_calls.append(("rectangle", args, kwargs))
+
+    def create_line(self, *args, **kwargs):
+        self.draw_calls.append(("line", args, kwargs))
+
+    def create_text(self, *args, **kwargs):
+        self.draw_calls.append(("text", args, kwargs))
+
+    def delete(self, *args, **kwargs):
+        self.draw_calls.append(("delete", args, kwargs))
 
 
 class _DummyScrollbar:
@@ -108,6 +122,8 @@ def _make_editor():
     editor._viewport_sync_source_counts = {}
     editor._viewport_sync_wheel_seq = 0
     editor.compact_1m = False
+    editor._debug_layers_overlay = False
+    editor.expanded_meters = set()
     return editor
 
 
@@ -290,3 +306,53 @@ def test_mousewheel_routes_vertical_to_card_and_shift_to_outer_viewport():
     assert round(card.body_yview()[0], 2) > 0.0
     assert result_x == "break"
     assert x_calls == [120]
+
+
+def test_redraw_graphs_now_uses_card_body_canvas_not_shared_editor_canvas():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(qc=["10"], fs=["5"], depth=["0.00"], tid=1)]
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.show_graphs = True
+    editor.show_geology_column = True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 320), xview_fractions=lambda: (0.0, 1.0))
+    editor._grid_units = [("row", 0)]
+    editor._grid_row_maps = {0: {0: 0}}
+    editor._row_y_bounds = lambda row: (0.0, 22.0)
+    editor._calc_layer_params_for_all_tests = lambda: None
+    editor._recompute_graph_scales = lambda: setattr(editor, "graph_qc_max_mpa", 30.0) or setattr(editor, "graph_fs_max_kpa", 500.0)
+    editor._calc_qc_fs_from_del = lambda q, f: (float(q), float(f))
+    editor._depth_to_canvas_y = lambda d: float(d) * 100.0
+    editor._ensure_test_experience_column = lambda t: SimpleNamespace(column_depth_start=0.0, column_depth_end=1.0, intervals=[SimpleNamespace(from_depth=0.0, to_depth=1.0, ige_id="ИГЭ-1")])
+    editor._column_interval_ige_id = lambda lyr: "ИГЭ-1"
+    editor._ensure_ige_entry = lambda ige_id: {"soil_type": "sand"}
+    editor._geology_layer_fill_color = lambda soil: "#eee"
+    editor._draw_layer_hatch = lambda *args, **kwargs: None
+    editor.cpt_calc_settings = {}
+    editor._refresh_display_order = lambda: None
+    editor._graph_rect_for_test = lambda ti: (226.0, 376.0, 0.0, 100.0)
+    editor.canvas = SimpleNamespace(
+        delete=lambda *args, **kwargs: None,
+        create_rectangle=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("shared canvas should not draw")),
+        create_line=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("shared canvas should not draw")),
+        create_text=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("shared canvas should not draw")),
+    )
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas()
+    font_backup = editor_module.tkfont.Font
+    editor_module.tkfont.Font = lambda font=None: SimpleNamespace(measure=lambda text: len(text) * 4, metrics=lambda name: 8)
+    try:
+        editor._redraw_graphs_now()
+    finally:
+        editor_module.tkfont.Font = font_backup
+
+    assert any(call[0] == "rectangle" for call in card.body_canvas.draw_calls)
+    assert editor._layer_plot_hitbox
+    assert editor._layer_handle_hitbox
