@@ -2,6 +2,7 @@
 # Auto-generated from tools/_ui_extract/GeoCanvasEditor.py (Step19)
 # === FILE MAP BEGIN ===
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
+# - SoundingsViewport / SoundingCard migration helpers: viewport/card-local coordinate model for sounding rendering and placement.
 # - _extract_base_ige_num/_used_base_ige_ordinals: L1120–L1139 — поиск базовых имён ИГЭ-N для выбора следующего свободного номера.
 # - _next_free_ige_ordinal/_next_free_ige_id: L1141–L1340 — генерация ближайшего свободного базового имени ИГЭ.
 # - _add_unassigned_ige_from_ribbon: L1371–L1383 — добавление нового ИГЭ с пустым типом грунта.
@@ -96,6 +97,7 @@ from src.zondeditor.domain.hatching import HATCH_USAGE_EDITOR_EXPANDED, load_reg
 from src.zondeditor.ui.render.hatch_renderer import render_hatch_pattern
 from src.zondeditor.ui.widgets import ToolTip, CalendarDialog
 from src.zondeditor.ui.ribbon import RibbonView
+from src.zondeditor.ui.sounding_card import SoundingCard, SoundingCardGeometry
 from src.zondeditor.ui.soundings_viewport import SoundingsViewport
 from src.zondeditor.project import Project, ProjectSettings, SourceInfo, load_project, save_project
 from src.zondeditor.project.ops import op_algo_fix_applied, op_cell_set, op_cells_marked, op_meta_change
@@ -268,12 +270,13 @@ class GeoCanvasEditor(tk.Tk):
         self._xsync_after_id = None
         self._rebuild_redraw_after_id = None
         self._header_stabilize_after_id = None
-        self._header_sync_pending = False
-        self._header_sync_mode = str(os.getenv("ZOND_HEADER_SYNC_MODE", "legacy") or "legacy").strip().lower()
-        self._header_sync_debug = str(os.getenv("ZOND_DEBUG_HEADER_SYNC", "") or "").strip().lower() in {"1", "true", "yes", "on"}
+        self._viewport_sync_pending = False
+        self._viewport_sync_mode = str(os.getenv("ZOND_VIEWPORT_SYNC_MODE", os.getenv("ZOND_HEADER_SYNC_MODE", "viewport")) or "viewport").strip().lower()
+        self._viewport_sync_debug = str(os.getenv("ZOND_DEBUG_VIEWPORT_SYNC", os.getenv("ZOND_DEBUG_HEADER_SYNC", "")) or "").strip().lower() in {"1", "true", "yes", "on"}
         self._viewport_selfcheck_debug = str(os.getenv("ZOND_VIEWPORT_SELFCHECK", "") or "").strip().lower() in {"1", "true", "yes", "on"}
-        self._header_sync_wheel_seq = 0
-        self._header_sync_source_counts: dict[str, int] = {}
+        self._viewport_sync_wheel_seq = 0
+        self._viewport_sync_source_counts: dict[str, int] = {}
+        self._sounding_cards: dict[int, SoundingCard] = {}
         self._active_test_idx: int | None = None
         self.graph_qc_max_mpa: float = 30.0
         self.graph_fs_max_kpa: float = 500.0
@@ -4496,31 +4499,57 @@ class GeoCanvasEditor(tk.Tk):
     def _column_x0(self, col: int) -> int:
         return self.pad_x + col * (self._column_block_width() + self.col_gap)
 
+    def _sounding_card_geometry(self, col: int) -> SoundingCardGeometry:
+        graph_w = int(getattr(self, "graph_w", 150) or 150) if self._is_graph_panel_visible() else 0
+        incl_w = int(self.w_val) if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True)) else 0
+        return SoundingCardGeometry(
+            card_x0=float(self._column_x0(col)),
+            card_y0=0.0,
+            card_width=float(self._column_block_width()),
+            header_height=float(self.pad_y + self.hdr_h),
+            body_height=float(self._total_body_height()),
+            footer_height=0.0,
+            table_width=float(self._table_col_width()),
+            graph_width=float(graph_w),
+            depth_width=float(self.w_depth),
+            value_width=float(self.w_val),
+            inclinometer_width=float(incl_w),
+        )
+
+    def _rebuild_sounding_cards(self):
+        cards: dict[int, SoundingCard] = {}
+        master = getattr(self.soundings_viewport, "strip", None)
+        for col, ti in enumerate(getattr(self, "display_cols", []) or []):
+            cards[int(ti)] = SoundingCard(master, test_index=int(ti), geometry=self._sounding_card_geometry(col))
+        self._sounding_cards = cards
+        return cards
+
+    def _card_for_test(self, ti: int) -> SoundingCard | None:
+        cards = getattr(self, "_sounding_cards", None) or {}
+        card = cards.get(int(ti))
+        if card is not None:
+            return card
+        try:
+            col = int((getattr(self, "display_cols", []) or []).index(int(ti)))
+        except Exception:
+            return None
+        card = SoundingCard(getattr(self.soundings_viewport, "strip", None), test_index=int(ti), geometry=self._sounding_card_geometry(col))
+        cards[int(ti)] = card
+        self._sounding_cards = cards
+        return card
+
     def _last_column_right_px(self) -> float:
         """Правая граница последнего блока в пикселях (с учетом графиков)."""
         try:
-            n_cols = len(getattr(self, "display_cols", []) or [])
+            cols = list(getattr(self, "display_cols", []) or [])
         except Exception:
-            n_cols = 0
-        if n_cols <= 0:
-            try:
-                n_cols = len(getattr(self, "tests", []) or [])
-            except Exception:
-                n_cols = 0
-        try:
-            col_w = float(self._column_block_width())
-        except Exception:
-            col_w = 0.0
-        try:
-            gap = float(self.col_gap)
-        except Exception:
-            gap = 0.0
-        try:
-            pad = float(self.pad_x)
-        except Exception:
-            pad = 0.0
-        last_left_px = pad + (col_w + gap) * max(0, n_cols - 1)
-        return last_left_px + col_w
+            cols = []
+        if not cols:
+            return 0.0
+        card = self._card_for_test(int(cols[-1]))
+        if card is None:
+            return 0.0
+        return float(card.geometry.card_bounds_world[2])
 
     def _viewport_x0(self) -> float:
         try:
@@ -4583,9 +4612,12 @@ class GeoCanvasEditor(tk.Tk):
         first_card = None
         last_card = None
         try:
-            if getattr(self, "display_cols", []):
-                first_card = self._header_bbox(0)
-                last_card = self._header_bbox(len(self.display_cols) - 1)
+            cols = getattr(self, "display_cols", []) or []
+            if cols:
+                first = self._card_for_test(int(cols[0]))
+                last = self._card_for_test(int(cols[-1]))
+                first_card = (first.geometry.card_bounds_world if first is not None else None)
+                last_card = (last.geometry.card_bounds_world if last is not None else None)
         except Exception:
             pass
         editor_bbox = None
@@ -4619,18 +4651,15 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
     def _graph_rect_for_test(self, ti: int, r: int | None = None):
-        try:
-            col = int(self.display_cols.index(ti))
-        except Exception:
+        card = self._card_for_test(int(ti))
+        if card is None:
             return None
         if not self._is_graph_panel_visible():
             return None
-        x0 = self._column_x0(col) + self._table_col_width()
-        x1 = x0 + int(getattr(self, "graph_w", 150) or 150)
         if r is None:
-            return x0, x1, 0, self._total_body_height()
+            return card.graph_bbox_world(y0=0.0, y1=float(self._total_body_height()))
         y0, y1 = self._row_y_bounds(r)
-        return x0, x1, y0, y1
+        return card.graph_bbox_world(y0=float(y0), y1=float(y1))
 
     def _content_size(self):
         # Размеры контента для scrollregion.
@@ -4779,6 +4808,10 @@ class GeoCanvasEditor(tk.Tk):
 
     def _refresh_display_order(self):
         self.display_cols = self._sorted_display_indices()
+        try:
+            self._rebuild_sounding_cards()
+        except Exception:
+            pass
 
 
     def schedule_graph_redraw(self):
@@ -7035,20 +7068,15 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
     def _cell_bbox(self, col: int, row: int, field: str):
-        x0 = self._column_x0(col)
-        # Таблица (цифры) рисуется в отдельном canvas и скроллится по Y,
-        # поэтому старт по Y = 0 (без hdr_h).
         y0, y1 = self._row_y_bounds(row)
-
-        if field == "depth":
-            return x0, y0, x0 + self.w_depth, y1
-        if field == "qc":
-            return x0 + self.w_depth, y0, x0 + self.w_depth + self.w_val, y1
-        if field == "fs":
-            return x0 + self.w_depth + self.w_val, y0, x0 + self.w_depth + self.w_val + self.w_val, y1
-        if field == "incl":
-            return x0 + self.w_depth + self.w_val*2, y0, x0 + self.w_depth + self.w_val*3, y1
-        raise ValueError("bad field")
+        try:
+            ti = int((getattr(self, "display_cols", []) or [])[int(col)])
+        except Exception:
+            ti = int(col)
+        card = self._card_for_test(int(ti))
+        if card is None:
+            raise ValueError("bad card")
+        return card.cell_bbox_world(float(y0), float(y1), field)
 
     def _display_row_data_index(self, ti: int, display_row: int) -> int | None:
         try:
@@ -7155,13 +7183,15 @@ class GeoCanvasEditor(tk.Tk):
                 pass
 
     def _header_bbox(self, col: int):
-        col_w = self._table_col_width()
-        x0_world = self._column_x0(col)
-        x0 = x0_world
-        y0 = self.pad_y
-        x1 = x0 + col_w
-        y1 = y0 + self.hdr_h
-        return x0, y0, x1, y1
+        try:
+            ti = int((getattr(self, "display_cols", []) or [])[int(col)])
+        except Exception:
+            ti = int(col)
+        card = self._card_for_test(int(ti))
+        if card is None:
+            return (0.0, float(self.pad_y), 0.0, float(self.pad_y + self.hdr_h))
+        x0, y0, x1, y1 = card.geometry.header_bounds_world
+        return (x0, y0 + float(self.pad_y), x1, y0 + float(self.pad_y + self.hdr_h))
 
 
     def _redraw(self):
@@ -8648,8 +8678,8 @@ class GeoCanvasEditor(tk.Tk):
         self._redraw()
         self.schedule_graph_redraw()
 
-    def _debug_header_sync(self, stage: str, **extra):
-        if not bool(getattr(self, "_header_sync_debug", False)):
+    def _debug_viewport_sync(self, stage: str, **extra):
+        if not bool(getattr(self, "_viewport_sync_debug", False)):
             return
         try:
             body_xv = tuple(self._viewport_xview())
@@ -8681,30 +8711,30 @@ class GeoCanvasEditor(tk.Tk):
             header_left = 0.0
         state = str(self.state()) if hasattr(self, "state") else ""
         incl = bool(getattr(self, "show_inclinometer", True))
-        mode = str(getattr(self, "_header_sync_mode", "legacy") or "legacy")
+        mode = str(getattr(self, "_viewport_sync_mode", "viewport") or "viewport")
         body_first_screen_x = first_world_x - body_left
         header_first_screen_x = first_world_x - header_left
         drift = header_first_screen_x - body_first_screen_x
-        cnt = int(self._header_sync_source_counts.get(str(stage), 0) + 1)
-        self._header_sync_source_counts[str(stage)] = cnt
+        cnt = int(self._viewport_sync_source_counts.get(str(stage), 0) + 1)
+        self._viewport_sync_source_counts[str(stage)] = cnt
         extras = " ".join(f"{k}={v}" for k, v in extra.items())
         print(
-            f"[HDRSYNC] wheel={self._header_sync_wheel_seq} src={stage} cnt={cnt} mode={mode} "
+            f"[VIEWSYNC] wheel={self._viewport_sync_wheel_seq} src={stage} cnt={cnt} mode={mode} "
             f"state={state} incl={int(incl)} body_xv={body_xv} hdr_xv={hdr_xv} vw={viewport_w} cw={content_w:.1f} "
             f"body_left={body_left:.2f} hdr_left={header_left:.2f} body_first={body_first_screen_x:.2f} "
-            f"hdr_first={header_first_screen_x:.2f} drift={drift:.2f} pending={int(bool(getattr(self, '_header_sync_pending', False)))} {extras}"
+            f"hdr_first={header_first_screen_x:.2f} drift={drift:.2f} pending={int(bool(getattr(self, '_viewport_sync_pending', False)))} {extras}"
         )
 
     def _begin_scroll_debug_cycle(self, source: str):
-        self._header_sync_wheel_seq = int(getattr(self, "_header_sync_wheel_seq", 0) or 0) + 1
-        self._header_sync_source_counts = {}
-        self._debug_header_sync("wheel_begin", source=source)
+        self._viewport_sync_wheel_seq = int(getattr(self, "_viewport_sync_wheel_seq", 0) or 0) + 1
+        self._viewport_sync_source_counts = {}
+        self._debug_viewport_sync("wheel_begin", source=source)
 
-    def _schedule_header_stabilize(self, source: str = ""):
+    def _schedule_viewport_stabilize(self, source: str = ""):
         # В новой схеме отдельная стабилизация не нужна:
         # header/body живут внутри единого горизонтально прокручиваемого viewport.
-        self._header_sync_pending = False
-        self._debug_header_sync("schedule_noop", source=source)
+        self._viewport_sync_pending = False
+        self._debug_viewport_sync("schedule_noop", source=source)
 
     # ---------------- scrolling ----------------
     def _on_mousewheel(self, event):
@@ -8762,7 +8792,7 @@ class GeoCanvasEditor(tk.Tk):
                     pass
         finally:
             self._ysync_lock = False
-        self._schedule_header_stabilize(source="yscroll_sync")
+        self._schedule_viewport_stabilize(source="yscroll_sync")
 
     def _on_mousewheel_x(self, event):
         """Горизонтальная прокрутка колесом шагом 1 колонка (когда курсор над шапкой или горизонтальным скроллом)."""
