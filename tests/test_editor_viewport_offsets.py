@@ -124,6 +124,11 @@ def _make_editor():
     editor.compact_1m = False
     editor._debug_layers_overlay = False
     editor.expanded_meters = set()
+    editor.display_sort_mode = "date"
+    editor._hover = None
+    editor._editing = None
+    editor._marks_index = {}
+    editor._inline_edit_active = False
     return editor
 
 
@@ -356,3 +361,49 @@ def test_redraw_graphs_now_uses_card_body_canvas_not_shared_editor_canvas():
     assert any(call[0] == "rectangle" for call in card.body_canvas.draw_calls)
     assert editor._layer_plot_hitbox
     assert editor._layer_handle_hitbox
+
+
+def test_redraw_uses_card_hosted_header_and_body_targets_not_shared_canvases():
+    editor = _make_editor()
+    editor.tests = [SimpleNamespace(tid=1, dt="01.01.2026 10:00", export_on=True, locked=False, qc=["10"], fs=["5"], depth=["0.00"])]
+    editor.display_cols = [0]
+    editor.flags = {1: SimpleNamespace(invalid=False, force_cells=set(), interp_cells=set(), user_cells=set(), algo_cells=set())}
+    editor._build_grid = lambda: setattr(editor, "_grid_base", [0.0]) or setattr(editor, "_grid", [0]) or setattr(editor, "_grid_row_maps", {0: {0: 0}}) or setattr(editor, "_grid_start_rows", {0: 0}) or setattr(editor, "_grid_units", [("row", 0)])
+    editor._diagnostics_report = lambda: SimpleNamespace(by_test={1: SimpleNamespace(invalid=False, missing_rows=[])})
+    editor._header_fill_for_test = lambda **kwargs: "#fff"
+    editor._sync_view_ribbon_state = lambda: None
+    editor._sync_layers_panel = lambda: None
+    editor._update_scrollregion = lambda: None
+    editor._is_graph_panel_visible = lambda: False
+    editor._clear_graph_layers = lambda: None
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor._cell_bbox = lambda col, row, field: (200.0, 22.0, 256.0, 44.0)
+    editor.canvas = SimpleNamespace(
+        delete=lambda *args, **kwargs: None,
+        create_rectangle=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("shared body canvas should not draw")),
+        create_text=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("shared body canvas should not draw")),
+    )
+    editor.hcanvas = SimpleNamespace(
+        delete=lambda *args, **kwargs: None,
+        configure=lambda **kwargs: None,
+        create_rectangle=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("shared header canvas should not draw")),
+        create_text=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("shared header canvas should not draw")),
+        create_line=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("shared header canvas should not draw")),
+    )
+    editor.soundings_viewport = SimpleNamespace(strip=None)
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.header_canvas = _DummyBodyCanvas()
+    card.body_canvas = _DummyBodyCanvas()
+    editor._refresh_display_order = lambda: None
+    editor._rebuild_sounding_cards = lambda: {0: card}
+    editor._sounding_cards = {0: card}
+
+    editor._redraw()
+
+    assert any(call[0] == "rectangle" for call in card.header_canvas.draw_calls)
+    assert any(call[0] == "rectangle" for call in card.body_canvas.draw_calls)

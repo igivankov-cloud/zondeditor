@@ -335,3 +335,46 @@ def test_sounding_card_body_canvas_is_render_target_for_graph_and_overlay_coords
     rect_call = next(call for call in card.body_canvas.calls if call[0] == "rectangle")
     assert rect_call[1] == (176.0, 0.0, 326.0, 100.0)
     assert handle_hits[0]["bbox"] == (299.0, 119.0, 311.0, 131.0)
+
+
+def test_sounding_card_header_and_table_can_render_into_card_owned_targets():
+    editor = SimpleNamespace(
+        _header_world_to_root=lambda x, y: (int(x), int(y)),
+        _body_world_to_root=lambda x, y, ti=None: (int(x), int(y)),
+    )
+    g = SoundingCardGeometry(
+        card_x0=200.0,
+        card_y0=0.0,
+        card_width=310.0,
+        header_height=72.0,
+        body_height=300.0,
+        footer_height=0.0,
+        table_width=176.0,
+        graph_width=134.0,
+        depth_width=64.0,
+        value_width=56.0,
+    )
+    card = SoundingCard(None, editor=editor, test_index=9, geometry=g)
+    card.header_canvas = _DummyCanvas()
+    card.body_canvas = _DummyCanvas()
+    header_hits = card.render_header(
+        None,
+        title="Опыт 9",
+        datetime_text="01.01.2026 10:00",
+        header_fill="#fff",
+        header_text="#111",
+        header_icon="#444",
+        export_on=True,
+        lock_on=False,
+        hover=None,
+        icon_calendar="📅",
+        icon_copy="⧉",
+        icon_delete="🗑",
+        icon_font=("Segoe UI Symbol", 12),
+        hdr_h=64.0,
+        show_inclinometer=False,
+    )
+    rect = card.render_body_cell(None, row_y0=22.0, row_y1=44.0, field="qc", text="12", fill="#fff", text_color="#000")
+
+    assert header_hits["header"] == (0.0, 0.0, 176.0, 72.0)
+    assert rect == (64.0, 22.0, 120.0, 44.0)

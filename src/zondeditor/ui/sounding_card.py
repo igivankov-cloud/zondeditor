@@ -135,11 +135,13 @@ class SoundingCard:
         if master is None:
             self.host = None
             self.header_frame = None
+            self.header_canvas = None
             self.body_canvas = None
             self.footer_frame = None
         else:
             self.host = ttk.Frame(master)
             self.header_frame = ttk.Frame(self.host)
+            self.header_canvas = tk.Canvas(self.header_frame, highlightthickness=0, background="white")
             self.body_canvas = tk.Canvas(self.host, highlightthickness=0, background="white")
             self.footer_frame = ttk.Frame(self.host)
 
@@ -196,6 +198,25 @@ class SoundingCard:
 
     def body_render_canvas(self, canvas=None):
         return self.body_canvas if canvas is None else canvas
+
+    def header_render_canvas(self, canvas=None):
+        return self.header_canvas if canvas is None else canvas
+
+    def header_world_to_local(self, x: float, y: float) -> tuple[float, float]:
+        return float(x) - float(self.geometry.card_x0), float(y) - float(self.geometry.card_y0)
+
+    def _uses_header_canvas_coords(self, canvas) -> bool:
+        return canvas is not None and canvas is self.header_canvas
+
+    def _map_header_point(self, canvas, x: float, y: float) -> tuple[float, float]:
+        if self._uses_header_canvas_coords(canvas):
+            return self.header_world_to_local(x, y)
+        return float(x), float(y)
+
+    def _map_header_rect(self, canvas, rect: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+        x0, y0 = self._map_header_point(canvas, rect[0], rect[1])
+        x1, y1 = self._map_header_point(canvas, rect[2], rect[3])
+        return (x0, y0, x1, y1)
 
     def clear_body_render_layers(self, *tags: str):
         canvas = self.body_render_canvas()
@@ -348,7 +369,7 @@ class SoundingCard:
 
     def render_header(
         self,
-        canvas,
+        canvas=None,
         *,
         title: str,
         datetime_text: str,
@@ -365,7 +386,8 @@ class SoundingCard:
         hdr_h: float,
         show_inclinometer: bool,
     ) -> dict[str, tuple[float, float, float, float]]:
-        x0, y0, x1, y1 = self.geometry.header_bounds_world
+        canvas = self.header_render_canvas(canvas)
+        x0, y0, x1, y1 = self._map_header_rect(canvas, self.geometry.header_bounds_world)
         canvas.create_rectangle(x0, y0, x1, y1, fill=header_fill, outline="#d9d9d9")
 
         top_pad = 8.0
@@ -407,8 +429,9 @@ class SoundingCard:
             canvas.create_text(x0 + self.geometry.depth_width + self.geometry.value_width * 2 + self.geometry.value_width / 2, sh_y, text="U", font=("Segoe UI", 9), fill=header_text)
         return {"header": (x0, y0, x1, y1), "export": (cb_x0, cb_y0, cb_x0 + cb_s, cb_y0 + cb_s), **controls}
 
-    def render_body_cell(self, canvas, *, row_y0: float, row_y1: float, field: str, text: str, fill: str, text_color: str):
-        x0, y0, x1, y1 = self.geometry.cell_bbox_world(row_y0, row_y1, field)
+    def render_body_cell(self, canvas=None, *, row_y0: float, row_y1: float, field: str, text: str, fill: str, text_color: str):
+        canvas = self.body_render_canvas(canvas)
+        x0, y0, x1, y1 = self._map_body_rect(canvas, self.geometry.cell_bbox_world(row_y0, row_y1, field))
         canvas.create_rectangle(x0, y0, x1, y1, fill=fill, outline="#d9d9d9")
         anchor = "e"
         tx = x1 - 4.0

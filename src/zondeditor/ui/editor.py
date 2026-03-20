@@ -7460,7 +7460,7 @@ class GeoCanvasEditor(tk.Tk):
             dt_line = re.sub(r"(\d{2}:\d{2}):\d{2}\b", r"\1", dt_line)
             if card is not None:
                 card.render_header(
-                    self.hcanvas,
+                    getattr(card, "header_canvas", None) or self.hcanvas,
                     title=f"Опыт {t.tid}",
                     datetime_text=dt_line,
                     header_fill=hdr_fill,
@@ -7646,7 +7646,7 @@ class GeoCanvasEditor(tk.Tk):
                     if not ex_on:
                         color = "#8a8a8a" if field != "depth" else "#9a9a9a"
                     if card is not None:
-                        card.render_body_cell(self.canvas, row_y0=float(by0), row_y1=float(by1), field=field, text=txt, fill=fill, text_color=color)
+                        card.render_body_cell(getattr(card, "body_canvas", None) or self.canvas, row_y0=float(by0), row_y1=float(by1), field=field, text=txt, fill=fill, text_color=color)
                     else:
                         self.canvas.create_rectangle(bx0, by0, bx1, by1, fill=fill, outline=GUI_GRID)
                         self.canvas.create_text(bx1 - 4, (by0 + by1) / 2, text=txt, anchor="e", fill=color, font=("Segoe UI", 9))
@@ -7654,8 +7654,18 @@ class GeoCanvasEditor(tk.Tk):
             if bool(getattr(t, "locked", False)):
                 body_h = float(self._total_body_height())
                 if body_h > 0:
-                    self.canvas.create_rectangle(x0, 0, x1, body_h, fill="#d0d0d0", outline="", stipple="gray50")
-                self.hcanvas.create_rectangle(x0, y0, x1, y1, fill="#d0d0d0", outline="", stipple="gray50")
+                    if card is not None and getattr(card, "body_canvas", None) is not None:
+                        lx0, ly0 = card.body_world_to_local(x0, 0.0)
+                        lx1, ly1 = card.body_world_to_local(x1, body_h)
+                        card.body_canvas.create_rectangle(lx0, ly0, lx1, ly1, fill="#d0d0d0", outline="", stipple="gray50")
+                    else:
+                        self.canvas.create_rectangle(x0, 0, x1, body_h, fill="#d0d0d0", outline="", stipple="gray50")
+                if card is not None and getattr(card, "header_canvas", None) is not None:
+                    hx0, hy0 = card.header_world_to_local(x0, y0)
+                    hx1, hy1 = card.header_world_to_local(x1, y1)
+                    card.header_canvas.create_rectangle(hx0, hy0, hx1, hy1, fill="#d0d0d0", outline="", stipple="gray50")
+                else:
+                    self.hcanvas.create_rectangle(x0, y0, x1, y1, fill="#d0d0d0", outline="", stipple="gray50")
 
         self._update_scrollregion()
         if self._is_graph_panel_visible():
