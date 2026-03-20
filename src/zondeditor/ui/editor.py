@@ -5549,6 +5549,9 @@ class GeoCanvasEditor(tk.Tk):
 
         self._refresh_display_order()
         for ti in self.display_cols:
+            card = self._card_for_test(int(ti))
+            if card is None:
+                continue
             rect = self._graph_rect_for_test(ti)
             if not rect:
                 continue
@@ -5597,43 +5600,117 @@ class GeoCanvasEditor(tk.Tk):
                         fs_vals.append(float(fs_kpa))
 
             plot_rect = (x0, x1, y0, y1)
-            tag_axes = ("graph_axes", f"graph_axes_{ti}")
-            tag_overlay = ("layers_overlay", f"layers_overlay_{ti}")
-            self.canvas.create_rectangle(x0, y0, x1, y1, fill="#fbfdff", outline=GUI_GRID, tags=tag_axes)
-            labels = []
+            gwl_canvas_y = None
+            try:
+                settings = dict(getattr(self, "cpt_calc_settings", {}) or {})
+                gwl = settings.get("groundwater_level")
+                if gwl not in (None, ""):
+                    gwl_val = float(str(gwl).replace(",", "."))
+                    gwl_canvas_y = self._depth_to_canvas_y(gwl_val)
+                if gwl_canvas_y is not None and not (y0 <= gwl_canvas_y <= y1):
+                    gwl_canvas_y = None
+            except Exception:
+                gwl_canvas_y = None
+
+            interval_specs = []
             if show_geology:
-                labels = self._draw_layers_overlay_for_test(ti, plot_rect, self._depth_to_canvas_y, tag_overlay) or []
-            if not y_points:
-                if show_graphs:
-                    self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
-                    self._draw_groundwater_line_for_test(ti, plot_rect)
-                    self._draw_graph_lines_for_test(ti, plot_rect, [], [], [], self.graph_qc_max_mpa, self.graph_fs_max_kpa)
-                for span in labels:
-                    self._draw_layer_label_chip(span, tag_overlay)
-                if show_geology:
-                    self._draw_layer_handles_for_test(ti, plot_rect)
-                continue
+                column = self._ensure_test_experience_column(t)
+                for interval_index, lyr in enumerate(column.intervals):
+                    lt = max(float(column.column_depth_start), float(lyr.from_depth))
+                    lb = min(float(column.column_depth_end), float(lyr.to_depth))
+                    if lb - lt <= 1e-9:
+                        continue
+                    ly0 = self._depth_to_canvas_y(lt)
+                    ly1 = self._depth_to_canvas_y(lb)
+                    if ly0 is None or ly1 is None:
+                        continue
+                    ty0 = max(y0, min(ly0, ly1))
+                    ty1 = min(y1, max(ly0, ly1))
+                    if ty1 <= ty0:
+                        continue
+                    ige_id = self._column_interval_ige_id(lyr)
+                    ent = self._ensure_ige_entry(ige_id)
+                    soil_type = str(ent.get("soil_type") or SoilType.SANDY_LOAM.value)
+                    interval_specs.append({
+                        "interval_index": int(interval_index),
+                        "ige_id": ige_id,
+                        "soil_type": soil_type,
+                        "top": float(lt),
+                        "bot": float(lb),
+                        "depth": (float(lt) + float(lb)) * 0.5,
+                        "x0": float(x0),
+                        "x1": float(x1),
+                        "y0": float(ty0),
+                        "y1": float(ty1),
+                    })
+
+            plot_hits = []
+            label_hits = []
+            if show_geology:
+                plot_hits, label_hits = card.render_ige(
+                    self.canvas,
+                    intervals=interval_specs,
+                    fill_resolver=self._geology_layer_fill_color,
+                    hatch_drawer=lambda rx0, ry0, rx1, ry1, soil_type: self._draw_layer_hatch(rx0, ry0, rx1, ry1, soil_type=soil_type, tags=("layers_overlay", f"layers_overlay_{ti}"), logical_rect=(x0, y0, x1, y1)),
+                    label_font_factory=lambda size: tkfont.Font(font=("Segoe UI", size, "bold")),
+                    layer_ui_colors=LAYER_UI_COLORS,
+                )
+                self._layer_plot_hitbox.extend(plot_hits)
+                self._layer_label_hitbox.extend(label_hits)
+
             packed = sorted(zip(y_points, qc_vals, fs_vals), key=lambda x: x[0])
             y_points = [x[0] for x in packed]
             qc_vals = [x[1] for x in packed]
             fs_vals = [x[2] for x in packed]
 
             if show_graphs:
-                self._draw_graph_axes_for_test(ti, x0, x1, self.graph_qc_max_mpa, self.graph_fs_max_kpa)
-                self._draw_groundwater_line_for_test(ti, plot_rect)
-                self._draw_graph_lines_for_test(
-                    ti,
-                    plot_rect,
-                    y_points,
-                    qc_vals,
-                    fs_vals,
-                    self.graph_qc_max_mpa,
-                    self.graph_fs_max_kpa,
+                card.render_graph(
+                    self.canvas,
+                    rect=plot_rect,
+                    y_points=y_points,
+                    qc_values=qc_vals,
+                    fs_values=fs_vals,
+                    qmax=self.graph_qc_max_mpa,
+                    fmax=self.graph_fs_max_kpa,
+                    qc_color=GRAPH_QC_GREEN,
+                    fs_color=GRAPH_FS_BLUE,
+                    frame_fill="#fbfdff",
+                    frame_outline=GUI_GRID,
+                    groundwater_level=gwl_canvas_y,
                 )
-            for span in labels:
-                self._draw_layer_label_chip(span, tag_overlay)
             if show_geology:
-                self._draw_layer_handles_for_test(ti, plot_rect)
+                overlay_specs = []
+                column = self._ensure_test_experience_column(t)
+                handle_x = x1 - 2
+                plus_x = x0 + 10
+                if column.intervals:
+                    top_y = self._depth_to_canvas_y(float(column.intervals[0].from_depth))
+                    bot_y = self._depth_to_canvas_y(float(column.intervals[-1].to_depth))
+                    if top_y is not None:
+                        overlay_specs.append({"kind": "plus", "bbox": (plus_x - 6, top_y, plus_x + 6, top_y + 12), "boundary": 0, "hit_kind": "plus_top", "tag": f"layer_plus_top_{ti}"})
+                    if bot_y is not None:
+                        overlay_specs.extend([
+                            {"kind": "line", "points": (x0, bot_y, x1, bot_y), "fill": LAYER_UI_COLORS["line"], "dash": (3, 2)},
+                            {"kind": "handle", "bbox": (handle_x - 5, bot_y - 5, handle_x + 5, bot_y + 5), "boundary": int(len(column.intervals)), "hit_kind": "column_end", "tag": f"layer_end_handle_{ti}"},
+                            {"kind": "depth_box", "bbox": (handle_x - 52, bot_y - 8, handle_x - 12, bot_y + 8), "boundary": int(len(column.intervals)), "hit_kind": "column_end_depth_edit", "text": f"{float(column.column_depth_end):.2f}"},
+                            {"kind": "plus", "bbox": (plus_x - 6, bot_y - 6, plus_x + 6, bot_y + 6), "boundary": int(len(column.intervals)), "hit_kind": "plus_bottom", "tag": f"layer_plus_bottom_{ti}"},
+                            {"kind": "minus", "bbox": (plus_x + 8, bot_y - 6, plus_x + 20, bot_y + 6), "boundary": int(len(column.intervals) - 1), "hit_kind": "minus_bottom", "tag": f"layer_minus_bottom_{ti}"},
+                        ])
+                for bi in range(1, len(column.intervals)):
+                    boundary = column.intervals[bi].from_depth
+                    yy = self._depth_to_canvas_y(boundary)
+                    if yy is None:
+                        continue
+                    overlay_specs.extend([
+                        {"kind": "line", "points": (x0, yy, x1, yy), "fill": LAYER_UI_COLORS["line"], "dash": (3, 2)},
+                        {"kind": "handle", "bbox": (handle_x - 5, yy - 5, handle_x + 5, yy + 5), "boundary": bi, "hit_kind": "boundary", "tag": f"layer_handle_{ti}_{bi}"},
+                        {"kind": "depth_box", "bbox": (handle_x - 52, yy - 8, handle_x - 12, yy + 8), "boundary": bi, "hit_kind": "boundary_depth_edit", "text": f"{float(boundary):.2f}"},
+                        {"kind": "plus", "bbox": (plus_x - 6, yy - 6, plus_x + 6, yy + 6), "boundary": bi, "hit_kind": "plus", "tag": f"layer_plus_{ti}_{bi}"},
+                        {"kind": "minus", "bbox": (plus_x - 6, yy + 8, plus_x + 6, yy + 20), "boundary": bi, "hit_kind": "minus", "tag": f"layer_minus_{ti}_{bi}"},
+                    ])
+                handle_hits, depth_hits = card.render_overlays(self.canvas, overlay_specs=overlay_specs, layer_ui_colors=LAYER_UI_COLORS)
+                self._layer_handle_hitbox.extend(handle_hits)
+                self._layer_depth_box_hitbox.extend(depth_hits)
             if bool(getattr(self, "_debug_layers_overlay", False)) and bool(getattr(self, "compact_1m", False)) and bool(getattr(self, "expanded_meters", set())):
                 t_layers = self._ensure_test_layers(t)
                 dbg = f"LAYERS:{len(t_layers)} EDIT:True TEST:{getattr(t, 'tid', ti)}"

@@ -17,6 +17,17 @@ class _DummyCanvas:
         self.calls.append(("text", args, kwargs))
 
 
+class _DummyFont:
+    def __init__(self, size):
+        self.size = size
+
+    def measure(self, text):
+        return len(text) * self.size * 0.5
+
+    def metrics(self, _name):
+        return self.size + 2
+
+
 def test_sounding_card_geometry_returns_local_and_world_bounds():
     g = SoundingCardGeometry(
         card_x0=120.0,
@@ -176,3 +187,63 @@ def test_sounding_card_make_hitbox_is_card_local_owner_api():
     hit = card.make_hitbox(kind="boundary", bbox=(310.0, 80.0, 330.0, 100.0), boundary=2, extra={"tag": "h1"})
 
     assert hit == {"kind": "boundary", "ti": 3, "bbox": (310.0, 80.0, 330.0, 100.0), "boundary": 2, "tag": "h1"}
+
+
+def test_sounding_card_render_graph_ige_and_overlays_are_self_owned():
+    editor = SimpleNamespace(
+        _header_world_to_root=lambda x, y: (int(x), int(y)),
+        _body_world_to_root=lambda x, y: (int(x), int(y)),
+    )
+    g = SoundingCardGeometry(
+        card_x0=50.0,
+        card_y0=0.0,
+        card_width=326.0,
+        header_height=72.0,
+        body_height=300.0,
+        footer_height=0.0,
+        table_width=176.0,
+        graph_width=150.0,
+        depth_width=64.0,
+        value_width=56.0,
+    )
+    card = SoundingCard(None, editor=editor, test_index=3, geometry=g)
+    canvas = _DummyCanvas()
+
+    card.render_graph(
+        canvas,
+        rect=(226.0, 376.0, 0.0, 300.0),
+        y_points=[20.0, 40.0, 60.0],
+        qc_values=[1.0, 2.0, 3.0],
+        fs_values=[10.0, 20.0, 30.0],
+        qmax=5.0,
+        fmax=50.0,
+        qc_color="#0a0",
+        fs_color="#00a",
+        frame_fill="#fff",
+        frame_outline="#ccc",
+        groundwater_level=100.0,
+    )
+    plot_hits, label_hits = card.render_ige(
+        canvas,
+        intervals=[{"interval_index": 0, "ige_id": "ИГЭ-1", "soil_type": "sand", "top": 0.0, "bot": 1.0, "depth": 0.5, "x0": 226.0, "x1": 376.0, "y0": 0.0, "y1": 120.0}],
+        fill_resolver=lambda soil: "#eee",
+        hatch_drawer=lambda *args, **kwargs: None,
+        label_font_factory=lambda size: _DummyFont(size),
+        layer_ui_colors={"fill": "#eef3f8", "fill_active": "#e3ebf3", "outline": "#b7c4d1", "outline_active": "#97a8ba", "text": "#4d5c6b", "text_muted": "#9aa7b4", "line": "#aebbc8", "focus": "#7f94a9"},
+    )
+    handle_hits, depth_hits = card.render_overlays(
+        canvas,
+        overlay_specs=[
+            {"kind": "line", "points": (226.0, 120.0, 376.0, 120.0), "fill": "#aaa", "dash": (3, 2)},
+            {"kind": "handle", "bbox": (369.0, 115.0, 379.0, 125.0), "boundary": 1, "hit_kind": "boundary", "tag": "h1"},
+            {"kind": "depth_box", "bbox": (324.0, 112.0, 364.0, 128.0), "boundary": 1, "hit_kind": "boundary_depth_edit", "text": "1.00"},
+            {"kind": "plus", "bbox": (230.0, 114.0, 242.0, 126.0), "boundary": 1, "hit_kind": "plus", "tag": "p1"},
+        ],
+        layer_ui_colors={"fill": "#eef3f8", "fill_active": "#e3ebf3", "outline": "#b7c4d1", "outline_active": "#97a8ba", "text": "#4d5c6b", "text_muted": "#9aa7b4", "line": "#aebbc8", "focus": "#7f94a9"},
+    )
+
+    assert plot_hits[0]["kind"] == "interval"
+    assert label_hits[0]["kind"] == "label"
+    assert handle_hits[0]["kind"] == "boundary"
+    assert depth_hits[0]["kind"] == "boundary_depth_edit"
+    assert "graphs" in card.render_ownership_snapshot()["owned"]

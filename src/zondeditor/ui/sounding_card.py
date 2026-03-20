@@ -314,13 +314,134 @@ class SoundingCard:
     def render_ownership_snapshot(self) -> dict[str, object]:
         return {
             "card": int(self.test_index),
-            "owned": ["header", "body_table_cells", "card_hit_testing", "editor_rects", "popup_anchors"],
-            "legacy": ["graphs", "ige_layers", "layer_handles", "global_canvas_lifecycle"],
+            "owned": ["header", "body_table_cells", "graphs", "ige_layers", "overlays", "card_hit_testing", "editor_rects", "popup_anchors"],
+            "legacy": ["global_canvas_lifecycle", "redraw_orchestration", "scrollregion_scheduling"],
         }
 
     def future_graph_interface(self) -> dict[str, str]:
         return {
             "graph_rect": "card.graph_bbox_world(...)",
-            "layer_overlay_targets": "card.make_hitbox(...) + future card.render_graph_overlay(...)",
-            "graph_lines": "future card.render_graph(...)",
+            "layer_overlay_targets": "card.render_ige(...) + card.render_overlays(...)",
+            "graph_lines": "card.render_graph(...)",
         }
+
+    def render_graph(
+        self,
+        canvas,
+        *,
+        rect: tuple[float, float, float, float],
+        y_points: list[float],
+        qc_values: list[float],
+        fs_values: list[float],
+        qmax: float,
+        fmax: float,
+        qc_color: str,
+        fs_color: str,
+        frame_fill: str,
+        frame_outline: str,
+        groundwater_level: float | None = None,
+        groundwater_color: str = "#2f6fff",
+        nodata_text: str = "нет данных",
+    ):
+        x0, x1, y0, y1 = [float(v) for v in rect]
+        canvas.create_rectangle(x0, y0, x1, y1, fill=frame_fill, outline=frame_outline)
+        if groundwater_level is not None and y0 <= float(groundwater_level) <= y1:
+            canvas.create_line(x0 + 2, float(groundwater_level), x1 - 2, float(groundwater_level), fill=groundwater_color, width=2, dash=(6, 3))
+        if not y_points:
+            canvas.create_text((x0 + x1) / 2.0, (y0 + y1) / 2.0, text=nodata_text, fill="#666", font=("Segoe UI", 8))
+            return rect
+
+        qmax = max(float(qmax), 0.1)
+        fmax = max(float(fmax), 1.0)
+        pad = 8.0
+        xa0 = x0 + pad
+        xa1 = x1 - pad
+
+        def _sx(v, vmax):
+            return xa0 + (max(0.0, min(float(v), vmax)) / vmax) * (xa1 - xa0)
+
+        qc_pts = []
+        fs_pts = []
+        for yy, qv, fv in zip(y_points, qc_values, fs_values):
+            if yy < y0 - 1e-6 or yy > y1 + 1e-6:
+                continue
+            qc_pts.extend([_sx(qv, qmax), float(yy)])
+            fs_pts.extend([_sx(fv, fmax), float(yy)])
+
+        if len(qc_pts) >= 4:
+            canvas.create_line(*qc_pts, fill=qc_color, width=2, smooth=False)
+        if len(fs_pts) >= 4:
+            canvas.create_line(*fs_pts, fill=fs_color, width=2, smooth=False)
+        return rect
+
+    def render_ige(
+        self,
+        canvas,
+        *,
+        intervals: list[dict],
+        fill_resolver,
+        hatch_drawer,
+        label_font_factory,
+        layer_ui_colors: dict[str, str],
+    ) -> tuple[list[dict], list[dict]]:
+        label_spans: list[dict] = []
+        plot_hitboxes: list[dict] = []
+        for interval in intervals:
+            x0 = float(interval["x0"]); x1 = float(interval["x1"])
+            y0 = float(interval["y0"]); y1 = float(interval["y1"])
+            soil_type = str(interval.get("soil_type") or "")
+            fill_color = str(fill_resolver(soil_type))
+            canvas.create_rectangle(x0, y0, x1, y1, fill=fill_color, outline="")
+            hatch_drawer(x0, y0, x1, y1, soil_type)
+            plot_hitboxes.append(self.make_hitbox(kind="interval", bbox=(x0, y0, x1, y1), extra={"interval_index": int(interval.get("interval_index", 0)), "ige_id": interval.get("ige_id"), "top": float(interval.get("top", 0.0)), "bot": float(interval.get("bot", 0.0))}))
+            text = str(interval.get("ige_id") or "")
+            if text and (y1 - y0) >= 8.0:
+                cx = (x0 + x1) * 0.5
+                cy = (y0 + y1) * 0.5
+                max_w = max(8.0, (x1 - x0) - 8.0)
+                max_h = max(8.0, (y1 - y0) - 2.0)
+                for font_size in (8, 7, 6):
+                    font = label_font_factory(font_size)
+                    tw = float(font.measure(text))
+                    th = float(font.metrics("linespace"))
+                    chip_w = tw + 8.0
+                    chip_h = th + 4.0
+                    if chip_w <= max_w and chip_h <= max_h:
+                        bbox = (cx - chip_w * 0.5, cy - chip_h * 0.5, cx + chip_w * 0.5, cy + chip_h * 0.5)
+                        canvas.create_rectangle(*bbox, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"])
+                        canvas.create_text(cx, cy, text=text, fill=layer_ui_colors["text"], activefill=layer_ui_colors["text"], font=("Segoe UI", font_size, "bold"))
+                        label_spans.append(self.make_hitbox(kind="label", bbox=(bbox[0] - 3.0, bbox[1] - 2.0, bbox[2] + 3.0, bbox[3] + 2.0), extra={"depth": float(interval.get("depth", 0.0))}))
+                        break
+        return plot_hitboxes, label_spans
+
+    def render_overlays(
+        self,
+        canvas,
+        *,
+        overlay_specs: list[dict],
+        layer_ui_colors: dict[str, str],
+    ) -> tuple[list[dict], list[dict]]:
+        handle_hits: list[dict] = []
+        depth_hits: list[dict] = []
+        for spec in overlay_specs:
+            kind = str(spec.get("kind") or "")
+            if kind == "line":
+                canvas.create_line(*spec["points"], fill=spec.get("fill", layer_ui_colors["line"]), width=spec.get("width", 1), dash=spec.get("dash"))
+                continue
+            if kind == "handle":
+                x0, y0, x1, y1 = spec["bbox"]
+                canvas.create_rectangle(x0, y0, x1, y1, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"], activewidth=2)
+                handle_hits.append(self.make_hitbox(kind=str(spec.get("hit_kind", "boundary")), bbox=(x0 - 1, y0 - 1, x1 + 1, y1 + 1), boundary=spec.get("boundary"), extra={"tag": spec.get("tag")}))
+                continue
+            if kind == "depth_box":
+                x0, y0, x1, y1 = spec["bbox"]
+                canvas.create_rectangle(x0, y0, x1, y1, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"])
+                canvas.create_text((x0 + x1) / 2.0, (y0 + y1) / 2.0, text=str(spec.get("text", "")), fill=layer_ui_colors["text"], activefill=layer_ui_colors["text"], font=("Segoe UI", 7))
+                depth_hits.append(self.make_hitbox(kind=str(spec.get("hit_kind", "boundary_depth_edit")), bbox=(x0, y0 - 1.0, x1, y1 + 1.0), boundary=spec.get("boundary")))
+                continue
+            if kind in {"plus", "minus"}:
+                x0, y0, x1, y1 = spec["bbox"]
+                canvas.create_rectangle(x0, y0, x1, y1, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"])
+                canvas.create_text((x0 + x1) / 2.0, (y0 + y1) / 2.0, text=("+" if kind == "plus" else "−"), fill=layer_ui_colors["text"], activefill=layer_ui_colors["text"], font=("Segoe UI", 9, "bold"))
+                handle_hits.append(self.make_hitbox(kind=str(spec.get("hit_kind", kind)), bbox=(x0 - 4.0, y0 - 4.0, x1 + 4.0, y1 + 4.0), boundary=spec.get("boundary"), extra={"tag": spec.get("tag")}))
+        return handle_hits, depth_hits
