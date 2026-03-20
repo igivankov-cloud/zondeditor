@@ -3,6 +3,8 @@
 # === FILE MAP BEGIN ===
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
 # - SoundingsViewport / SoundingCard migration helpers: viewport/card-local coordinate model for sounding rendering and placement.
+# - SoundingCard per-card body canvas + redraw lifecycle helpers: L4521–L4705 — card-local vertical scroll ownership, root transforms, selfcheck snapshot, and rebuild/preserve flow.
+# - _ensure_cell_visible/_hit_test/_on_mousewheel: L7248–L8878 — card-local Y scrolling, hit-testing and routing between outer X viewport and inner card viewports.
 # - _extract_base_ige_num/_used_base_ige_ordinals: L1120–L1139 — поиск базовых имён ИГЭ-N для выбора следующего свободного номера.
 # - _next_free_ige_ordinal/_next_free_ige_id: L1141–L1340 — генерация ближайшего свободного базового имени ИГЭ.
 # - _add_unassigned_ige_from_ribbon: L1371–L1383 — добавление нового ИГЭ с пустым типом грунта.
@@ -4520,9 +4522,18 @@ class GeoCanvasEditor(tk.Tk):
 
     def _rebuild_sounding_cards(self):
         cards: dict[int, SoundingCard] = {}
+        previous = dict(self.__dict__.get("_sounding_cards", {}) or {})
+        preserved_y = {int(ti): tuple(card.body_yview()) for ti, card in previous.items() if hasattr(card, "body_yview")}
         master = getattr(self.soundings_viewport, "strip", None)
+        view_h = float(getattr(self, "_card_body_view_height", lambda: getattr(self.canvas, "winfo_height", lambda: self._total_body_height())())())
+        body_h = float(self._total_body_height())
         for col, ti in enumerate(getattr(self, "display_cols", []) or []):
-            cards[int(ti)] = SoundingCard(master, editor=self, test_index=int(ti), geometry=self._sounding_card_geometry(col))
+            card = SoundingCard(master, editor=self, test_index=int(ti), geometry=self._sounding_card_geometry(col))
+            start = (preserved_y.get(int(ti), (0.0, 0.0))[0] if int(ti) in preserved_y else 0.0)
+            card.set_body_scroll_context(view_height=view_h, content_height=body_h)
+            if start:
+                card.body_yview_moveto(start)
+            cards[int(ti)] = card
         self._sounding_cards = cards
         return cards
 
@@ -4536,6 +4547,10 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             return None
         card = SoundingCard(getattr(self.soundings_viewport, "strip", None), editor=self, test_index=int(ti), geometry=self._sounding_card_geometry(col))
+        try:
+            card.set_body_scroll_context(view_height=self._card_body_view_height(), content_height=float(self._total_body_height()))
+        except Exception:
+            pass
         cards[int(ti)] = card
         self._sounding_cards = cards
         return card
@@ -4584,7 +4599,41 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             return (0.0, 1.0)
 
-    def _body_view_origin(self) -> tuple[float, float]:
+    def _card_body_view_height(self) -> float:
+        try:
+            return float(self.canvas.winfo_height() or 0)
+        except Exception:
+            return float(self._total_body_height())
+
+    def _card_yview_snapshot(self) -> dict[int, tuple[float, float]]:
+        return {int(ti): tuple(card.body_yview()) for ti, card in (self.__dict__.get("_sounding_cards", {}) or {}).items() if hasattr(card, "body_yview")}
+
+    def _card_for_widget(self, widget) -> SoundingCard | None:
+        for ti in getattr(self, "display_cols", []) or []:
+            card = self._card_for_test(int(ti))
+            if card is not None and widget is getattr(card, "body_canvas", None):
+                return card
+        return None
+
+    def _active_body_card(self) -> SoundingCard | None:
+        active = getattr(self, "_active_test_idx", None)
+        if active is not None:
+            card = self._card_for_test(int(active))
+            if card is not None:
+                return card
+        cols = getattr(self, "display_cols", []) or []
+        return self._card_for_test(int(cols[0])) if cols else None
+
+    def _body_view_origin(self, ti: int | None = None) -> tuple[float, float]:
+        widget = getattr(self, "_evt_widget", None)
+        if ti is not None:
+            card = self._card_for_test(int(ti))
+        elif widget is not None and widget is not getattr(self, "canvas", None):
+            card = self._card_for_widget(widget)
+        else:
+            card = None
+        if card is not None and hasattr(card, "body_canvasy"):
+            return float(card.geometry.card_x0), float(card.body_canvasy(0))
         try:
             vx = float(self._viewport_x0())
         except Exception:
@@ -4595,12 +4644,19 @@ class GeoCanvasEditor(tk.Tk):
             vy = 0.0
         return vx, vy
 
-    def _body_world_to_local(self, x: float, y: float) -> tuple[float, float]:
-        vx, vy = self._body_view_origin()
+    def _body_world_to_local(self, x: float, y: float, ti: int | None = None) -> tuple[float, float]:
+        card = self._card_for_test(int(ti)) if ti is not None else self._card_for_widget(getattr(self, "_evt_widget", None))
+        if card is not None and hasattr(card, "body_world_to_local"):
+            return card.body_world_to_local(x, y)
+        vx, vy = self._body_view_origin(ti=ti)
         return float(x) - vx, float(y) - vy
 
-    def _body_world_to_root(self, x: float, y: float) -> tuple[int, int]:
-        lx, ly = self._body_world_to_local(x, y)
+    def _body_world_to_root(self, x: float, y: float, ti: int | None = None) -> tuple[int, int]:
+        card = self._card_for_test(int(ti)) if ti is not None else self._card_for_widget(getattr(self, "_evt_widget", None))
+        if card is not None and getattr(card, "body_canvas", None) is not None:
+            lx, ly = card.body_world_to_local(x, y)
+            return int(card.body_canvas.winfo_rootx() + lx), int(card.body_canvas.winfo_rooty() + ly)
+        lx, ly = self._body_world_to_local(x, y, ti=ti)
         return int(self.canvas.winfo_rootx() + lx), int(self.canvas.winfo_rooty() + ly)
 
     def _header_world_to_root(self, x: float, y: float) -> tuple[int, int]:
@@ -4612,6 +4668,10 @@ class GeoCanvasEditor(tk.Tk):
         return int(self.hcanvas.winfo_rootx() + lx), int(self.hcanvas.winfo_rooty() + float(y))
 
     def _event_body_world_xy(self, x: float, y: float) -> tuple[float, float]:
+        widget = getattr(self, "_evt_widget", None)
+        card = self._card_for_widget(widget) if widget is not None else None
+        if card is not None:
+            return card.body_local_to_world(float(x), float(y))
         vx, vy = self._body_view_origin()
         return float(x) + vx, float(y) + vy
 
@@ -4658,6 +4718,7 @@ class GeoCanvasEditor(tk.Tk):
                 }
         except Exception:
             editor_bbox = None
+        active_card = self._active_body_card()
         return {
             "x_fraction": view,
             "visible_x": visible,
@@ -4665,6 +4726,9 @@ class GeoCanvasEditor(tk.Tk):
             "last_card": last_card,
             "active_inline_editor": editor_bbox,
             "ownership": ownership if 'ownership' in locals() else None,
+            "per_card_yviews": self._card_yview_snapshot(),
+            "active_card_body_yview": (tuple(active_card.body_yview()) if active_card is not None and hasattr(active_card, "body_yview") else None),
+            "card_redraw_ownership": (active_card.render_ownership_snapshot() if active_card is not None else None),
         }
 
     def _dev_log_viewport_state(self, source: str):
@@ -7252,11 +7316,14 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             return
 
-        cnv = self.canvas
+        try:
+            ti = int((getattr(self, "display_cols", []) or [])[int(col)])
+        except Exception:
+            ti = int(col)
+        card = self._card_for_test(int(ti))
+        cnv = getattr(card, "body_canvas", None) or self.canvas
         bbox_all = cnv.bbox("all")
-        if not bbox_all:
-            return
-        ax0, ay0, ax1, ay1 = bbox_all
+        ax0, ay0, ax1, ay1 = bbox_all if bbox_all else (0.0, 0.0, float(self._column_block_width()), float(self._total_body_height()))
         aw = max(1.0, float(ax1 - ax0))
         ah = max(1.0, float(ay1 - ay0))
 
@@ -7266,9 +7333,14 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             vx0 = 0.0
             vw = 1.0
-        _cvx0, vy0, _cvx1, vy1 = _canvas_view_bbox(cnv)
+        if card is not None and hasattr(card, "body_canvasy"):
+            vy0 = float(card.body_canvasy(0))
+            vh = max(1.0, float(getattr(card, "_body_view_height", 0.0) or self._card_body_view_height()))
+            vy1 = vy0 + vh
+        else:
+            _cvx0, vy0, _cvx1, vy1 = _canvas_view_bbox(cnv)
+            vh = max(1.0, float(vy1 - vy0))
         vx1 = vx0 + vw
-        vh = max(1.0, float(vy1 - vy0))
 
         # Горизонталь
         target_x = None
@@ -7294,7 +7366,10 @@ class GeoCanvasEditor(tk.Tk):
             frac = (target_y - ay0) / ah
             frac = 0.0 if frac < 0.0 else (1.0 if frac > 1.0 else frac)
             try:
-                cnv.yview_moveto(frac)
+                if card is not None and hasattr(card, "body_yview_moveto"):
+                    card.body_yview_moveto(frac)
+                else:
+                    cnv.yview_moveto(frac)
             except Exception:
                 pass
 
@@ -8272,13 +8347,14 @@ class GeoCanvasEditor(tk.Tk):
             bx0, by0, bx1, by1 = card.cell_editor_rect(float(y0), float(y1), field)
         else:
             bx0, by0, bx1, by1 = self._cell_bbox(col, display_row, field)
-        vx0, vy0 = self._body_world_to_local(bx0, by0)
+        vx0, vy0 = self._body_world_to_local(bx0, by0, ti=int(ti))
 
         vals = (getattr(t, "qc", []) or []) if field == "qc" else (getattr(t, "fs", []) or [])
         current_raw = vals[row] if 0 <= row < len(vals) else ""
         current = "" if current_raw is None else str(current_raw)
         self._tail_debug_log("TAIL_ENTRY", f"begin_edit SOURCE ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} source_before_create={repr(current_raw)} source_norm={repr(current)} len_field={len(vals)}", ti=int(ti))
-        e = tk.Entry(self.canvas, validate="key", validatecommand=(self.register(self._validate_cell_int_key), "%P"))
+        parent_canvas = getattr(card, "body_canvas", None) or self.canvas
+        e = tk.Entry(parent_canvas, validate="key", validatecommand=(self.register(self._validate_cell_int_key), "%P"))
         self._tail_debug_log("TAIL_ENTRY", f"begin_edit CREATED ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} entry_text_after_create={repr(e.get())}", ti=int(ti))
         e.insert(0, current)
         self._tail_debug_log("TAIL_ENTRY", f"begin_edit INSERTED ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} entry_text_after_insert={repr(e.get())}", ti=int(ti))
@@ -8362,10 +8438,11 @@ class GeoCanvasEditor(tk.Tk):
             bx0, by0, bx1, by1 = card.depth0_editor_rect(float(y0), float(y1))
         else:
             bx0, by0, bx1, by1 = self._cell_bbox(col, display_row, "depth")
-        vx0, vy0 = self._body_world_to_local(bx0, by0)
+        vx0, vy0 = self._body_world_to_local(bx0, by0, ti=int(ti))
 
         current = str(t.depth[0]).strip()
-        e = tk.Entry(self.canvas, validate="key", validatecommand=(self.register(_validate_depth_0_4_key), "%P"))
+        parent_canvas = getattr(card, "body_canvas", None) or self.canvas
+        e = tk.Entry(parent_canvas, validate="key", validatecommand=(self.register(_validate_depth_0_4_key), "%P"))
         e.insert(0, current)
         e.select_range(0, tk.END)
         e.place(x=vx0 + 1, y=vy0 + 1, width=(bx1 - bx0) - 2, height=(by1 - by0) - 2)
@@ -8792,7 +8869,7 @@ class GeoCanvasEditor(tk.Tk):
         )
 
     def _begin_scroll_debug_cycle(self, source: str):
-        self._viewport_sync_wheel_seq = int(getattr(self, "_viewport_sync_wheel_seq", 0) or 0) + 1
+        self._viewport_sync_wheel_seq = int(self.__dict__.get("_viewport_sync_wheel_seq", 0) or 0) + 1
         self._viewport_sync_source_counts = {}
         self._debug_viewport_sync("wheel_begin", source=source)
 
@@ -8811,7 +8888,11 @@ class GeoCanvasEditor(tk.Tk):
             return self._on_mousewheel_x(event)
         delta = int(-1 * (event.delta / 120)) if event.delta else 0
         if delta != 0:
-            self.canvas.yview_scroll(delta, "units")
+            card = self._card_for_widget(getattr(self, "_evt_widget", None)) or self._active_body_card()
+            if card is not None and hasattr(card, "body_yview_scroll"):
+                card.body_yview_scroll(delta, "units")
+            else:
+                self.canvas.yview_scroll(delta, "units")
             self._sync_header_body_after_scroll()
         return "break"
 
@@ -8821,11 +8902,18 @@ class GeoCanvasEditor(tk.Tk):
         self._end_edit(commit=True)
         if bool(getattr(self, "_shift_pressed", False)):
             return self._on_mousewheel_linux_x(direction)
-        self.canvas.yview_scroll(direction, "units")
+        card = self._card_for_widget(getattr(self, "_evt_widget", None)) or self._active_body_card()
+        if card is not None and hasattr(card, "body_yview_scroll"):
+            card.body_yview_scroll(direction, "units")
+        else:
+            self.canvas.yview_scroll(direction, "units")
         self._sync_header_body_after_scroll()
         return "break"
 
     def _get_body_view_top_canvas_y(self) -> float:
+        card = self._active_body_card()
+        if card is not None and hasattr(card, "body_canvasy"):
+            return float(card.body_canvasy(0))
         try:
             return float(self.canvas.canvasy(0))
         except Exception:
@@ -8853,7 +8941,11 @@ class GeoCanvasEditor(tk.Tk):
                 frac = 0.0 if body_h <= 1.0 else (target_top / body_h)
                 frac = 0.0 if frac < 0.0 else (1.0 if frac > 1.0 else frac)
                 try:
-                    self.canvas.yview_moveto(frac)
+                    card = self._active_body_card()
+                    if card is not None and hasattr(card, "body_yview_moveto"):
+                        card.body_yview_moveto(frac)
+                    else:
+                        self.canvas.yview_moveto(frac)
                 except Exception:
                     pass
         finally:

@@ -118,14 +118,20 @@ class SoundingCardGeometry:
 
 
 class SoundingCard:
-    """Pilot wrapper for per-sounding UI/card APIs while the renderer is still global."""
+    """Card-local UI owner for geometry, render lifecycle and vertical scroll state."""
 
     HEADER_CONTROLS = ("export", "lock", "edit", "dup", "trash")
+    REDRAW_PARTS = ("body", "graph", "layers", "overlays")
 
     def __init__(self, master, *, editor, test_index: int, geometry: SoundingCardGeometry):
         self.editor = editor
         self.test_index = int(test_index)
         self.geometry = geometry
+        self._body_view_height = float(getattr(geometry, "body_height", 0.0) or 0.0)
+        self._body_content_height = float(getattr(geometry, "body_height", 0.0) or 0.0)
+        self._body_y0 = 0.0
+        self._invalid_parts = set(self.REDRAW_PARTS)
+        self._redraw_callbacks: dict[str, object] = {}
         if master is None:
             self.host = None
             self.header_frame = None
@@ -139,6 +145,80 @@ class SoundingCard:
 
     def world_to_local(self, x: float, y: float) -> tuple[float, float]:
         return self.geometry.world_to_local(x, y)
+
+    def set_body_scroll_context(self, *, view_height: float | None = None, content_height: float | None = None, y0: float | None = None):
+        if view_height is not None:
+            self._body_view_height = max(0.0, float(view_height))
+        if content_height is not None:
+            self._body_content_height = max(self._body_view_height, float(content_height))
+        max_y0 = self.max_body_y0()
+        if y0 is None:
+            y0 = self._body_y0
+        self._body_y0 = min(max(float(y0), 0.0), max_y0)
+        return self.body_yview()
+
+    def max_body_y0(self) -> float:
+        return max(0.0, float(self._body_content_height) - float(self._body_view_height))
+
+    def body_yview(self) -> tuple[float, float]:
+        total = max(1.0, float(self._body_content_height))
+        start = min(max(float(self._body_y0) / total, 0.0), 1.0)
+        end = min(max((float(self._body_y0) + float(self._body_view_height)) / total, start), 1.0)
+        return (start, end)
+
+    def body_yview_moveto(self, fraction: float):
+        total = max(1.0, float(self._body_content_height))
+        self._body_y0 = min(max(float(fraction) * total, 0.0), self.max_body_y0())
+        return self.body_yview()
+
+    def body_yview_scroll(self, number: int, what: str = "units"):
+        step = 24.0 if str(what) == "units" else max(1.0, float(self._body_view_height) * 0.9)
+        self._body_y0 = min(max(float(self._body_y0) + (float(number) * step), 0.0), self.max_body_y0())
+        return self.body_yview()
+
+    def body_canvasy(self, value: float) -> float:
+        return float(self._body_y0) + float(value)
+
+    def body_world_to_local(self, x: float, y: float) -> tuple[float, float]:
+        return float(x) - float(self.geometry.card_x0), float(y) - float(self._body_y0)
+
+    def body_local_to_world(self, x: float, y: float) -> tuple[float, float]:
+        return float(self.geometry.card_x0) + float(x), float(self._body_y0) + float(y)
+
+    def body_world_to_root(self, x: float, y: float) -> tuple[int, int]:
+        if self.body_canvas is not None:
+            lx, ly = self.body_world_to_local(x, y)
+            return int(self.body_canvas.winfo_rootx() + lx), int(self.body_canvas.winfo_rooty() + ly)
+        try:
+            return self.editor._body_world_to_root(x, y, ti=self.test_index)
+        except TypeError:
+            return self.editor._body_world_to_root(x, y)
+
+    def invalidate_body(self, *parts: str):
+        targets = parts or ("body",)
+        self._invalid_parts.update(str(part) for part in targets)
+
+    def invalidate_graph(self, *parts: str):
+        self.invalidate_body(*(parts or ("graph",)))
+
+    def invalidate_layers(self, *parts: str):
+        self.invalidate_body(*(parts or ("layers",)))
+
+    def invalidate_overlays(self, *parts: str):
+        self.invalidate_body(*(parts or ("overlays",)))
+
+    def bind_redraw_callback(self, part: str, callback):
+        self._redraw_callbacks[str(part)] = callback
+
+    def redraw_if_needed(self, *parts: str) -> tuple[str, ...]:
+        requested = {str(part) for part in (parts or self.REDRAW_PARTS)}
+        ready = tuple(part for part in self.REDRAW_PARTS if part in requested and part in self._invalid_parts)
+        for part in ready:
+            callback = self._redraw_callbacks.get(part)
+            if callable(callback):
+                callback()
+            self._invalid_parts.discard(part)
+        return ready
 
     def contains_world(self, x: float, y: float) -> bool:
         x0, y0, x1, y1 = self.geometry.card_bounds_world
@@ -226,7 +306,7 @@ class SoundingCard:
     def popup_anchor_root(self, x: float, y: float, *, section: str = "body") -> tuple[int, int]:
         if section == "header":
             return self.editor._header_world_to_root(x, y)
-        return self.editor._body_world_to_root(x, y)
+        return self.body_world_to_root(x, y)
 
     def make_hitbox(self, *, kind: str, bbox: tuple[float, float, float, float], boundary: int | None = None, extra: dict | None = None) -> dict:
         data = {
@@ -314,8 +394,32 @@ class SoundingCard:
     def render_ownership_snapshot(self) -> dict[str, object]:
         return {
             "card": int(self.test_index),
-            "owned": ["header", "body_table_cells", "graphs", "ige_layers", "overlays", "card_hit_testing", "editor_rects", "popup_anchors"],
-            "legacy": ["global_canvas_lifecycle", "redraw_orchestration", "scrollregion_scheduling"],
+            "owned": [
+                "header",
+                "body_canvas",
+                "body_vertical_scroll_state",
+                "body_table_cells",
+                "graphs",
+                "ige_layers",
+                "overlays",
+                "card_hit_testing",
+                "editor_rects",
+                "popup_anchors",
+                "card_redraw_lifecycle",
+            ],
+            "legacy": ["outer_viewport_x", "global_scheduling", "shared_model_coordination"],
+            "body_yview": self.body_yview(),
+            "invalid_parts": sorted(self._invalid_parts),
+        }
+
+    def dev_selfcheck_snapshot(self) -> dict[str, object]:
+        return {
+            "card": int(self.test_index),
+            "body_view_height": float(self._body_view_height),
+            "body_content_height": float(self._body_content_height),
+            "body_y0": float(self._body_y0),
+            "body_yview": self.body_yview(),
+            "invalid_parts": sorted(self._invalid_parts),
         }
 
     def future_graph_interface(self) -> dict[str, str]:
@@ -343,7 +447,7 @@ class SoundingCard:
         groundwater_color: str = "#2f6fff",
         nodata_text: str = "нет данных",
     ):
-        x0, x1, y0, y1 = [float(v) for v in rect]
+        x0, y0, x1, y1 = [float(v) for v in rect]
         canvas.create_rectangle(x0, y0, x1, y1, fill=frame_fill, outline=frame_outline)
         if groundwater_level is not None and y0 <= float(groundwater_level) <= y1:
             canvas.create_line(x0 + 2, float(groundwater_level), x1 - 2, float(groundwater_level), fill=groundwater_color, width=2, dash=(6, 3))

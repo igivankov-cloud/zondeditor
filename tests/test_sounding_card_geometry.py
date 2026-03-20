@@ -247,3 +247,41 @@ def test_sounding_card_render_graph_ige_and_overlays_are_self_owned():
     assert handle_hits[0]["kind"] == "boundary"
     assert depth_hits[0]["kind"] == "boundary_depth_edit"
     assert "graphs" in card.render_ownership_snapshot()["owned"]
+
+
+def test_sounding_card_body_scroll_and_redraw_lifecycle_are_card_owned():
+    editor = SimpleNamespace(
+        _header_world_to_root=lambda x, y: (int(x), int(y)),
+        _body_world_to_root=lambda x, y, ti=None: (int(x), int(y)),
+    )
+    g = SoundingCardGeometry(
+        card_x0=50.0,
+        card_y0=0.0,
+        card_width=326.0,
+        header_height=72.0,
+        body_height=300.0,
+        footer_height=0.0,
+        table_width=176.0,
+        graph_width=150.0,
+        depth_width=64.0,
+        value_width=56.0,
+    )
+    card = SoundingCard(None, editor=editor, test_index=3, geometry=g)
+    calls = []
+
+    card.set_body_scroll_context(view_height=100.0, content_height=400.0)
+    card.body_yview_moveto(0.25)
+    card.bind_redraw_callback("graph", lambda: calls.append("graph"))
+    card.bind_redraw_callback("layers", lambda: calls.append("layers"))
+    card.redraw_if_needed("graph", "layers")
+    card.invalidate_graph()
+    card.invalidate_layers()
+    redrawn = card.redraw_if_needed("graph", "layers")
+    snapshot = card.dev_selfcheck_snapshot()
+
+    assert round(card.body_yview()[0], 2) == 0.25
+    assert card.body_world_to_local(70.0, 130.0) == (20.0, 30.0)
+    assert redrawn == ("graph", "layers")
+    assert calls[-2:] == ["graph", "layers"]
+    assert snapshot["body_yview"] == card.body_yview()
+    assert "card_redraw_lifecycle" in card.render_ownership_snapshot()["owned"]
