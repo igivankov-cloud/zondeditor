@@ -388,7 +388,7 @@ def test_redraw_graphs_now_uses_card_body_canvas_not_shared_editor_canvas():
     editor._draw_layer_hatch = lambda *args, **kwargs: None
     editor.cpt_calc_settings = {}
     editor._refresh_display_order = lambda: None
-    editor._graph_rect_for_test = lambda ti: (226.0, 376.0, 0.0, 100.0)
+    editor._graph_rect_for_test = lambda ti: (226.0, 0.0, 376.0, 100.0)
     editor.canvas = SimpleNamespace(
         delete=lambda *args, **kwargs: None,
         create_rectangle=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("shared canvas should not draw")),
@@ -605,7 +605,7 @@ def test_redraw_graphs_now_does_not_crash_when_graphs_and_layers_are_disabled():
     editor._calc_qc_fs_from_del = lambda q, f: (float(q), float(f))
     editor._depth_to_canvas_y = lambda d: float(d) * 100.0
     editor._refresh_display_order = lambda: None
-    editor._graph_rect_for_test = lambda ti: (226.0, 376.0, 0.0, 100.0)
+    editor._graph_rect_for_test = lambda ti: (226.0, 0.0, 376.0, 100.0)
     editor.canvas = SimpleNamespace(delete=lambda *args, **kwargs: None)
     editor._rebuild_sounding_cards()
     card = editor._card_for_test(0)
@@ -781,3 +781,49 @@ def test_expand_collapse_expand_keeps_card_body_canvas_clean():
     final_rectangles = [item for item in card.body_canvas._items if item["type"] == "rectangle"]
     assert len(final_rectangles) == 9
     assert editor.canvas.find_all() == ()
+
+
+
+def test_redraw_graphs_now_renders_each_card_in_its_own_local_graph_column():
+    editor = _make_editor()
+    editor.display_cols = [0, 1]
+    editor.tests = [
+        SimpleNamespace(qc=["10", "20"], fs=["5", "15"], depth=["0.00", "0.10"], tid=1),
+        SimpleNamespace(qc=["12", "24"], fs=["6", "18"], depth=["0.00", "0.10"], tid=2),
+    ]
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.show_graphs = True
+    editor.show_geology_column = False
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 640), xview_fractions=lambda: (0.0, 1.0))
+    editor._grid_units = [("row", 0), ("row", 1)]
+    editor._grid_row_maps = {0: {0: 0, 1: 1}, 1: {0: 0, 1: 1}}
+    editor._row_y_bounds = lambda row: (row * 22.0, row * 22.0 + 22.0)
+    editor._calc_layer_params_for_all_tests = lambda: None
+    editor._recompute_graph_scales = lambda: setattr(editor, "graph_qc_max_mpa", 30.0) or setattr(editor, "graph_fs_max_kpa", 500.0)
+    editor._calc_qc_fs_from_del = lambda q, f: (float(q), float(f))
+    editor._clear_graph_layers = lambda: None
+    editor._refresh_display_order = lambda: None
+    editor._rebuild_sounding_cards()
+    card0 = editor._card_for_test(0)
+    card1 = editor._card_for_test(1)
+    card0.body_canvas = _DummyBodyCanvas(support_items=True)
+    card1.body_canvas = _DummyBodyCanvas(support_items=True)
+    card0.set_body_scroll_context(view_height=100.0, content_height=200.0)
+    card1.set_body_scroll_context(view_height=100.0, content_height=200.0)
+
+    editor._redraw_graphs_now()
+
+    rect0 = next(item for item in card0.body_canvas._items if item["type"] == "rectangle")
+    rect1 = next(item for item in card1.body_canvas._items if item["type"] == "rectangle")
+    assert rect0["args"][:3] == (176.0, 0.0, 326.0)
+    assert rect1["args"][:3] == (176.0, 0.0, 326.0)
+    assert rect0["args"][3] == 400.0
+    assert rect1["args"][3] == 400.0
+    assert sum(1 for item in card0.body_canvas._items if item["type"] == "line") >= 2
+    assert sum(1 for item in card1.body_canvas._items if item["type"] == "line") >= 2

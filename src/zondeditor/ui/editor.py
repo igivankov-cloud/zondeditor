@@ -5549,7 +5549,17 @@ class GeoCanvasEditor(tk.Tk):
             rect = self._graph_rect_for_test(ti)
             if not rect:
                 continue
-            x0, x1, y0, y1 = rect
+            x0, y0, x1, y1 = rect
+            if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+                try:
+                    local_rect = (card.body_world_to_local(x0, y0) + card.body_world_to_local(x1, y1)) if getattr(card, "body_canvas", None) is not None else rect
+                    print(
+                        f"[GRAPHX] ti={int(ti)} rect_world={(x0, y0, x1, y1)} rect_local={local_rect} "
+                        f"body_canvas_width={getattr(getattr(card, 'body_canvas', None), 'cget', lambda _k: None)('width') if getattr(card, 'body_canvas', None) is not None else None}",
+                        file=sys.stderr,
+                    )
+                except Exception:
+                    pass
             t = self.tests[ti]
             show_graphs = bool(getattr(self, "show_graphs", False))
             show_geology = bool(getattr(self, "show_geology_column", True))
@@ -5664,6 +5674,18 @@ class GeoCanvasEditor(tk.Tk):
             fs_vals = [x[2] for x in packed]
 
             if show_graphs:
+                if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+                    try:
+                        min_x_before = float(x0)
+                        max_x_before = float(x1)
+                        min_x_after = float(card.body_world_to_local(x0, y0)[0]) if getattr(card, "body_canvas", None) is not None else float(x0)
+                        max_x_after = float(card.body_world_to_local(x1, y1)[0]) if getattr(card, "body_canvas", None) is not None else float(x1)
+                        print(
+                            f"[GRAPHX] ti={int(ti)} x_before=({min_x_before},{max_x_before}) x_after=({min_x_after},{max_x_after}) points={len(y_points)}",
+                            file=sys.stderr,
+                        )
+                    except Exception:
+                        pass
                 card.invalidate_graph()
                 card.render_graph(
                     body_target,
@@ -5681,6 +5703,12 @@ class GeoCanvasEditor(tk.Tk):
                     visible=show_graphs,
                 )
                 card.redraw_if_needed("graph")
+                if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+                    try:
+                        graph_items = len(card.body_canvas.find_all()) if getattr(card, "body_canvas", None) is not None and hasattr(card.body_canvas, "find_all") else None
+                        print(f"[GRAPHX] ti={int(ti)} graph_items={graph_items}", file=sys.stderr)
+                    except Exception:
+                        pass
             if show_geology:
                 column = self._ensure_test_experience_column(t)
                 handle_x = x1 - 2
@@ -6112,7 +6140,7 @@ class GeoCanvasEditor(tk.Tk):
         try:
             rect = self._graph_rect_for_test(int(ti))
             if rect:
-                x0, x1, y0r, _y1r = rect
+                x0, y0r, x1, _y1r = rect
                 gx0, gy_guess = _canvas_to_root(float(x0), float(y0r))
                 col_w = max(80, int(float(x1) - float(x0)))
                 gy0 = int(gy_guess)
