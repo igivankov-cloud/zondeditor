@@ -571,17 +571,20 @@ class SoundingCard:
         if show_graph_scale and float(self.geometry.graph_width) > 0.0:
             gx0 = x0 + float(self.geometry.table_width)
             gx1 = gx0 + float(self.geometry.graph_width)
-            scale_top = y0 + 34.0
-            scale_mid = y0 + 48.0
-            scale_bot = y0 + hdr_h - 8.0
-            canvas.create_rectangle(gx0, scale_top - 10.0, gx1, scale_bot + 2.0, fill="", outline="#d9d9d9")
-            canvas.create_line(gx0 + 8.0, scale_mid, gx1 - 8.0, scale_mid, fill="#9aa4b2", width=1)
-            for tick_x in (gx0 + 8.0, (gx0 + gx1) * 0.5, gx1 - 8.0):
-                canvas.create_line(tick_x, scale_mid - 4.0, tick_x, scale_mid + 4.0, fill="#9aa4b2", width=1)
-            qc_label = f"qc 0–{float(qc_scale_max or 0.0):g}"
-            fs_label = f"fs 0–{float(fs_scale_max or 0.0):g}"
-            canvas.create_text(gx0 + 8.0, scale_top, text=qc_label, anchor="nw", font=("Segoe UI", 8), fill=header_text)
-            canvas.create_text(gx0 + 8.0, scale_bot, text=fs_label, anchor="sw", font=("Segoe UI", 8), fill=header_text)
+            scale_x0 = gx0 + 4.0
+            scale_x1 = gx1 - 4.0
+            if (scale_x1 - scale_x0) >= 40.0:
+                panel_top = y0 + 37.0
+                panel_bottom = y0 + hdr_h - 11.0
+                axis_y = panel_bottom - 1.0
+                canvas.create_rectangle(scale_x0, panel_top - 2.0, scale_x1, panel_bottom + 2.0, fill="", outline="#d9d9d9")
+                canvas.create_line(scale_x0 + 6.0, axis_y, scale_x1 - 6.0, axis_y, fill="#9aa4b2", width=1)
+                for tick_x in (scale_x0 + 6.0, (scale_x0 + scale_x1) * 0.5, scale_x1 - 6.0):
+                    canvas.create_line(tick_x, axis_y - 4.0, tick_x, axis_y + 1.0, fill="#9aa4b2", width=1)
+                qc_label = f"qc 0–{float(qc_scale_max or 0.0):g}"
+                fs_label = f"fs 0–{float(fs_scale_max or 0.0):g}"
+                canvas.create_text(scale_x0 + 6.0, panel_top - 1.0, text=qc_label, anchor="nw", font=("Segoe UI", 8), fill=header_text)
+                canvas.create_text(scale_x0 + 6.0, panel_top + 9.0, text=fs_label, anchor="nw", font=("Segoe UI", 8), fill=header_text)
         return {"header": (x0, y0, x1, y1), "export": (cb_x0, cb_y0, cb_x0 + cb_s, cb_y0 + cb_s), **controls}
 
     def render_body_cell(self, canvas=None, *, row_y0: float, row_y1: float, field: str, text: str, fill: str, text_color: str):

@@ -190,8 +190,10 @@ def test_sounding_card_render_header_and_body_cell_emit_card_local_bounds():
     assert any(call[0] == "rectangle" for call in canvas.calls)
     assert any(call[0] == "text" for call in canvas.calls)
     graph_texts = [call for call in canvas.calls if call[0] == "text" and call[1] and call[1][0] >= (200.0 + 176.0)]
+    graph_boxes = [call for call in canvas.calls if call[0] == "rectangle" and call[1] and call[1][0] >= (200.0 + 176.0)]
     assert any("qc 0–30" in call[2].get("text", "") for call in graph_texts)
     assert any("fs 0–500" in call[2].get("text", "") for call in graph_texts)
+    assert any(call[1][1] >= hitboxes["lock"][3] for call in graph_boxes)
 
 
 def test_sounding_card_make_hitbox_is_card_local_owner_api():
