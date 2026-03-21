@@ -209,11 +209,11 @@ def test_sounding_card_render_header_and_body_cell_emit_card_local_bounds():
     assert hitboxes["lock"][2] <= hitboxes["experience_band"][2]
     qc_label = next(call for call in graph_texts if "qc 0–30" in call[2].get("text", ""))
     fs_label = next(call for call in graph_texts if "fs 0–120" in call[2].get("text", ""))
-    assert qc_label[2]["fill"] == "#2563eb"
-    assert fs_label[2]["fill"] == "#dc6b2f"
+    assert qc_label[2]["fill"] == "#2f9e44"
+    assert fs_label[2]["fill"] == "#2563eb"
     assert qc_label[1][1] < fs_label[1][1]
-    qc_scale_lines = [call for call in graph_lines if call[2].get("fill") == "#2563eb"]
-    fs_scale_lines = [call for call in graph_lines if call[2].get("fill") == "#dc6b2f"]
+    qc_scale_lines = [call for call in graph_lines if call[2].get("fill") == "#2f9e44"]
+    fs_scale_lines = [call for call in graph_lines if call[2].get("fill") == "#2563eb"]
     assert qc_scale_lines and fs_scale_lines
     assert max(line[1][1] for line in qc_scale_lines) < min(line[1][1] for line in fs_scale_lines)
 

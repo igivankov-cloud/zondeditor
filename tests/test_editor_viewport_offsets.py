@@ -159,7 +159,7 @@ def _make_editor():
     editor.footer = object()
     editor.pad_x = 8
     editor.pad_y = 8
-    editor.col_gap = 12
+    editor.col_gap = 4
     editor.hdr_h = 64
     editor.show_graphs = False
     editor.show_geology_column = True
@@ -249,7 +249,7 @@ def test_card_at_world_picks_card_by_world_coordinates():
     editor.graph_w = 150
     editor.w_depth = 64
     editor.w_val = 56
-    editor.col_gap = 12
+    editor.col_gap = 4
     editor.pad_x = 8
     editor.pad_y = 8
     editor.hdr_h = 64
@@ -261,6 +261,26 @@ def test_card_at_world_picks_card_by_world_coordinates():
 
     assert first is not None and first.test_index == 0
     assert second is not None and second.test_index == 1
+
+
+def test_consecutive_cards_use_tight_inter_card_gap():
+    editor = _make_editor()
+    editor.display_cols = [0, 1]
+    editor.tests = [object(), object()]
+    editor._total_body_height = lambda: 400
+    editor._is_graph_panel_visible = lambda: True
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None)
+    editor._rebuild_sounding_cards()
+
+    card0 = editor._card_for_test(0)
+    card1 = editor._card_for_test(1)
+
+    assert (card1.geometry.card_x0 - card0.geometry.card_bounds_world[2]) == 4.0
 
 
 def test_mousewheel_shift_routes_only_to_horizontal_handler():

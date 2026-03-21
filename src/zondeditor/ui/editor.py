@@ -256,7 +256,7 @@ class GeoCanvasEditor(tk.Tk):
         self.row_h_compact_1m = 38
         self.row_h = self.row_h_default
         self.hdr_h = 64
-        self.col_gap = 12
+        self.col_gap = 4
         self.w_depth = 64
         self.w_val = 56
         self.pad_x = 8
@@ -283,6 +283,12 @@ class GeoCanvasEditor(tk.Tk):
         self._active_test_idx: int | None = None
         self.graph_qc_max_mpa: float = 30.0
         self.graph_fs_max_kpa: float = 500.0
+        self.graph_qc_max_source: str = "default"
+        self.graph_fs_max_source: str = "default"
+        self.graph_qc_max_raw: float | None = None
+        self.graph_fs_max_raw: float | None = None
+        self.graph_qc_max_display: float | None = None
+        self.graph_fs_max_display: float | None = None
         self.layer_edit_mode = True
         self._layer_drag = None  # {"ti": int, "boundary": int}
         self._layer_handle_hitbox = []
@@ -5022,6 +5028,8 @@ class GeoCanvasEditor(tk.Tk):
         """Compute shared (file-level) X scales for graph columns."""
         qc_max = None
         fs_max = None
+        qc_source = "fallback"
+        fs_source = "fallback"
         try:
             cal = self._current_calibration()
             qc_full, fs_full = calc_qc_fs_from_del(
@@ -5035,6 +5043,10 @@ class GeoCanvasEditor(tk.Tk):
             )
             qc_max = float(qc_full) if float(qc_full) > 0 else None
             fs_max = float(fs_full) if float(fs_full) > 0 else None
+            if qc_max is not None:
+                qc_source = "calibration"
+            if fs_max is not None:
+                fs_source = "calibration"
         except Exception:
             pass
 
@@ -5058,16 +5070,26 @@ class GeoCanvasEditor(tk.Tk):
                         data_fs_max = value if data_fs_max is None else max(data_fs_max, value)
             if qc_max is None and data_qc_max is not None:
                 qc_max = float(data_qc_max)
+                qc_source = "data"
             if fs_max is None and data_fs_max is not None:
                 fs_max = float(data_fs_max)
+                fs_source = "data"
 
         if qc_max is None:
             qc_max = 50.0 if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" else 30.0
+            qc_source = "fallback"
         if fs_max is None:
             fs_max = 500.0
+            fs_source = "fallback"
 
         self.graph_qc_max_mpa = float(qc_max)
         self.graph_fs_max_kpa = float(fs_max)
+        self.graph_qc_max_source = str(qc_source)
+        self.graph_fs_max_source = str(fs_source)
+        self.graph_qc_max_raw = float(qc_max)
+        self.graph_fs_max_raw = float(fs_max)
+        self.graph_qc_max_display = float(round(float(qc_max), 2))
+        self.graph_fs_max_display = float(int(round(float(fs_max))))
 
     def _clear_graph_layers(self):
         for ti in getattr(self, "display_cols", []) or []:
@@ -7421,6 +7443,10 @@ class GeoCanvasEditor(tk.Tk):
                     show_graph_scale=bool(show_graphs),
                     qc_scale_max=float(self.__dict__.get("graph_qc_max_mpa", 0.0) or 0.0),
                     fs_scale_max=float(self.__dict__.get("graph_fs_max_kpa", 0.0) or 0.0),
+                    qc_scale_source=str(self.__dict__.get("graph_qc_max_source", "unknown") or "unknown"),
+                    fs_scale_source=str(self.__dict__.get("graph_fs_max_source", "unknown") or "unknown"),
+                    qc_scale_display=float(self.__dict__.get("graph_qc_max_display", self.__dict__.get("graph_qc_max_mpa", 0.0)) or 0.0),
+                    fs_scale_display=float(self.__dict__.get("graph_fs_max_display", self.__dict__.get("graph_fs_max_kpa", 0.0)) or 0.0),
                 )
 
             # --- ТАБЛИЦА (canvas) ---
