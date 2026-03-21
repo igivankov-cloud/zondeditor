@@ -133,6 +133,7 @@ def test_sounding_card_hit_testing_and_editor_rects():
     assert card.section_at_world(210.0, 10.0) == "header"
     assert card.header_control_hit(208.0, 12.0) == "export"
     assert card.header_control_hit(496.0, 14.0) == "trash"
+    assert card.header_control_hit(260.0, 14.0) == "header"
     assert card.header_control_hit(260.0, 52.0) is None
     assert card.table_field_hit(220.0, 22.0, 44.0) == "depth"
     assert card.table_field_hit(280.0, 22.0, 44.0) == "qc"
@@ -186,17 +187,25 @@ def test_sounding_card_render_header_and_body_cell_emit_card_local_bounds():
     rect = card.render_body_cell(canvas, row_y0=22.0, row_y1=44.0, field="qc", text="12", fill="#fff", text_color="#000")
 
     assert hitboxes["header"] == (200.0, 0.0, 510.0, 72.0)
-    assert hitboxes["control_band"][3] < hitboxes["scale_band"][1]
+    assert hitboxes["info_band"][2] == 376.0
+    assert hitboxes["tools_band"][0] == 376.0
+    assert hitboxes["tools_band"][3] < hitboxes["scale_band"][1]
     assert hitboxes["edit"] == (433.0, 4.0, 455.0, 24.0)
     assert rect == (264.0, 22.0, 320.0, 44.0)
     assert any(call[0] == "rectangle" for call in canvas.calls)
     assert any(call[0] == "text" for call in canvas.calls)
     graph_texts = [call for call in canvas.calls if call[0] == "text" and call[1] and call[1][0] >= (200.0 + 176.0)]
     graph_boxes = [call for call in canvas.calls if call[0] == "rectangle" and call[1] and call[1][0] >= (200.0 + 176.0)]
+    info_boxes = [call for call in canvas.calls if call[0] == "rectangle" and call[2].get("fill") == "#fff"]
+    neutral_boxes = [call for call in canvas.calls if call[0] == "rectangle" and call[2].get("fill") == "#fbfbfb"]
     assert any("qc 0–30" in call[2].get("text", "") for call in graph_texts)
     assert any("fs 0–500" in call[2].get("text", "") for call in graph_texts)
     assert any(call[1][1] >= hitboxes["scale_band"][1] for call in graph_boxes)
-    assert hitboxes["lock"][3] <= hitboxes["control_band"][3]
+    assert any(call[1] == hitboxes["info_band"] for call in info_boxes)
+    assert any(call[1] == hitboxes["tools_band"] for call in neutral_boxes)
+    assert any(call[1] == hitboxes["scale_band"] for call in neutral_boxes)
+    assert hitboxes["lock"][0] >= hitboxes["tools_band"][0]
+    assert hitboxes["lock"][3] <= hitboxes["tools_band"][3]
 
 
 def test_sounding_card_make_hitbox_is_card_local_owner_api():

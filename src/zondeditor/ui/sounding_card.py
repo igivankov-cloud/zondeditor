@@ -48,6 +48,29 @@ class SoundingCardGeometry:
         return (0.0, 0.0, float(self.card_width), control_h)
 
     @property
+    def header_info_band_local(self) -> tuple[float, float, float, float]:
+        return (0.0, 0.0, float(self.table_width), float(self.header_height))
+
+    @property
+    def header_info_band_world(self) -> tuple[float, float, float, float]:
+        lx0, ly0, lx1, ly1 = self.header_info_band_local
+        wx0, wy0 = self.local_to_world(lx0, ly0)
+        wx1, wy1 = self.local_to_world(lx1, ly1)
+        return (wx0, wy0, wx1, wy1)
+
+    @property
+    def header_tools_band_local(self) -> tuple[float, float, float, float]:
+        _x0, y0, _x1, y1 = self.header_control_band_local
+        return (float(self.table_width), y0, float(self.card_width), y1)
+
+    @property
+    def header_tools_band_world(self) -> tuple[float, float, float, float]:
+        lx0, ly0, lx1, ly1 = self.header_tools_band_local
+        wx0, wy0 = self.local_to_world(lx0, ly0)
+        wx1, wy1 = self.local_to_world(lx1, ly1)
+        return (wx0, wy0, wx1, wy1)
+
+    @property
     def header_control_band_world(self) -> tuple[float, float, float, float]:
         lx0, ly0, lx1, ly1 = self.header_control_band_local
         wx0, wy0 = self.local_to_world(lx0, ly0)
@@ -59,7 +82,7 @@ class SoundingCardGeometry:
         _x0, _y0, x1, y1 = self.header_bounds_local
         _cx0, _cy0, _cx1, cy1 = self.header_control_band_local
         top = min(y1, cy1 + 1.0)
-        return (0.0, top, x1, y1)
+        return (float(self.table_width), top, x1, y1)
 
     @property
     def header_scale_band_world(self) -> tuple[float, float, float, float]:
@@ -447,19 +470,23 @@ class SoundingCard:
         return "card"
 
     def header_control_hit(self, x: float, y: float) -> str | None:
-        hx0, hy0, hx1, hy1 = self.geometry.header_control_band_world
-        header_top = hy0 + 8.0
-        if not (hx0 <= float(x) <= hx1 and hy0 <= float(y) <= hy1):
+        ix0, iy0, ix1, iy1 = self.geometry.header_info_band_world
+        tx0, ty0, tx1, ty1 = self.geometry.header_tools_band_world
+        _cx0, _cy0, _cx1, cy1 = self.geometry.header_control_band_world
+        export_top = iy0 + 8.0
+        if (ix0 <= float(x) <= ix1) and (iy0 <= float(y) <= cy1):
+            if (ix0 + 6.0) <= float(x) <= (ix0 + 20.0) and export_top <= float(y) <= (export_top + 14.0):
+                return "export"
+            return "header"
+        if not (tx0 <= float(x) <= tx1 and ty0 <= float(y) <= ty1):
             return None
-        if (hx0 + 6.0) <= float(x) <= (hx0 + 20.0) and header_top <= float(y) <= (header_top + 14.0):
-            return "export"
-        if (hx1 - 104.0) <= float(x) <= (hx1 - 80.0) and hy0 <= float(y) <= (hy0 + 24.0):
+        if (tx1 - 104.0) <= float(x) <= (tx1 - 80.0) and ty0 <= float(y) <= (ty0 + 24.0):
             return "lock"
-        if (hx1 - 78.0) <= float(x) <= (hx1 - 54.0) and hy0 <= float(y) <= (hy0 + 24.0):
+        if (tx1 - 78.0) <= float(x) <= (tx1 - 54.0) and ty0 <= float(y) <= (ty0 + 24.0):
             return "edit"
-        if (hx1 - 52.0) <= float(x) <= (hx1 - 28.0) and hy0 <= float(y) <= (hy0 + 24.0):
+        if (tx1 - 52.0) <= float(x) <= (tx1 - 28.0) and ty0 <= float(y) <= (ty0 + 24.0):
             return "dup"
-        if (hx1 - 26.0) <= float(x) <= (hx1 - 2.0) and hy0 <= float(y) <= (hy0 + 24.0):
+        if (tx1 - 26.0) <= float(x) <= (tx1 - 2.0) and ty0 <= float(y) <= (ty0 + 24.0):
             return "trash"
         return "header"
 
@@ -555,16 +582,20 @@ class SoundingCard:
     ) -> dict[str, tuple[float, float, float, float]]:
         canvas = self.header_render_canvas(canvas)
         x0, y0, x1, y1 = self._map_header_rect(canvas, self.geometry.header_bounds_world)
-        top_x0, top_y0, top_x1, top_y1 = self._map_header_rect(canvas, self.geometry.header_control_band_world)
-        scale_x0_full, scale_y0, scale_x1_full, scale_y1 = self._map_header_rect(canvas, self.geometry.header_scale_band_world)
-        canvas.create_rectangle(top_x0, top_y0, top_x1, top_y1, fill=header_fill, outline="#d9d9d9")
-        canvas.create_rectangle(scale_x0_full, scale_y0, scale_x1_full, scale_y1, fill="#fbfbfb", outline="#d9d9d9")
-        canvas.create_line(scale_x0_full, scale_y0, scale_x1_full, scale_y0, fill="#d9d9d9", width=1)
+        info_x0, info_y0, info_x1, info_y1 = self._map_header_rect(canvas, self.geometry.header_info_band_world)
+        tools_x0, tools_y0, tools_x1, tools_y1 = self._map_header_rect(canvas, self.geometry.header_tools_band_world)
+        scale_x0, scale_y0, scale_x1, scale_y1 = self._map_header_rect(canvas, self.geometry.header_scale_band_world)
+        canvas.create_rectangle(info_x0, info_y0, info_x1, info_y1, fill=header_fill, outline="#d9d9d9")
+        if tools_x1 > tools_x0:
+            canvas.create_rectangle(tools_x0, tools_y0, tools_x1, tools_y1, fill="#fbfbfb", outline="#d9d9d9")
+        if scale_y1 > scale_y0 and scale_x1 > scale_x0:
+            canvas.create_rectangle(scale_x0, scale_y0, scale_x1, scale_y1, fill="#fbfbfb", outline="#d9d9d9")
+            canvas.create_line(scale_x0, scale_y0, scale_x1, scale_y0, fill="#d9d9d9", width=1)
 
         top_pad = 8.0
-        row_center_y = y0 + top_pad + 6.0
+        row_center_y = info_y0 + top_pad + 6.0
         cb_s = 14.0
-        cb_x0 = x0 + 6.0
+        cb_x0 = info_x0 + 6.0
         cb_y0 = row_center_y - cb_s / 2.0
         canvas.create_rectangle(cb_x0, cb_y0, cb_x0 + cb_s, cb_y0 + cb_s, fill="white", outline="#b9b9b9")
         if export_on:
@@ -575,8 +606,8 @@ class SoundingCard:
         if datetime_text:
             canvas.create_text(title_x, row_center_y + 18.0, anchor="w", text=datetime_text, font=("Segoe UI", 9), fill=header_text)
 
-        ico_y = y0 + 14.0
-        lock_x, edit_x, dup_x, trash_x = (x1 - 92.0), (x1 - 66.0), (x1 - 40.0), (x1 - 14.0)
+        ico_y = tools_y0 + 14.0
+        lock_x, edit_x, dup_x, trash_x = (tools_x1 - 92.0), (tools_x1 - 66.0), (tools_x1 - 40.0), (tools_x1 - 14.0)
         box_w, box_h = 22.0, 20.0
         controls = {
             "lock": (lock_x - box_w / 2, ico_y - box_h / 2, lock_x + box_w / 2, ico_y + box_h / 2),
@@ -592,33 +623,33 @@ class SoundingCard:
         canvas.create_text(dup_x, ico_y, text=icon_copy, font=icon_font, fill=header_icon, anchor="center")
         canvas.create_text(trash_x, ico_y, text=icon_delete, font=icon_font, fill=header_icon, anchor="center")
 
-        sh_y = scale_y1 - 8.0
-        canvas.create_text(x0 + self.geometry.depth_width / 2, sh_y, text="H, м", font=("Segoe UI", 9), fill=header_text)
-        canvas.create_text(x0 + self.geometry.depth_width + self.geometry.value_width / 2, sh_y, text="qc", font=("Segoe UI", 9), fill=header_text)
-        canvas.create_text(x0 + self.geometry.depth_width + self.geometry.value_width + self.geometry.value_width / 2, sh_y, text="fs", font=("Segoe UI", 9), fill=header_text)
+        sh_y = info_y1 - 8.0
+        canvas.create_text(info_x0 + self.geometry.depth_width / 2, sh_y, text="H, м", font=("Segoe UI", 9), fill=header_text)
+        canvas.create_text(info_x0 + self.geometry.depth_width + self.geometry.value_width / 2, sh_y, text="qc", font=("Segoe UI", 9), fill=header_text)
+        canvas.create_text(info_x0 + self.geometry.depth_width + self.geometry.value_width + self.geometry.value_width / 2, sh_y, text="fs", font=("Segoe UI", 9), fill=header_text)
         if show_inclinometer:
-            canvas.create_text(x0 + self.geometry.depth_width + self.geometry.value_width * 2 + self.geometry.value_width / 2, sh_y, text="U", font=("Segoe UI", 9), fill=header_text)
-        if show_graph_scale and float(self.geometry.graph_width) > 0.0:
-            gx0 = scale_x0_full + float(self.geometry.table_width)
-            gx1 = gx0 + float(self.geometry.graph_width)
-            scale_x0 = gx0 + 4.0
-            scale_x1 = gx1 - 4.0
-            if (scale_x1 - scale_x0) >= 40.0:
+            canvas.create_text(info_x0 + self.geometry.depth_width + self.geometry.value_width * 2 + self.geometry.value_width / 2, sh_y, text="U", font=("Segoe UI", 9), fill=header_text)
+        if show_graph_scale and float(self.geometry.graph_width) > 0.0 and (scale_x1 - scale_x0) >= 40.0:
+            panel_x0 = scale_x0 + 4.0
+            panel_x1 = scale_x1 - 4.0
+            if (panel_x1 - panel_x0) >= 40.0:
                 panel_top = scale_y0 + 4.0
                 panel_bottom = max(panel_top + 12.0, scale_y1 - 12.0)
                 axis_y = panel_bottom - 1.0
-                canvas.create_rectangle(scale_x0, panel_top - 2.0, scale_x1, panel_bottom + 2.0, fill="", outline="#d9d9d9")
-                canvas.create_line(scale_x0 + 6.0, axis_y, scale_x1 - 6.0, axis_y, fill="#9aa4b2", width=1)
-                for tick_x in (scale_x0 + 6.0, (scale_x0 + scale_x1) * 0.5, scale_x1 - 6.0):
+                canvas.create_rectangle(panel_x0, panel_top - 2.0, panel_x1, panel_bottom + 2.0, fill="", outline="#d9d9d9")
+                canvas.create_line(panel_x0 + 6.0, axis_y, panel_x1 - 6.0, axis_y, fill="#9aa4b2", width=1)
+                for tick_x in (panel_x0 + 6.0, (panel_x0 + panel_x1) * 0.5, panel_x1 - 6.0):
                     canvas.create_line(tick_x, axis_y - 4.0, tick_x, axis_y + 1.0, fill="#9aa4b2", width=1)
                 qc_label = f"qc 0–{float(qc_scale_max or 0.0):g}"
                 fs_label = f"fs 0–{float(fs_scale_max or 0.0):g}"
-                canvas.create_text(scale_x0 + 6.0, panel_top - 1.0, text=qc_label, anchor="nw", font=("Segoe UI", 8), fill=header_text)
-                canvas.create_text(scale_x0 + 6.0, panel_top + 9.0, text=fs_label, anchor="nw", font=("Segoe UI", 8), fill=header_text)
+                canvas.create_text(panel_x0 + 6.0, panel_top - 1.0, text=qc_label, anchor="nw", font=("Segoe UI", 8), fill=header_text)
+                canvas.create_text(panel_x0 + 6.0, panel_top + 9.0, text=fs_label, anchor="nw", font=("Segoe UI", 8), fill=header_text)
         return {
             "header": (x0, y0, x1, y1),
-            "control_band": (top_x0, top_y0, top_x1, top_y1),
-            "scale_band": (scale_x0_full, scale_y0, scale_x1_full, scale_y1),
+            "control_band": self._map_header_rect(canvas, self.geometry.header_control_band_world),
+            "info_band": (info_x0, info_y0, info_x1, info_y1),
+            "tools_band": (tools_x0, tools_y0, tools_x1, tools_y1),
+            "scale_band": (scale_x0, scale_y0, scale_x1, scale_y1),
             "export": (cb_x0, cb_y0, cb_x0 + cb_s, cb_y0 + cb_s),
             **controls,
         }
