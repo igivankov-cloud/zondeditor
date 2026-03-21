@@ -1013,6 +1013,7 @@ def test_hit_test_resolves_header_controls_on_card_header_canvas():
 
     assert editor._hit_test(10, 12) == ("export", 0, None, None)
     assert editor._hit_test(card.geometry.card_width - 14, 14) == ("trash", 0, None, None)
+    assert editor._hit_test(220, 52) is None
 
 
 def test_global_click_guard_does_not_close_editing_for_header_canvas():

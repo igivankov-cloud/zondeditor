@@ -43,6 +43,32 @@ class SoundingCardGeometry:
         return (x0, y0, x0 + x1, y0 + y1)
 
     @property
+    def header_control_band_local(self) -> tuple[float, float, float, float]:
+        control_h = max(28.0, min(float(self.header_height) - 18.0, 36.0))
+        return (0.0, 0.0, float(self.card_width), control_h)
+
+    @property
+    def header_control_band_world(self) -> tuple[float, float, float, float]:
+        lx0, ly0, lx1, ly1 = self.header_control_band_local
+        wx0, wy0 = self.local_to_world(lx0, ly0)
+        wx1, wy1 = self.local_to_world(lx1, ly1)
+        return (wx0, wy0, wx1, wy1)
+
+    @property
+    def header_scale_band_local(self) -> tuple[float, float, float, float]:
+        _x0, _y0, x1, y1 = self.header_bounds_local
+        _cx0, _cy0, _cx1, cy1 = self.header_control_band_local
+        top = min(y1, cy1 + 1.0)
+        return (0.0, top, x1, y1)
+
+    @property
+    def header_scale_band_world(self) -> tuple[float, float, float, float]:
+        lx0, ly0, lx1, ly1 = self.header_scale_band_local
+        wx0, wy0 = self.local_to_world(lx0, ly0)
+        wx1, wy1 = self.local_to_world(lx1, ly1)
+        return (wx0, wy0, wx1, wy1)
+
+    @property
     def body_bounds_local(self) -> tuple[float, float, float, float]:
         return (0.0, float(self.header_height), float(self.card_width), float(self.header_height + self.body_height))
 
@@ -421,7 +447,7 @@ class SoundingCard:
         return "card"
 
     def header_control_hit(self, x: float, y: float) -> str | None:
-        hx0, hy0, hx1, hy1 = self.geometry.header_bounds_world
+        hx0, hy0, hx1, hy1 = self.geometry.header_control_band_world
         header_top = hy0 + 8.0
         if not (hx0 <= float(x) <= hx1 and hy0 <= float(y) <= hy1):
             return None
@@ -529,7 +555,11 @@ class SoundingCard:
     ) -> dict[str, tuple[float, float, float, float]]:
         canvas = self.header_render_canvas(canvas)
         x0, y0, x1, y1 = self._map_header_rect(canvas, self.geometry.header_bounds_world)
-        canvas.create_rectangle(x0, y0, x1, y1, fill=header_fill, outline="#d9d9d9")
+        top_x0, top_y0, top_x1, top_y1 = self._map_header_rect(canvas, self.geometry.header_control_band_world)
+        scale_x0_full, scale_y0, scale_x1_full, scale_y1 = self._map_header_rect(canvas, self.geometry.header_scale_band_world)
+        canvas.create_rectangle(top_x0, top_y0, top_x1, top_y1, fill=header_fill, outline="#d9d9d9")
+        canvas.create_rectangle(scale_x0_full, scale_y0, scale_x1_full, scale_y1, fill="#fbfbfb", outline="#d9d9d9")
+        canvas.create_line(scale_x0_full, scale_y0, scale_x1_full, scale_y0, fill="#d9d9d9", width=1)
 
         top_pad = 8.0
         row_center_y = y0 + top_pad + 6.0
@@ -562,20 +592,20 @@ class SoundingCard:
         canvas.create_text(dup_x, ico_y, text=icon_copy, font=icon_font, fill=header_icon, anchor="center")
         canvas.create_text(trash_x, ico_y, text=icon_delete, font=icon_font, fill=header_icon, anchor="center")
 
-        sh_y = y0 + hdr_h - top_pad
+        sh_y = scale_y1 - 8.0
         canvas.create_text(x0 + self.geometry.depth_width / 2, sh_y, text="H, м", font=("Segoe UI", 9), fill=header_text)
         canvas.create_text(x0 + self.geometry.depth_width + self.geometry.value_width / 2, sh_y, text="qc", font=("Segoe UI", 9), fill=header_text)
         canvas.create_text(x0 + self.geometry.depth_width + self.geometry.value_width + self.geometry.value_width / 2, sh_y, text="fs", font=("Segoe UI", 9), fill=header_text)
         if show_inclinometer:
             canvas.create_text(x0 + self.geometry.depth_width + self.geometry.value_width * 2 + self.geometry.value_width / 2, sh_y, text="U", font=("Segoe UI", 9), fill=header_text)
         if show_graph_scale and float(self.geometry.graph_width) > 0.0:
-            gx0 = x0 + float(self.geometry.table_width)
+            gx0 = scale_x0_full + float(self.geometry.table_width)
             gx1 = gx0 + float(self.geometry.graph_width)
             scale_x0 = gx0 + 4.0
             scale_x1 = gx1 - 4.0
             if (scale_x1 - scale_x0) >= 40.0:
-                panel_top = y0 + 37.0
-                panel_bottom = y0 + hdr_h - 11.0
+                panel_top = scale_y0 + 4.0
+                panel_bottom = max(panel_top + 12.0, scale_y1 - 12.0)
                 axis_y = panel_bottom - 1.0
                 canvas.create_rectangle(scale_x0, panel_top - 2.0, scale_x1, panel_bottom + 2.0, fill="", outline="#d9d9d9")
                 canvas.create_line(scale_x0 + 6.0, axis_y, scale_x1 - 6.0, axis_y, fill="#9aa4b2", width=1)
@@ -585,7 +615,13 @@ class SoundingCard:
                 fs_label = f"fs 0–{float(fs_scale_max or 0.0):g}"
                 canvas.create_text(scale_x0 + 6.0, panel_top - 1.0, text=qc_label, anchor="nw", font=("Segoe UI", 8), fill=header_text)
                 canvas.create_text(scale_x0 + 6.0, panel_top + 9.0, text=fs_label, anchor="nw", font=("Segoe UI", 8), fill=header_text)
-        return {"header": (x0, y0, x1, y1), "export": (cb_x0, cb_y0, cb_x0 + cb_s, cb_y0 + cb_s), **controls}
+        return {
+            "header": (x0, y0, x1, y1),
+            "control_band": (top_x0, top_y0, top_x1, top_y1),
+            "scale_band": (scale_x0_full, scale_y0, scale_x1_full, scale_y1),
+            "export": (cb_x0, cb_y0, cb_x0 + cb_s, cb_y0 + cb_s),
+            **controls,
+        }
 
     def render_body_cell(self, canvas=None, *, row_y0: float, row_y1: float, field: str, text: str, fill: str, text_color: str):
         canvas = self.body_render_canvas(canvas)
