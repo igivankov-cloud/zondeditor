@@ -5038,6 +5038,29 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
 
+        if qc_max is None or fs_max is None:
+            data_qc_max = None
+            data_fs_max = None
+            for t in getattr(self, "tests", []) or []:
+                for raw in getattr(t, "qc", []) or []:
+                    try:
+                        value = float(str(raw).replace(",", "."))
+                    except Exception:
+                        continue
+                    if value > 0:
+                        data_qc_max = value if data_qc_max is None else max(data_qc_max, value)
+                for raw in getattr(t, "fs", []) or []:
+                    try:
+                        value = float(str(raw).replace(",", "."))
+                    except Exception:
+                        continue
+                    if value > 0:
+                        data_fs_max = value if data_fs_max is None else max(data_fs_max, value)
+            if qc_max is None and data_qc_max is not None:
+                qc_max = float(data_qc_max)
+            if fs_max is None and data_fs_max is not None:
+                fs_max = float(data_fs_max)
+
         if qc_max is None:
             qc_max = 50.0 if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" else 30.0
         if fs_max is None:

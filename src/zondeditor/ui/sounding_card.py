@@ -623,22 +623,51 @@ class SoundingCard:
         if show_inclinometer:
             canvas.create_text(info_x0 + self.geometry.depth_width + self.geometry.value_width * 2 + self.geometry.value_width / 2, sh_y, text="U", font=("Segoe UI", 9), fill=header_text)
         if show_graph_scale and float(self.geometry.graph_width) > 0.0 and (scale_x1 - scale_x0) >= 40.0:
-            panel_x0 = scale_x0 + 8.0
-            panel_x1 = scale_x1 - 8.0
+            debug_enabled = bool(getattr(getattr(self, "editor", None), "__dict__", {}).get("_viewport_selfcheck_debug", False))
+            panel_x0 = scale_x0 + 4.0
+            panel_x1 = scale_x1 - 4.0
+            qc_color = "#2563eb"
+            fs_color = "#dc6b2f"
+            qc_items = 0
+            fs_items = 0
             if (panel_x1 - panel_x0) >= 40.0:
-                panel_top = scale_y0 + 8.0
-                panel_bottom = scale_y1 - 8.0
-                axis_y = (panel_top + panel_bottom) * 0.5
+                panel_top = scale_y0 + 4.0
+                panel_bottom = scale_y1 - 4.0
+                split_y = (panel_top + panel_bottom) * 0.5
+                qc_row = (panel_x0, panel_top, panel_x1, split_y - 2.0)
+                fs_row = (panel_x0, split_y + 2.0, panel_x1, panel_bottom)
                 canvas.create_rectangle(panel_x0, panel_top - 2.0, panel_x1, panel_bottom + 2.0, fill="", outline="#d9d9d9")
-                axis_left = panel_x0 + 10.0
-                axis_right = panel_x1 - 10.0
-                canvas.create_line(axis_left, axis_y, axis_right, axis_y, fill="#9aa4b2", width=1)
-                for tick_x in (axis_left, (axis_left + axis_right) * 0.5, axis_right):
-                    canvas.create_line(tick_x, axis_y - 5.0, tick_x, axis_y + 5.0, fill="#9aa4b2", width=1)
+                axis_left = panel_x0 + 6.0
+                axis_right = panel_x1 - 6.0
                 qc_label = f"qc 0–{float(qc_scale_max or 0.0):g}"
                 fs_label = f"fs 0–{float(fs_scale_max or 0.0):g}"
-                canvas.create_text(panel_x0 + 2.0, panel_top + 2.0, text=qc_label, anchor="nw", font=("Segoe UI", 8), fill=header_text)
-                canvas.create_text(panel_x0 + 2.0, panel_bottom - 2.0, text=fs_label, anchor="sw", font=("Segoe UI", 8), fill=header_text)
+                qc_axis_y = qc_row[3] - 6.0
+                fs_axis_y = fs_row[3] - 6.0
+                canvas.create_text(panel_x0 + 2.0, qc_row[1] + 1.0, text=qc_label, anchor="nw", font=("Segoe UI", 8), fill=qc_color)
+                qc_items += 1
+                canvas.create_line(axis_left, qc_axis_y, axis_right, qc_axis_y, fill=qc_color, width=1)
+                qc_items += 1
+                for tick_x in (axis_left, (axis_left + axis_right) * 0.5, axis_right):
+                    canvas.create_line(tick_x, qc_axis_y - 4.0, tick_x, qc_axis_y + 4.0, fill=qc_color, width=1)
+                    qc_items += 1
+                canvas.create_text(panel_x0 + 2.0, fs_row[1] + 1.0, text=fs_label, anchor="nw", font=("Segoe UI", 8), fill=fs_color)
+                fs_items += 1
+                canvas.create_line(axis_left, fs_axis_y, axis_right, fs_axis_y, fill=fs_color, width=1)
+                fs_items += 1
+                for tick_x in (axis_left, (axis_left + axis_right) * 0.5, axis_right):
+                    canvas.create_line(tick_x, fs_axis_y - 4.0, tick_x, fs_axis_y + 4.0, fill=fs_color, width=1)
+                    fs_items += 1
+                if debug_enabled:
+                    try:
+                        print(
+                            f"[CARDHEADER_SCALE] card={self.test_index} qc_max={float(qc_scale_max or 0.0):g} "
+                            f"fs_max={float(fs_scale_max or 0.0):g} graph_band={(graph_x0, graph_y0, graph_x1, graph_y1)} "
+                            f"inner_bbox={(panel_x0, panel_top, panel_x1, panel_bottom)} qc_row={qc_row} fs_row={fs_row} "
+                            f"qc_color={qc_color} fs_color={fs_color} qc_items={qc_items} fs_items={fs_items}",
+                            file=sys.stderr,
+                        )
+                    except Exception:
+                        pass
         return {
             "header": (x0, y0, x1, y1),
             "control_band": self._map_header_rect(canvas, self.geometry.header_control_band_world),

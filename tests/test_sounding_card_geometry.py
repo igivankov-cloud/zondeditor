@@ -182,7 +182,7 @@ def test_sounding_card_render_header_and_body_cell_emit_card_local_bounds():
         show_inclinometer=False,
         show_graph_scale=True,
         qc_scale_max=30.0,
-        fs_scale_max=500.0,
+        fs_scale_max=120.0,
     )
     rect = card.render_body_cell(canvas, row_y0=22.0, row_y1=44.0, field="qc", text="12", fill="#fff", text_color="#000")
 
@@ -197,16 +197,25 @@ def test_sounding_card_render_header_and_body_cell_emit_card_local_bounds():
     assert any(call[0] == "text" for call in canvas.calls)
     graph_texts = [call for call in canvas.calls if call[0] == "text" and call[1] and call[1][0] >= (200.0 + 176.0)]
     graph_boxes = [call for call in canvas.calls if call[0] == "rectangle" and call[1] and call[1][0] >= (200.0 + 176.0)]
+    graph_lines = [call for call in canvas.calls if call[0] == "line" and call[1] and call[1][0] >= (200.0 + 176.0)]
     info_boxes = [call for call in canvas.calls if call[0] == "rectangle" and call[2].get("fill") == "#fff"]
     neutral_boxes = [call for call in canvas.calls if call[0] == "rectangle" and call[2].get("fill") == "#fbfbfb"]
     assert any("qc 0–30" in call[2].get("text", "") for call in graph_texts)
-    assert any("fs 0–500" in call[2].get("text", "") for call in graph_texts)
-    assert any(call[1][1] <= (hitboxes["scale_band"][1] + 12.0) for call in graph_boxes)
-    assert any(call[1][3] >= (hitboxes["scale_band"][3] - 12.0) for call in graph_boxes)
+    assert any("fs 0–120" in call[2].get("text", "") for call in graph_texts)
+    assert any(call[1][0] <= (hitboxes["scale_band"][0] + 6.0) and call[1][2] >= (hitboxes["scale_band"][2] - 6.0) for call in graph_boxes)
     assert any(call[1] == hitboxes["experience_band"] for call in info_boxes)
     assert any(call[1] == hitboxes["graph_band"] for call in neutral_boxes)
     assert hitboxes["lock"][0] < hitboxes["graph_band"][0]
     assert hitboxes["lock"][2] <= hitboxes["experience_band"][2]
+    qc_label = next(call for call in graph_texts if "qc 0–30" in call[2].get("text", ""))
+    fs_label = next(call for call in graph_texts if "fs 0–120" in call[2].get("text", ""))
+    assert qc_label[2]["fill"] == "#2563eb"
+    assert fs_label[2]["fill"] == "#dc6b2f"
+    assert qc_label[1][1] < fs_label[1][1]
+    qc_scale_lines = [call for call in graph_lines if call[2].get("fill") == "#2563eb"]
+    fs_scale_lines = [call for call in graph_lines if call[2].get("fill") == "#dc6b2f"]
+    assert qc_scale_lines and fs_scale_lines
+    assert max(line[1][1] for line in qc_scale_lines) < min(line[1][1] for line in fs_scale_lines)
 
 
 def test_sounding_card_make_hitbox_is_card_local_owner_api():
@@ -416,7 +425,7 @@ def test_sounding_card_header_and_table_can_render_into_card_owned_targets():
         show_inclinometer=False,
         show_graph_scale=True,
         qc_scale_max=30.0,
-        fs_scale_max=500.0,
+        fs_scale_max=120.0,
     )
     rect = card.render_body_cell(None, row_y0=22.0, row_y1=44.0, field="qc", text="12", fill="#fff", text_color="#000")
 

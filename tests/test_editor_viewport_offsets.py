@@ -467,6 +467,19 @@ def test_redraw_uses_card_hosted_header_and_body_targets_not_shared_canvases():
     assert any("qc 0" in text and "30" in text for text in header_texts)
 
 
+def test_recompute_graph_scales_uses_data_before_fs_fallback_500():
+    editor = _make_editor()
+    editor.tests = [
+        SimpleNamespace(qc=["5", "18.5", ""], fs=["40", "120", ""]),
+        SimpleNamespace(qc=["7"], fs=["35"]),
+    ]
+    editor._current_calibration = lambda: (_ for _ in ()).throw(RuntimeError("no calibration"))
+
+    editor._recompute_graph_scales()
+
+    assert editor.graph_qc_max_mpa == 18.5
+    assert editor.graph_fs_max_kpa == 120.0
+
 
 def test_canvas_delete_all_removes_card_window_items_on_host_canvas():
     host = _DummyBodyCanvas(support_items=True)
