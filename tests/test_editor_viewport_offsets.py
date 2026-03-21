@@ -403,7 +403,7 @@ def test_redraw_graphs_now_uses_card_body_canvas_not_shared_editor_canvas():
     editor._grid_row_maps = {0: {0: 0}}
     editor._row_y_bounds = lambda row: (0.0, 22.0)
     editor._calc_layer_params_for_all_tests = lambda: None
-    editor._recompute_graph_scales = lambda: setattr(editor, "graph_qc_max_mpa", 30.0) or setattr(editor, "graph_fs_max_kpa", 500.0)
+    editor._recompute_graph_scales = lambda: setattr(editor, "graph_qc_max_mpa", 30.0) or setattr(editor, "graph_fs_max_kpa", 286.0) or setattr(editor, "graph_qc_max_source", "data") or setattr(editor, "graph_fs_max_source", "data") or setattr(editor, "graph_qc_max_display", 30.0) or setattr(editor, "graph_fs_max_display", 286.0)
     editor._calc_qc_fs_from_del = lambda q, f: (float(q), float(f))
     editor._depth_to_canvas_y = lambda d: float(d) * 100.0
     editor._ensure_test_experience_column = lambda t: SimpleNamespace(column_depth_start=0.0, column_depth_end=1.0, intervals=[SimpleNamespace(from_depth=0.0, to_depth=1.0, ige_id="ИГЭ-1")])
@@ -432,7 +432,9 @@ def test_redraw_graphs_now_uses_card_body_canvas_not_shared_editor_canvas():
 
     assert any(call[0] == "rectangle" for call in card.body_canvas.draw_calls)
     assert editor._layer_plot_hitbox
+    assert editor._layer_label_hitbox
     assert editor._layer_handle_hitbox
+    assert editor._layer_depth_box_hitbox
 
 
 def test_redraw_uses_card_hosted_header_and_body_targets_not_shared_canvases():
@@ -448,10 +450,10 @@ def test_redraw_uses_card_hosted_header_and_body_targets_not_shared_canvases():
     editor._update_scrollregion = lambda: None
     editor._is_graph_panel_visible = lambda: True
     editor._clear_graph_layers = lambda: None
-    editor._recompute_graph_scales = lambda: setattr(editor, "graph_qc_max_mpa", 30.0) or setattr(editor, "graph_fs_max_kpa", 500.0)
+    editor._recompute_graph_scales = lambda: setattr(editor, "graph_qc_max_mpa", 30.0) or setattr(editor, "graph_fs_max_kpa", 286.0) or setattr(editor, "graph_qc_max_source", "data") or setattr(editor, "graph_fs_max_source", "data") or setattr(editor, "graph_qc_max_display", 30.0) or setattr(editor, "graph_fs_max_display", 286.0)
     editor._redraw_graphs_now = lambda: None
-    editor.graph_qc_max_mpa = 30.0
-    editor.graph_fs_max_kpa = 500.0
+    editor.graph_qc_max_mpa = 0.0
+    editor.graph_fs_max_kpa = 0.0
     editor._table_col_width = lambda: 176
     editor._column_block_width = lambda: 326
     editor.graph_w = 150
@@ -484,7 +486,8 @@ def test_redraw_uses_card_hosted_header_and_body_targets_not_shared_canvases():
     assert any(call[0] == "rectangle" for call in card.header_canvas.draw_calls)
     assert any(call[0] == "rectangle" for call in card.body_canvas.draw_calls)
     header_texts = [str(call[2].get("text", "")) for call in card.header_canvas.draw_calls if call[0] == "text"]
-    assert any("qc 0" in text and "30" in text for text in header_texts)
+    assert any("qc 0–30 МПа" in text for text in header_texts)
+    assert any("fs 0–286 кПа" in text for text in header_texts)
 
 
 def test_recompute_graph_scales_uses_data_before_fs_fallback_500():
@@ -499,6 +502,9 @@ def test_recompute_graph_scales_uses_data_before_fs_fallback_500():
 
     assert editor.graph_qc_max_mpa == 18.5
     assert editor.graph_fs_max_kpa == 120.0
+    assert editor.graph_qc_max_source == "data"
+    assert editor.graph_fs_max_source == "data"
+    assert editor.graph_fs_max_display == 120.0
 
 
 def test_canvas_delete_all_removes_card_window_items_on_host_canvas():

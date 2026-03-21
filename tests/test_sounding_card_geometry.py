@@ -183,6 +183,8 @@ def test_sounding_card_render_header_and_body_cell_emit_card_local_bounds():
         show_graph_scale=True,
         qc_scale_max=30.0,
         fs_scale_max=120.0,
+        qc_scale_unit="МПа",
+        fs_scale_unit="кПа",
     )
     rect = card.render_body_cell(canvas, row_y0=22.0, row_y1=44.0, field="qc", text="12", fill="#fff", text_color="#000")
 
@@ -200,15 +202,15 @@ def test_sounding_card_render_header_and_body_cell_emit_card_local_bounds():
     graph_lines = [call for call in canvas.calls if call[0] == "line" and call[1] and call[1][0] >= (200.0 + 176.0)]
     info_boxes = [call for call in canvas.calls if call[0] == "rectangle" and call[2].get("fill") == "#fff"]
     neutral_boxes = [call for call in canvas.calls if call[0] == "rectangle" and call[2].get("fill") == "#fbfbfb"]
-    assert any("qc 0–30" in call[2].get("text", "") for call in graph_texts)
-    assert any("fs 0–120" in call[2].get("text", "") for call in graph_texts)
+    assert any("qc 0–30 МПа" in call[2].get("text", "") for call in graph_texts)
+    assert any("fs 0–120 кПа" in call[2].get("text", "") for call in graph_texts)
     assert any(call[1][0] <= (hitboxes["scale_band"][0] + 6.0) and call[1][2] >= (hitboxes["scale_band"][2] - 6.0) for call in graph_boxes)
     assert any(call[1] == hitboxes["experience_band"] for call in info_boxes)
     assert any(call[1] == hitboxes["graph_band"] for call in neutral_boxes)
     assert hitboxes["lock"][0] < hitboxes["graph_band"][0]
     assert hitboxes["lock"][2] <= hitboxes["experience_band"][2]
-    qc_label = next(call for call in graph_texts if "qc 0–30" in call[2].get("text", ""))
-    fs_label = next(call for call in graph_texts if "fs 0–120" in call[2].get("text", ""))
+    qc_label = next(call for call in graph_texts if "qc 0–30 МПа" in call[2].get("text", ""))
+    fs_label = next(call for call in graph_texts if "fs 0–120 кПа" in call[2].get("text", ""))
     assert qc_label[2]["fill"] == "#2f9e44"
     assert fs_label[2]["fill"] == "#2563eb"
     assert qc_label[1][1] < fs_label[1][1]
@@ -426,6 +428,8 @@ def test_sounding_card_header_and_table_can_render_into_card_owned_targets():
         show_graph_scale=True,
         qc_scale_max=30.0,
         fs_scale_max=120.0,
+        qc_scale_unit="МПа",
+        fs_scale_unit="кПа",
     )
     rect = card.render_body_cell(None, row_y0=22.0, row_y1=44.0, field="qc", text="12", fill="#fff", text_color="#000")
 

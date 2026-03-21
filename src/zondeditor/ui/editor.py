@@ -5817,6 +5817,20 @@ class GeoCanvasEditor(tk.Tk):
                     interval_spans=layer_spans,
                     handle_positions=handle_positions,
                 )
+            if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+                try:
+                    print(
+                        f"[CARDGEO] ti={int(ti)} flags={{'show_graphs': {show_graphs}, 'show_geology': {show_geology}, "
+                        f"'show_layer_colors': {bool(getattr(self, 'show_layer_colors', False))}}} "
+                        f"qc_max={float(self.graph_qc_max_mpa):g}({getattr(self, 'graph_qc_max_source', 'unknown')}) "
+                        f"fs_max={float(self.graph_fs_max_kpa):g}({getattr(self, 'graph_fs_max_source', 'unknown')}) "
+                        f"units=(МПа,кПа) interval_specs={len(interval_specs)} hatch_items={len(plot_hits)} "
+                        f"ige_labels={len(label_hits)} overlay_specs={len(overlay_specs)} handles={len(handle_hits) if show_geology else 0} "
+                        f"depth_boxes={len(depth_hits) if show_geology else 0} graph_bbox={(x0, y0, x1, y1)}",
+                        file=sys.stderr,
+                    )
+                except Exception:
+                    pass
 
     def _draw_graph_layers(self):
         self._redraw_graphs_now()
@@ -7385,6 +7399,8 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
         show_graphs = bool(self._is_graph_panel_visible())
+        if show_graphs:
+            self._recompute_graph_scales()
 
         diagnostics = self._diagnostics_report()
         for col, ti in enumerate(self.display_cols):
@@ -7447,6 +7463,8 @@ class GeoCanvasEditor(tk.Tk):
                     fs_scale_source=str(self.__dict__.get("graph_fs_max_source", "unknown") or "unknown"),
                     qc_scale_display=float(self.__dict__.get("graph_qc_max_display", self.__dict__.get("graph_qc_max_mpa", 0.0)) or 0.0),
                     fs_scale_display=float(self.__dict__.get("graph_fs_max_display", self.__dict__.get("graph_fs_max_kpa", 0.0)) or 0.0),
+                    qc_scale_unit="МПа",
+                    fs_scale_unit="кПа",
                 )
 
             # --- ТАБЛИЦА (canvas) ---

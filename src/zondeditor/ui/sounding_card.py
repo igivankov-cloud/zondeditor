@@ -576,6 +576,8 @@ class SoundingCard:
         fs_scale_source: str = "unknown",
         qc_scale_display: float | None = None,
         fs_scale_display: float | None = None,
+        qc_scale_unit: str = "",
+        fs_scale_unit: str = "",
     ) -> dict[str, tuple[float, float, float, float]]:
         canvas = self.header_render_canvas(canvas)
         x0, y0, x1, y1 = self._map_header_rect(canvas, self.geometry.header_bounds_world)
@@ -643,8 +645,8 @@ class SoundingCard:
                 canvas.create_rectangle(panel_x0, panel_top - 2.0, panel_x1, panel_bottom + 2.0, fill="", outline="#d9d9d9")
                 axis_left = panel_x0 + 6.0
                 axis_right = panel_x1 - 6.0
-                qc_label = f"qc 0–{float(qc_scale_display if qc_scale_display is not None else (qc_scale_max or 0.0)):g}"
-                fs_label = f"fs 0–{int(round(float(fs_scale_display if fs_scale_display is not None else (fs_scale_max or 0.0))))}"
+                qc_label = f"qc 0–{float(qc_scale_display if qc_scale_display is not None else (qc_scale_max or 0.0)):g}{(' ' + qc_scale_unit) if qc_scale_unit else ''}"
+                fs_label = f"fs 0–{int(round(float(fs_scale_display if fs_scale_display is not None else (fs_scale_max or 0.0))))}{(' ' + fs_scale_unit) if fs_scale_unit else ''}"
                 qc_axis_y = qc_row[3] - 6.0
                 fs_axis_y = fs_row[3] - 6.0
                 canvas.create_text(panel_x0 + 2.0, qc_row[1] + 1.0, text=qc_label, anchor="nw", font=("Segoe UI", 8), fill=qc_color)
@@ -668,6 +670,7 @@ class SoundingCard:
                             f"qc_raw={float(qc_scale_max or 0.0):g} fs_raw={float(fs_scale_max or 0.0):g} "
                             f"qc_display={float(qc_scale_display if qc_scale_display is not None else (qc_scale_max or 0.0)):g} "
                             f"fs_display={int(round(float(fs_scale_display if fs_scale_display is not None else (fs_scale_max or 0.0))))} "
+                            f"units=({qc_scale_unit},{fs_scale_unit}) "
                             f"fallback_used={str(qc_scale_source == 'fallback' or fs_scale_source == 'fallback').lower()} "
                             f"graph_band={(graph_x0, graph_y0, graph_x1, graph_y1)} "
                             f"inner_bbox={(panel_x0, panel_top, panel_x1, panel_bottom)} qc_row={qc_row} fs_row={fs_row} "
