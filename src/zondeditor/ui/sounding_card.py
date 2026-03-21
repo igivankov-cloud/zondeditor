@@ -33,7 +33,7 @@ class SoundingCardGeometry:
 
     @property
     def header_bounds_local(self) -> tuple[float, float, float, float]:
-        return (0.0, 0.0, float(self.table_width), float(self.header_height))
+        return (0.0, 0.0, float(self.card_width), float(self.header_height))
 
     @property
     def header_bounds_world(self) -> tuple[float, float, float, float]:
@@ -207,9 +207,9 @@ class SoundingCard:
         header_canvas = self._ensure_canvas_parent(
             "header_canvas",
             self._header_host,
-            width=int(self.geometry.table_width),
+            width=int(self.geometry.card_width),
             height=int(self.geometry.header_height),
-            scrollregion=(0, 0, int(self.geometry.table_width), int(self.geometry.header_height)),
+            scrollregion=(0, 0, int(self.geometry.card_width), int(self.geometry.header_height)),
         )
         body_canvas = self._ensure_canvas_parent(
             "body_canvas",
@@ -324,6 +324,9 @@ class SoundingCard:
 
     def header_render_canvas(self, canvas=None):
         return self.header_canvas if canvas is None else canvas
+
+    def header_local_to_world(self, x: float, y: float) -> tuple[float, float]:
+        return self.geometry.local_to_world(x, y)
 
     def header_world_to_local(self, x: float, y: float) -> tuple[float, float]:
         return float(x) - float(self.geometry.card_x0), float(y) - float(self.geometry.card_y0)
@@ -520,6 +523,9 @@ class SoundingCard:
         icon_font,
         hdr_h: float,
         show_inclinometer: bool,
+        show_graph_scale: bool = False,
+        qc_scale_max: float | None = None,
+        fs_scale_max: float | None = None,
     ) -> dict[str, tuple[float, float, float, float]]:
         canvas = self.header_render_canvas(canvas)
         x0, y0, x1, y1 = self._map_header_rect(canvas, self.geometry.header_bounds_world)
@@ -562,6 +568,20 @@ class SoundingCard:
         canvas.create_text(x0 + self.geometry.depth_width + self.geometry.value_width + self.geometry.value_width / 2, sh_y, text="fs", font=("Segoe UI", 9), fill=header_text)
         if show_inclinometer:
             canvas.create_text(x0 + self.geometry.depth_width + self.geometry.value_width * 2 + self.geometry.value_width / 2, sh_y, text="U", font=("Segoe UI", 9), fill=header_text)
+        if show_graph_scale and float(self.geometry.graph_width) > 0.0:
+            gx0 = x0 + float(self.geometry.table_width)
+            gx1 = gx0 + float(self.geometry.graph_width)
+            scale_top = y0 + 34.0
+            scale_mid = y0 + 48.0
+            scale_bot = y0 + hdr_h - 8.0
+            canvas.create_rectangle(gx0, scale_top - 10.0, gx1, scale_bot + 2.0, fill="", outline="#d9d9d9")
+            canvas.create_line(gx0 + 8.0, scale_mid, gx1 - 8.0, scale_mid, fill="#9aa4b2", width=1)
+            for tick_x in (gx0 + 8.0, (gx0 + gx1) * 0.5, gx1 - 8.0):
+                canvas.create_line(tick_x, scale_mid - 4.0, tick_x, scale_mid + 4.0, fill="#9aa4b2", width=1)
+            qc_label = f"qc 0–{float(qc_scale_max or 0.0):g}"
+            fs_label = f"fs 0–{float(fs_scale_max or 0.0):g}"
+            canvas.create_text(gx0 + 8.0, scale_top, text=qc_label, anchor="nw", font=("Segoe UI", 8), fill=header_text)
+            canvas.create_text(gx0 + 8.0, scale_bot, text=fs_label, anchor="sw", font=("Segoe UI", 8), fill=header_text)
         return {"header": (x0, y0, x1, y1), "export": (cb_x0, cb_y0, cb_x0 + cb_s, cb_y0 + cb_s), **controls}
 
     def render_body_cell(self, canvas=None, *, row_y0: float, row_y1: float, field: str, text: str, fill: str, text_color: str):

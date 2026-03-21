@@ -426,8 +426,12 @@ def test_redraw_uses_card_hosted_header_and_body_targets_not_shared_canvases():
     editor._sync_view_ribbon_state = lambda: None
     editor._sync_layers_panel = lambda: None
     editor._update_scrollregion = lambda: None
-    editor._is_graph_panel_visible = lambda: False
+    editor._is_graph_panel_visible = lambda: True
     editor._clear_graph_layers = lambda: None
+    editor._recompute_graph_scales = lambda: setattr(editor, "graph_qc_max_mpa", 30.0) or setattr(editor, "graph_fs_max_kpa", 500.0)
+    editor._redraw_graphs_now = lambda: None
+    editor.graph_qc_max_mpa = 30.0
+    editor.graph_fs_max_kpa = 500.0
     editor._table_col_width = lambda: 176
     editor._column_block_width = lambda: 326
     editor.graph_w = 150
@@ -459,6 +463,8 @@ def test_redraw_uses_card_hosted_header_and_body_targets_not_shared_canvases():
 
     assert any(call[0] == "rectangle" for call in card.header_canvas.draw_calls)
     assert any(call[0] == "rectangle" for call in card.body_canvas.draw_calls)
+    header_texts = [str(call[2].get("text", "")) for call in card.header_canvas.draw_calls if call[0] == "text"]
+    assert any("qc 0" in text and "30" in text for text in header_texts)
 
 
 
@@ -962,3 +968,70 @@ def test_bind_card_targets_rebinds_double_click_for_body_canvas():
 
     assert '<Button-1>' in card.body_canvas.bindings
     assert '<Double-1>' in card.body_canvas.bindings
+
+
+def test_bind_card_targets_keeps_header_bindings_alive_after_rebuild():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [object()]
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None)
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas()
+    card.header_canvas = _DummyBodyCanvas()
+
+    editor._bind_card_targets(card)
+
+    assert '<Button-1>' in card.header_canvas.bindings
+    assert '<Motion>' in card.header_canvas.bindings
+    assert '<MouseWheel>' in card.header_canvas.bindings
+
+
+def test_hit_test_resolves_header_controls_on_card_header_canvas():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(tid=1, dt="01.01.2026 10:00", export_on=True, locked=False, qc=["10"], fs=["5"], depth=["0.00"])]
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 320), xview_fractions=lambda: (0.0, 1.0))
+    editor._refresh_display_order = lambda: None
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.header_canvas = _DummyBodyCanvas()
+    editor._sounding_cards = {0: card}
+    editor._evt_widget = card.header_canvas
+
+    assert editor._hit_test(10, 12) == ("export", 0, None, None)
+    assert editor._hit_test(card.geometry.card_width - 14, 14) == ("trash", 0, None, None)
+
+
+def test_global_click_guard_does_not_close_editing_for_header_canvas():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [object()]
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None)
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.header_canvas = _DummyBodyCanvas()
+    editor._sounding_cards = {0: card}
+    editor._editing = (0, 0, "qc", object())
+
+    editor._on_global_click(SimpleNamespace(widget=card.header_canvas))
+
+    assert editor._editing is not None

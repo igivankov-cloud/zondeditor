@@ -66,7 +66,7 @@ def test_sounding_card_geometry_returns_local_and_world_bounds():
 
     assert g.card_bounds_local == (0.0, 0.0, 310.0, 536.0)
     assert g.card_bounds_world == (120.0, 0.0, 430.0, 536.0)
-    assert g.header_bounds_world == (120.0, 0.0, 296.0, 72.0)
+    assert g.header_bounds_world == (120.0, 0.0, 430.0, 72.0)
     assert g.body_bounds_world == (120.0, 72.0, 430.0, 512.0)
 
 
@@ -132,6 +132,7 @@ def test_sounding_card_hit_testing_and_editor_rects():
     assert card.contains_world(210.0, 10.0) is True
     assert card.section_at_world(210.0, 10.0) == "header"
     assert card.header_control_hit(208.0, 12.0) == "export"
+    assert card.header_control_hit(496.0, 14.0) == "trash"
     assert card.table_field_hit(220.0, 22.0, 44.0) == "depth"
     assert card.table_field_hit(280.0, 22.0, 44.0) == "qc"
     assert card.graph_hit(390.0, 100.0) is True
@@ -177,14 +178,20 @@ def test_sounding_card_render_header_and_body_cell_emit_card_local_bounds():
         icon_font=("Segoe UI Symbol", 12),
         hdr_h=64.0,
         show_inclinometer=False,
+        show_graph_scale=True,
+        qc_scale_max=30.0,
+        fs_scale_max=500.0,
     )
     rect = card.render_body_cell(canvas, row_y0=22.0, row_y1=44.0, field="qc", text="12", fill="#fff", text_color="#000")
 
-    assert hitboxes["header"] == (200.0, 0.0, 376.0, 72.0)
-    assert hitboxes["edit"] == (299.0, 4.0, 321.0, 24.0)
+    assert hitboxes["header"] == (200.0, 0.0, 510.0, 72.0)
+    assert hitboxes["edit"] == (433.0, 4.0, 455.0, 24.0)
     assert rect == (264.0, 22.0, 320.0, 44.0)
     assert any(call[0] == "rectangle" for call in canvas.calls)
     assert any(call[0] == "text" for call in canvas.calls)
+    graph_texts = [call for call in canvas.calls if call[0] == "text" and call[1] and call[1][0] >= (200.0 + 176.0)]
+    assert any("qc 0–30" in call[2].get("text", "") for call in graph_texts)
+    assert any("fs 0–500" in call[2].get("text", "") for call in graph_texts)
 
 
 def test_sounding_card_make_hitbox_is_card_local_owner_api():
@@ -392,10 +399,13 @@ def test_sounding_card_header_and_table_can_render_into_card_owned_targets():
         icon_font=("Segoe UI Symbol", 12),
         hdr_h=64.0,
         show_inclinometer=False,
+        show_graph_scale=True,
+        qc_scale_max=30.0,
+        fs_scale_max=500.0,
     )
     rect = card.render_body_cell(None, row_y0=22.0, row_y1=44.0, field="qc", text="12", fill="#fff", text_color="#000")
 
-    assert header_hits["header"] == (0.0, 0.0, 176.0, 72.0)
+    assert header_hits["header"] == (0.0, 0.0, 310.0, 72.0)
     assert rect == (64.0, 22.0, 120.0, 44.0)
 
 

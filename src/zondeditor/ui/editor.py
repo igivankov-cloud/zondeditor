@@ -4700,7 +4700,7 @@ class GeoCanvasEditor(tk.Tk):
     def _card_for_widget(self, widget) -> SoundingCard | None:
         for ti in getattr(self, "display_cols", []) or []:
             card = self._card_for_test(int(ti))
-            if card is not None and widget is getattr(card, "body_canvas", None):
+            if card is not None and widget in (getattr(card, "body_canvas", None), getattr(card, "header_canvas", None)):
                 return card
         return None
 
@@ -4773,6 +4773,10 @@ class GeoCanvasEditor(tk.Tk):
         return float(x) + vx, float(y) + vy
 
     def _event_header_world_xy(self, x: float, y: float) -> tuple[float, float]:
+        widget = getattr(self, "_evt_widget", None)
+        card = self._card_for_widget(widget) if widget is not None else None
+        if card is not None and widget is getattr(card, "header_canvas", None):
+            return card.header_local_to_world(float(x), float(y))
         try:
             vx = float(self._viewport_x0())
         except Exception:
@@ -5788,8 +5792,12 @@ class GeoCanvasEditor(tk.Tk):
         local = None
         try:
             if card is not None:
-                world = self._event_body_world_xy(event.x, event.y)
-                local = card.body_world_to_local(*world)
+                if event.widget is getattr(card, "header_canvas", None):
+                    world = self._event_header_world_xy(event.x, event.y)
+                    local = card.header_world_to_local(*world)
+                else:
+                    world = self._event_body_world_xy(event.x, event.y)
+                    local = card.body_world_to_local(*world)
         except Exception:
             pass
         self._log_cell_edit_debug(stage="left_click", widget=event.widget, card=card, world=world, local=local, hit=hit)
@@ -5822,20 +5830,25 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
         if kind == "lock":
+            self._log_cell_edit_debug(stage="header_command", widget=event.widget, card=card, world=world, local=local, hit=("lock", ti, row, field))
             self._toggle_test_lock(int(ti))
             return
 
         # --- Header controls (icons / checkbox) ---
         if kind == "edit":
+            self._log_cell_edit_debug(stage="header_command", widget=event.widget, card=card, world=world, local=local, hit=("edit", ti, row, field))
             self._edit_header(ti)
             return
         if kind == "dup":
+            self._log_cell_edit_debug(stage="header_command", widget=event.widget, card=card, world=world, local=local, hit=("dup", ti, row, field))
             self._duplicate_test(ti)
             return
         if kind == "trash":
+            self._log_cell_edit_debug(stage="header_command", widget=event.widget, card=card, world=world, local=local, hit=("trash", ti, row, field))
             self._delete_test(ti)
             return
         if kind == "export":
+            self._log_cell_edit_debug(stage="header_command", widget=event.widget, card=card, world=world, local=local, hit=("export", ti, row, field))
             try:
                 self._push_undo()
                 t = self.tests[ti]
@@ -7326,6 +7339,7 @@ class GeoCanvasEditor(tk.Tk):
             self.hcanvas.configure(height=int(self.pad_y + self.hdr_h))
         except Exception:
             pass
+        show_graphs = bool(self._is_graph_panel_visible())
 
         diagnostics = self._diagnostics_report()
         for col, ti in enumerate(self.display_cols):
@@ -7381,6 +7395,9 @@ class GeoCanvasEditor(tk.Tk):
                     icon_font=_pick_icon_font(12),
                     hdr_h=float(self.hdr_h),
                     show_inclinometer=str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True)),
+                    show_graph_scale=bool(show_graphs),
+                    qc_scale_max=float(self.__dict__.get("graph_qc_max_mpa", 0.0) or 0.0),
+                    fs_scale_max=float(self.__dict__.get("graph_fs_max_kpa", 0.0) or 0.0),
                 )
 
             # --- ТАБЛИЦА (canvas) ---
@@ -7593,7 +7610,8 @@ class GeoCanvasEditor(tk.Tk):
         if not self.tests:
             return None
 
-        if w is getattr(self, "hcanvas", None):
+        header_card = self._card_for_widget(w)
+        if w is getattr(self, "hcanvas", None) or (header_card is not None and w is getattr(header_card, "header_canvas", None)):
             cx, cy = self._event_header_world_xy(x, y)
             self._refresh_display_order()
             card = self._card_at_world(cx, cy)
