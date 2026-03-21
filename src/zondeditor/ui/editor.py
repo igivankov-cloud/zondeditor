@@ -4567,6 +4567,8 @@ class GeoCanvasEditor(tk.Tk):
                 continue
             try:
                 widget.bind("<Button-1>", self._on_left_click)
+                if widget is getattr(card, "body_canvas", None):
+                    widget.bind("<Double-1>", self._on_double_click)
                 widget.bind("<Motion>", self._on_motion)
                 widget.bind("<Leave>", lambda _e: self._set_hover(None))
             except Exception:
@@ -4701,6 +4703,14 @@ class GeoCanvasEditor(tk.Tk):
             if card is not None and widget is getattr(card, "body_canvas", None):
                 return card
         return None
+
+    def _is_card_target_widget(self, widget) -> bool:
+        if widget is None:
+            return False
+        for card in (self.__dict__.get("_sounding_cards", {}) or {}).values():
+            if widget in (getattr(card, "body_canvas", None), getattr(card, "header_canvas", None)):
+                return True
+        return False
 
     def _active_body_card(self) -> SoundingCard | None:
         active = getattr(self, "_active_test_idx", None)
@@ -5762,10 +5772,28 @@ class GeoCanvasEditor(tk.Tk):
     def _draw_graph_layers(self):
         self._redraw_graphs_now()
 
+    def _log_cell_edit_debug(self, *, stage: str, widget=None, card: SoundingCard | None = None, world=None, local=None, hit=None, editor_rect=None):
+        if not bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+            return
+        print(
+            f"[CELLEDIT] stage={stage} widget={widget} card={(None if card is None else card.test_index)} world={world} local={local} hit={hit} rect={editor_rect}",
+            file=sys.stderr,
+        )
+
     def _on_left_click(self, event):
         self._evt_widget = event.widget
         hit = self._hit_test(event.x, event.y)
-        if getattr(self, "_boundary_depth_editor", None):
+        card = self._card_for_widget(event.widget)
+        world = None
+        local = None
+        try:
+            if card is not None:
+                world = self._event_body_world_xy(event.x, event.y)
+                local = card.body_world_to_local(*world)
+        except Exception:
+            pass
+        self._log_cell_edit_debug(stage="left_click", widget=event.widget, card=card, world=world, local=local, hit=hit)
+        if self.__dict__.get("_boundary_depth_editor", None):
             editor_widget = (self._boundary_depth_editor or {}).get("entry") if isinstance(self._boundary_depth_editor, dict) else self._boundary_depth_editor
             if not hit or hit[0] != "layer_boundary_depth_edit":
                 if event.widget is not editor_widget:
@@ -5993,7 +6021,7 @@ class GeoCanvasEditor(tk.Tk):
                 if event.widget not in (getattr(self, "canvas", None), getattr(self, "hcanvas", None)):
                     self._close_boundary_depth_editor(commit=False)
                     return
-            if getattr(self, "_boundary_depth_editor", None):
+            if self.__dict__.get("_boundary_depth_editor", None):
                 editor_widget = (self._boundary_depth_editor or {}).get("entry") if isinstance(self._boundary_depth_editor, dict) else self._boundary_depth_editor
                 if event.widget is editor_widget:
                     return
@@ -6009,7 +6037,7 @@ class GeoCanvasEditor(tk.Tk):
                 return
             # если клик по canvas/hcanvas — пусть _on_left_click решит (мы просто закрываем заранее)
             # но чтобы не мешать клику по ячейке, закрываем только когда клик НЕ по canvas/hcanvas
-            if event.widget in (getattr(self, "canvas", None), getattr(self, "hcanvas", None)):
+            if event.widget in (getattr(self, "canvas", None), getattr(self, "hcanvas", None)) or self._is_card_target_widget(event.widget):
                 return
             self._end_edit(commit=True)
         except Exception:
@@ -6055,7 +6083,7 @@ class GeoCanvasEditor(tk.Tk):
         self._hover_after = self.after(delay_ms, _show)
 
     def _ige_picker_log(self, msg: str):
-        if not bool(getattr(self, "_ige_picker_debug", False)):
+        if not bool(self.__dict__.get("_ige_picker_debug", False)):
             return
         try:
             print(f"[IGE_PICKER] {msg}")
@@ -8270,6 +8298,7 @@ class GeoCanvasEditor(tk.Tk):
         self._tail_debug_log("TAIL_ENTRY", f"begin_edit BEFORE_SELECT ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} entry_text={repr(e.get())}", ti=int(ti))
         e.select_range(0, tk.END)
         self._tail_debug_log("TAIL_SELECT", f"begin_edit SELECT_NOW ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} text_len={len(e.get())} selection_called=True", ti=int(ti))
+        self._log_cell_edit_debug(stage="begin_edit", widget=parent_canvas, card=card, world=(bx0, by0, bx1, by1), local=(vx0, vy0), hit=("cell", ti, display_row, field), editor_rect=(vx0 + 1, vy0 + 1, (bx1 - bx0) - 2, (by1 - by0) - 2))
         e.place(x=vx0 + 1, y=vy0 + 1, width=(bx1 - bx0) - 2, height=(by1 - by0) - 2)
         e.focus_set()
         try:
@@ -8350,6 +8379,7 @@ class GeoCanvasEditor(tk.Tk):
         e = tk.Entry(parent_canvas, validate="key", validatecommand=(self.register(_validate_depth_0_4_key), "%P"))
         e.insert(0, current)
         e.select_range(0, tk.END)
+        self._log_cell_edit_debug(stage="begin_edit", widget=parent_canvas, card=card, world=(bx0, by0, bx1, by1), local=(vx0, vy0), hit=("cell", ti, display_row, field), editor_rect=(vx0 + 1, vy0 + 1, (bx1 - bx0) - 2, (by1 - by0) - 2))
         e.place(x=vx0 + 1, y=vy0 + 1, width=(bx1 - bx0) - 2, height=(by1 - by0) - 2)
         e.focus_set()
 

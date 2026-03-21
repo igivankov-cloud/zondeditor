@@ -48,6 +48,7 @@ class _DummyBodyCanvas:
         self._support_items = support_items
         self._items = []
         self._next_item_id = 1
+        self.bindings = {}
 
     def bbox(self, _tag):
         return self._bbox_all
@@ -115,6 +116,9 @@ class _DummyBodyCanvas:
             if item["id"] == item_id:
                 return item["type"]
         raise KeyError(item_id)
+
+    def bind(self, event, callback):
+        self.bindings[event] = callback
 
     def delete(self, *args, **kwargs):
         self.draw_calls.append(("delete", args, kwargs))
@@ -221,6 +225,7 @@ def test_hit_test_layer_handle_accounts_for_nonzero_viewport_x():
     editor._layer_handle_hitbox = [{"kind": "boundary", "ti": 0, "boundary": 2, "bbox": (310, 80, 330, 100)}]
     editor._layer_label_hitbox = []
     editor._layer_plot_hitbox = []
+    editor._boundary_depth_editor = None
     editor._table_col_width = lambda: 176
     editor._row_from_y = lambda y: 0
     editor._refresh_display_order = lambda: None
@@ -827,3 +832,133 @@ def test_redraw_graphs_now_renders_each_card_in_its_own_local_graph_column():
     assert rect1["args"][3] == 400.0
     assert sum(1 for item in card0.body_canvas._items if item["type"] == "line") >= 2
     assert sum(1 for item in card1.body_canvas._items if item["type"] == "line") >= 2
+
+
+
+def test_click_on_body_cell_triggers_begin_edit_and_survives_global_click_guard(monkeypatch):
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(qc=["10"], fs=["5"], depth=["0.00"], tid=1, locked=False)]
+    editor.flags = {1: SimpleNamespace(invalid=False, force_cells=set(), interp_cells=set(), user_cells=set(), algo_cells=set())}
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 320), xview_fractions=lambda: (0.0, 1.0))
+    editor._grid_units = [("row", 0)]
+    editor._grid_row_maps = {0: {0: 0}}
+    editor._row_y_bounds = lambda row: (0.0, 22.0)
+    editor._row_tops = [0.0, 22.0]
+    editor._refresh_display_order = lambda: None
+    editor._sync_layers_panel = lambda: None
+    editor.schedule_graph_redraw = lambda: None
+    editor._layer_depth_box_hitbox = []
+    editor._layer_handle_hitbox = []
+    editor._layer_label_hitbox = []
+    editor._layer_plot_hitbox = []
+    editor._layer_ige_picker = None
+    editor._layer_ige_picker_meta = None
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas()
+    editor._sounding_cards = {0: card}
+    calls = []
+    editor._begin_edit = lambda ti, data_row, field, display_row=None: calls.append((ti, data_row, field, display_row))
+
+    editor._on_left_click(SimpleNamespace(widget=card.body_canvas, x=80, y=10))
+    editor._editing = (0, 0, "qc", object())
+    editor._on_global_click(SimpleNamespace(widget=card.body_canvas))
+
+    assert calls == [(0, 0, "qc", 0)]
+    assert editor._editing is not None
+
+
+
+def test_begin_edit_editor_rect_stays_inside_card_body_after_shared_scroll(monkeypatch):
+    editor = _make_editor()
+    editor.display_cols = [0, 1]
+    editor.tests = [SimpleNamespace(qc=["10"], fs=["5"], depth=["0.00"], tid=1, locked=False), SimpleNamespace(qc=["11"], fs=["6"], depth=["0.00"], tid=2, locked=False)]
+    editor.flags = {1: SimpleNamespace(invalid=False, force_cells=set(), interp_cells=set(), user_cells=set(), algo_cells=set()), 2: SimpleNamespace(invalid=False, force_cells=set(), interp_cells=set(), user_cells=set(), algo_cells=set())}
+    editor._active_test_idx = 1
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 640), xview_fractions=lambda: (0.0, 1.0))
+    editor._grid_units = [("row", 0)]
+    editor._grid_row_maps = {0: {0: 0}, 1: {0: 0}}
+    editor._row_y_bounds = lambda row: (100.0, 122.0)
+    editor._row_tops = [100.0, 122.0]
+    editor._refresh_display_order = lambda: None
+    editor._sync_layers_panel = lambda: None
+    editor._ensure_cell_visible = lambda *args, **kwargs: None
+    editor._debug_tail_edit = False
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(1)
+    card.body_canvas = _DummyBodyCanvas(rootx=1400, rooty=2000)
+    editor._sounding_cards = {0: editor._card_for_test(0), 1: card}
+    editor._apply_shared_body_yview_fraction(0.25)
+
+    class _FakeEntry:
+        def __init__(self, parent, **kwargs):
+            self.parent = parent
+            self.placed = None
+        def insert(self, *_args):
+            pass
+        def get(self):
+            return "11"
+        def configure(self, **_kwargs):
+            pass
+        def select_range(self, *_args):
+            pass
+        def place(self, **kwargs):
+            self.placed = kwargs
+        def focus_set(self):
+            pass
+        def bind(self, *_args, **_kwargs):
+            pass
+        def icursor(self, *_args):
+            pass
+        def selection_range(self, *_args):
+            pass
+        def after_idle(self, fn):
+            fn()
+
+    entries = []
+    monkeypatch.setattr(editor_module.tk, 'Entry', lambda parent, **kwargs: entries.append(_FakeEntry(parent, **kwargs)) or entries[-1])
+    editor.register = lambda fn: fn
+
+    editor._begin_edit(1, 0, 'qc', display_row=0)
+
+    placed = entries[-1].placed
+    assert placed is not None
+    assert 0 <= placed['x'] <= card.geometry.card_width
+    assert 0 <= placed['y'] <= 22.0
+
+
+
+def test_bind_card_targets_rebinds_double_click_for_body_canvas():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [object()]
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None)
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas()
+    card.header_canvas = _DummyBodyCanvas()
+
+    editor._bind_card_targets(card)
+
+    assert '<Button-1>' in card.body_canvas.bindings
+    assert '<Double-1>' in card.body_canvas.bindings
