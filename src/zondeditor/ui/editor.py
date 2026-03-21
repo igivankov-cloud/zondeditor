@@ -7197,6 +7197,41 @@ class GeoCanvasEditor(tk.Tk):
                 file=sys.stderr,
             )
 
+    def _log_card_canvas_clip_debug(self, card: SoundingCard | None, *, phase: str):
+        if not bool(self.__dict__.get("_viewport_selfcheck_debug", False)) or card is None:
+            return
+        body_canvas = getattr(card, "body_canvas", None)
+        body_height = None
+        scrollregion = None
+        body_items = None
+        host_bbox = None
+        host_items = self._canvas_item_count(getattr(card, "_body_host", None))
+        if body_canvas is not None:
+            try:
+                body_height = body_canvas.cget("height") if hasattr(body_canvas, "cget") else None
+            except Exception:
+                body_height = None
+            try:
+                scrollregion = body_canvas.cget("scrollregion") if hasattr(body_canvas, "cget") else None
+            except Exception:
+                scrollregion = None
+            try:
+                body_items = len(body_canvas.find_all()) if hasattr(body_canvas, "find_all") else None
+            except Exception:
+                body_items = None
+        body_host = getattr(card, "_body_host", None)
+        window_id = getattr(card, "_body_window_id", None)
+        if body_host is not None and window_id is not None and hasattr(body_host, "bbox"):
+            try:
+                host_bbox = body_host.bbox(window_id)
+            except Exception:
+                host_bbox = None
+        print(
+            f"[CARDCLIP] phase={phase} ti={card.test_index} body_height={body_height} host_bbox={host_bbox} "
+            f"content_h={getattr(card, '_body_content_height', None)} scrollregion={scrollregion} body_items={body_items} host_items={host_items}",
+            file=sys.stderr,
+        )
+
     def _header_bbox(self, col: int):
         try:
             ti = int((getattr(self, "display_cols", []) or [])[int(col)])
@@ -7240,6 +7275,16 @@ class GeoCanvasEditor(tk.Tk):
         for col, ti in enumerate(self.display_cols):
             t = self.tests[ti]
             card = self._card_for_test(int(ti))
+            if card is not None:
+                self._log_card_canvas_clip_debug(card, phase="before_body_redraw")
+                for widget, label in ((getattr(card, "header_canvas", None), "header"), (getattr(card, "body_canvas", None), "body")):
+                    if widget is None or not hasattr(widget, "delete"):
+                        continue
+                    try:
+                        widget.delete("all")
+                    except Exception:
+                        if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+                            print(f"[CARDCLIP] phase=clear_failed ti={card.test_index} target={label}", file=sys.stderr)
             x0, y0, x1, y1 = self._header_bbox(col)
 
             # checked = will be exported
@@ -7474,6 +7519,7 @@ class GeoCanvasEditor(tk.Tk):
 
             if card is not None:
                 card.redraw_if_needed("body")
+                self._log_card_canvas_clip_debug(card, phase="after_body_redraw")
 
         self._update_scrollregion()
         if self._is_graph_panel_visible():

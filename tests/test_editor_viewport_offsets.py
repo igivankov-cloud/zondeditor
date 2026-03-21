@@ -672,3 +672,112 @@ def test_body_alignment_stays_synced_after_shared_vertical_scroll():
     assert card0.body_world_to_local(70.0, 130.0)[1] == 30.0
     assert card1.body_world_to_local(card1.geometry.card_x0 + 20.0, 130.0)[1] == 30.0
     assert editor._body_world_to_root(card1.geometry.card_x0 + 20.0, 130.0, ti=1) == (1420, 2030)
+
+
+
+def test_compact_toggle_redraw_clears_stale_body_rows_from_card_canvas():
+    editor = _make_editor()
+    editor.tests = [SimpleNamespace(tid=1, dt="01.01.2026 10:00", export_on=True, locked=False, qc=["10", "11", "12"], fs=["5", "6", "7"], depth=["0.00", "0.10", "0.20"])]
+    editor.display_cols = [0]
+    editor.flags = {1: SimpleNamespace(invalid=False, force_cells=set(), interp_cells=set(), user_cells=set(), algo_cells=set())}
+    editor._sync_view_ribbon_state = lambda: None
+    editor._sync_layers_panel = lambda: None
+    editor._update_scrollregion = lambda: None
+    editor._diagnostics_report = lambda: SimpleNamespace(by_test={1: SimpleNamespace(invalid=False, missing_rows=[])})
+    editor._header_fill_for_test = lambda **kwargs: "#fff"
+    editor._is_graph_panel_visible = lambda: False
+    editor._clear_graph_layers = lambda: None
+    editor._refresh_display_order = lambda: None
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.canvas = _DummyBodyCanvas(support_items=True)
+    editor.hcanvas = _DummyBodyCanvas(support_items=True)
+    editor.soundings_viewport = SimpleNamespace(strip=None)
+
+    state = {"collapsed": False}
+    def build_grid():
+        if state["collapsed"]:
+            editor._grid_base = [0.0]
+            editor._grid = [0]
+            editor._grid_units = [("row", 0)]
+            editor._grid_row_maps = {0: {0: 0}}
+            editor._grid_start_rows = {0: 0}
+        else:
+            editor._grid_base = [0.0, 0.1, 0.2]
+            editor._grid = [0, 1, 2]
+            editor._grid_units = [("row", 0), ("row", 1), ("row", 2)]
+            editor._grid_row_maps = {0: {0: 0, 1: 1, 2: 2}}
+            editor._grid_start_rows = {0: 0}
+    editor._build_grid = build_grid
+    editor._row_y_bounds = lambda row: (row * 22.0, row * 22.0 + 22.0)
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.header_canvas = _DummyBodyCanvas(support_items=True)
+    card.body_canvas = _DummyBodyCanvas(support_items=True)
+    editor._rebuild_sounding_cards = lambda: {0: card}
+    editor._sounding_cards = {0: card}
+
+    build_grid()
+    editor._redraw()
+    expanded_items = list(card.body_canvas._items)
+    assert any(item["args"][1] >= 44.0 for item in expanded_items if item["type"] == "rectangle")
+
+    state["collapsed"] = True
+    build_grid()
+    editor._redraw()
+    collapsed_items = list(card.body_canvas._items)
+
+    assert not any(item["type"] == "rectangle" and len(item["args"]) >= 4 and item["args"][1] >= 44.0 for item in collapsed_items)
+    assert editor.canvas.find_all() == ()
+
+
+
+def test_expand_collapse_expand_keeps_card_body_canvas_clean():
+    editor = _make_editor()
+    editor.tests = [SimpleNamespace(tid=1, dt="01.01.2026 10:00", export_on=True, locked=False, qc=["10", "11", "12"], fs=["5", "6", "7"], depth=["0.00", "0.10", "0.20"])]
+    editor.display_cols = [0]
+    editor.flags = {1: SimpleNamespace(invalid=False, force_cells=set(), interp_cells=set(), user_cells=set(), algo_cells=set())}
+    editor._sync_view_ribbon_state = lambda: None
+    editor._sync_layers_panel = lambda: None
+    editor._update_scrollregion = lambda: None
+    editor._diagnostics_report = lambda: SimpleNamespace(by_test={1: SimpleNamespace(invalid=False, missing_rows=[])})
+    editor._header_fill_for_test = lambda **kwargs: "#fff"
+    editor._is_graph_panel_visible = lambda: False
+    editor._clear_graph_layers = lambda: None
+    editor._refresh_display_order = lambda: None
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.canvas = _DummyBodyCanvas(support_items=True)
+    editor.hcanvas = _DummyBodyCanvas(support_items=True)
+    editor.soundings_viewport = SimpleNamespace(strip=None)
+
+    rows = {"count": 3}
+    def build_grid():
+        editor._grid_base = [0.1 * i for i in range(rows["count"])]
+        editor._grid = list(range(rows["count"]))
+        editor._grid_units = [("row", i) for i in range(rows["count"])]
+        editor._grid_row_maps = {0: {i: i for i in range(rows["count"])}}
+        editor._grid_start_rows = {0: 0}
+    editor._build_grid = build_grid
+    editor._row_y_bounds = lambda row: (row * 22.0, row * 22.0 + 22.0)
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.header_canvas = _DummyBodyCanvas(support_items=True)
+    card.body_canvas = _DummyBodyCanvas(support_items=True)
+    editor._rebuild_sounding_cards = lambda: {0: card}
+    editor._sounding_cards = {0: card}
+
+    for count in (3, 1, 3):
+        rows["count"] = count
+        build_grid()
+        editor._redraw()
+
+    final_rectangles = [item for item in card.body_canvas._items if item["type"] == "rectangle"]
+    assert len(final_rectangles) == 9
+    assert editor.canvas.find_all() == ()
