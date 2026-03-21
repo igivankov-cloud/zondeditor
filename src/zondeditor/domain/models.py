@@ -73,7 +73,16 @@ class TestData:
     block: Optional[GeoBlockInfo] = None
     layers: list[Layer] = field(default_factory=list)
     experience_column: ExperienceColumn | None = None
+    show_ige_column: bool = True
     locked: bool = False
+
+    @property
+    def export_on(self) -> bool:
+        return bool(getattr(self, "show_ige_column", True))
+
+    @export_on.setter
+    def export_on(self, value: bool):
+        self.show_ige_column = bool(value)
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:

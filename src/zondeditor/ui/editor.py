@@ -603,7 +603,8 @@ class GeoCanvasEditor(tk.Tk):
                     if getattr(t, "experience_column", None) is not None
                     else None
                 ),
-                "export_on": bool(getattr(t, "export_on", True)),
+                "show_ige_column": bool(getattr(t, "show_ige_column", getattr(t, "export_on", True))),
+                "export_on": bool(getattr(t, "show_ige_column", getattr(t, "export_on", True))),
                 "locked": bool(getattr(t, "locked", False)),
                 "block": None if t.block is None else {
                     "order_index": t.block.order_index,
@@ -798,7 +799,7 @@ class GeoCanvasEditor(tk.Tk):
             )
             self.tests.append(t)
             try:
-                t.export_on = bool(d.get('export_on', True))
+                t.show_ige_column = bool(d.get('show_ige_column', d.get('export_on', True)))
             except Exception:
                 pass
             try:
@@ -4527,6 +4528,12 @@ class GeoCanvasEditor(tk.Tk):
             inclinometer_width=float(incl_w),
         )
 
+    def _card_cache_key(self, ti: int) -> int:
+        try:
+            return int(getattr(self.tests[int(ti)], "tid", ti) or ti)
+        except Exception:
+            return int(ti)
+
     def _rebuild_sounding_cards(self):
         cards: dict[int, SoundingCard] = {}
         previous = dict(self.__dict__.get("_sounding_cards", {}) or {})
@@ -4541,10 +4548,12 @@ class GeoCanvasEditor(tk.Tk):
         view_h = float(getattr(self, "_card_body_view_height", lambda: getattr(self.canvas, "winfo_height", lambda: self._total_body_height())())())
         body_h = float(self._total_body_height())
         for col, ti in enumerate(getattr(self, "display_cols", []) or []):
-            card = previous.get(int(ti))
+            cache_key = self._card_cache_key(int(ti))
+            card = previous.get(cache_key)
             if card is None:
                 card = SoundingCard(master, editor=self, test_index=int(ti), geometry=self._sounding_card_geometry(col))
             else:
+                card.test_index = int(ti)
                 card.update_geometry(self._sounding_card_geometry(col))
             start = shared_start
             card.set_body_scroll_context(view_height=view_h, content_height=body_h)
@@ -4559,7 +4568,33 @@ class GeoCanvasEditor(tk.Tk):
                 self._bind_card_targets(card)
             except Exception:
                 pass
-            cards[int(ti)] = card
+            cards[int(cache_key)] = card
+        previous_keys = set(previous.keys())
+        current_keys = set(cards.keys())
+        removed_keys = previous_keys - current_keys
+        added_keys = current_keys - previous_keys
+        structure_changed = bool(removed_keys or added_keys)
+        for cache_key in removed_keys:
+            stale_card = previous.get(cache_key)
+            if stale_card is None:
+                continue
+            try:
+                stale_card.dispose()
+            except Exception:
+                pass
+        hover = getattr(self, "_hover", None)
+        if structure_changed:
+            self._hover = None
+        elif isinstance(hover, tuple) and len(hover) >= 2:
+            try:
+                hover_ti = int(hover[1])
+            except Exception:
+                hover_ti = -1
+            if hover_ti < 0 or hover_ti >= len(getattr(self, "tests", []) or []):
+                self._hover = None
+        active_ti = getattr(self, "_active_test_idx", None)
+        if active_ti is not None and not (0 <= int(active_ti) < len(getattr(self, "tests", []) or [])):
+            self._active_test_idx = None
         self._sounding_cards = cards
         self._shared_body_yview_fraction = shared_start
         return cards
@@ -4588,7 +4623,7 @@ class GeoCanvasEditor(tk.Tk):
 
     def _card_for_test(self, ti: int) -> SoundingCard | None:
         cards = self.__dict__.get("_sounding_cards", None) or {}
-        card = cards.get(int(ti))
+        card = cards.get(self._card_cache_key(int(ti)))
         if card is not None:
             return card
         try:
@@ -4606,7 +4641,7 @@ class GeoCanvasEditor(tk.Tk):
             self._bind_card_targets(card)
         except Exception:
             pass
-        cards[int(ti)] = card
+        cards[self._card_cache_key(int(ti))] = card
         self._sounding_cards = cards
         return card
 
@@ -7181,8 +7216,17 @@ class GeoCanvasEditor(tk.Tk):
         qc = list(getattr(src, "qc", []) or [])
         fs = list(getattr(src, "fs", []) or [])
 
-        new_test = TestData(tid=new_id, dt=new_dt, depth=depth, qc=qc, fs=fs, orig_id=None, block=None,
-                            layers=[layer_from_dict(layer_to_dict(x)) for x in (getattr(src, "layers", []) or [])])
+        new_test = TestData(
+            tid=new_id,
+            dt=new_dt,
+            depth=depth,
+            qc=qc,
+            fs=fs,
+            orig_id=None,
+            block=None,
+            layers=[layer_from_dict(layer_to_dict(x)) for x in (getattr(src, "layers", []) or [])],
+            show_ige_column=bool(getattr(src, "show_ige_column", getattr(src, "export_on", True))),
+        )
 
         # insert right after source
         insert_at = min(len(self.tests), ti + 1)

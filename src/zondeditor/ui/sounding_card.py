@@ -196,6 +196,28 @@ class SoundingCard:
     def update_geometry(self, geometry: SoundingCardGeometry):
         self.geometry = geometry
 
+    def dispose(self):
+        for host_attr, window_attr in (("_header_host", "_header_window_id"), ("_body_host", "_body_window_id")):
+            host = getattr(self, host_attr, None)
+            window_id = getattr(self, window_attr, None)
+            if host is not None and window_id is not None and hasattr(host, "delete"):
+                try:
+                    host.delete(window_id)
+                except Exception:
+                    pass
+                setattr(self, window_attr, None)
+        for attr_name in ("header_canvas", "body_canvas"):
+            widget = getattr(self, attr_name, None)
+            if widget is not None:
+                try:
+                    widget.destroy()
+                except Exception:
+                    pass
+                setattr(self, attr_name, None)
+        self._header_host = None
+        self._body_host = None
+
+
     def _widget_master(self, widget):
         if widget is None:
             return None
