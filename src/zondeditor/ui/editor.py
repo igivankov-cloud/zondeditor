@@ -4592,7 +4592,7 @@ class GeoCanvasEditor(tk.Tk):
                 hover_ti = -1
             if hover_ti < 0 or hover_ti >= len(getattr(self, "tests", []) or []):
                 self._hover = None
-        active_ti = getattr(self, "_active_test_idx", None)
+        active_ti = self.__dict__.get("_active_test_idx", None)
         if active_ti is not None and not (0 <= int(active_ti) < len(getattr(self, "tests", []) or [])):
             self._active_test_idx = None
         self._sounding_cards = cards
@@ -4623,7 +4623,10 @@ class GeoCanvasEditor(tk.Tk):
 
     def _card_for_test(self, ti: int) -> SoundingCard | None:
         cards = self.__dict__.get("_sounding_cards", None) or {}
-        card = cards.get(self._card_cache_key(int(ti)))
+        cache_key = self._card_cache_key(int(ti))
+        card = cards.get(cache_key)
+        if card is None:
+            card = cards.get(int(ti))
         if card is not None:
             return card
         try:
@@ -4641,7 +4644,7 @@ class GeoCanvasEditor(tk.Tk):
             self._bind_card_targets(card)
         except Exception:
             pass
-        cards[self._card_cache_key(int(ti))] = card
+        cards[cache_key] = card
         self._sounding_cards = cards
         return card
 
@@ -5513,18 +5516,22 @@ class GeoCanvasEditor(tk.Tk):
         for ti in range(len(self.tests or [])):
             self._calc_layer_params_for_test(ti)
 
-    def _depth_to_canvas_y(self, depth_m: float) -> float | None:
-        d = float(depth_m)
-        units = getattr(self, "_grid_units", []) or []
-        base_grid = getattr(self, "_grid_base", []) or []
-
-        points: list[tuple[float, float]] = []
+    def _depth_y_segments(self) -> list[tuple[float, float, float, float]]:
+        units = self.__dict__.get("_grid_units", []) or []
+        base_grid = self.__dict__.get("_grid_base", []) or []
+        if not base_grid:
+            for test in getattr(self, "tests", []) or []:
+                candidate = [_parse_depth_float(raw) for raw in (getattr(test, "depth", []) or [])]
+                candidate = [float(v) for v in candidate if v is not None]
+                if candidate:
+                    base_grid = candidate
+                    break
+        segments: list[tuple[float, float, float, float]] = []
         for disp_r, unit in enumerate(units):
             y0r, y1r = self._row_y_bounds(disp_r)
             if unit[0] == "meter":
                 meter_n = float(unit[1])
-                points.append((meter_n, y0r))
-                points.append((meter_n + 1.0, y1r))
+                segments.append((meter_n, meter_n + 1.0, y0r, y1r))
                 continue
             if unit[0] != "row":
                 continue
@@ -5551,28 +5558,36 @@ class GeoCanvasEditor(tk.Tk):
                 bot_d = float(cur) + (float(cur) - float(prev)) * 0.5
             else:
                 bot_d = float(cur) + float(getattr(self, "step_m", 0.05) or 0.05) * 0.5
-            points.append((top_d, y0r))
-            points.append((bot_d, y1r))
+            segments.append((top_d, bot_d, y0r, y1r))
+        segments.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
+        return segments
 
-        if not points:
-            return None
-        points.sort(key=lambda x: x[0])
-        if d < points[0][0] or d > points[-1][0]:
-            return None
-        for dd, yy in points:
-            if abs(dd - d) <= 1e-6:
-                return yy
+    def _depth_to_canvas_y_local(self, depth_m: float, *, clamp: bool = False) -> float | None:
+        try:
+            return self._depth_to_canvas_y(float(depth_m), clamp=bool(clamp))
+        except TypeError:
+            return self._depth_to_canvas_y(float(depth_m))
 
-        depths = [p[0] for p in points]
-        i = bisect.bisect_left(depths, d)
-        if i <= 0 or i >= len(points):
+    def _depth_to_canvas_y(self, depth_m: float, *, clamp: bool = False) -> float | None:
+        d = float(depth_m)
+        segments = self._depth_y_segments()
+        if not segments:
             return None
-        d0, y0 = points[i - 1]
-        d1, y1 = points[i]
-        if abs(d1 - d0) <= 1e-9:
-            return y0
-        ratio = (d - d0) / (d1 - d0)
-        return y0 + (y1 - y0) * ratio
+        first_top, _first_bot, first_y0, _first_y1 = segments[0]
+        _last_top, last_bot, _last_y0, last_y1 = segments[-1]
+        if d < first_top:
+            return float(first_y0) if clamp else None
+        if d > last_bot:
+            return float(last_y1) if clamp else None
+        for top_d, bot_d, y0r, y1r in segments:
+            if top_d <= d <= bot_d:
+                if abs(bot_d - top_d) <= 1e-9:
+                    return float(y0r)
+                ratio = (d - top_d) / (bot_d - top_d)
+                return float(y0r) + (float(y1r) - float(y0r)) * ratio
+        if clamp:
+            return float(last_y1)
+        return None
 
 
     def _geology_layer_fill_color(self, soil_type: str | None) -> str:
@@ -5726,7 +5741,6 @@ class GeoCanvasEditor(tk.Tk):
 
         for disp_r, unit in enumerate(units):
             y0r, y1r = self._row_y_bounds(disp_r)
-            row_h_cur = max(1.0, float(y1r - y0r))
             if unit[0] == "row":
                 di = disp_map.get(disp_r)
                 if di is None:
@@ -5735,8 +5749,12 @@ class GeoCanvasEditor(tk.Tk):
                 f_raw = _parse_cell_int(farr[di]) if di < len(farr) else None
                 if q_raw is None and f_raw is None:
                     continue
+                dv = self._depth_at_index(t, di)
+                yy = self._depth_to_canvas_y_local(float(dv), clamp=True) if dv is not None else None
+                if yy is None:
+                    continue
                 qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
-                y_points.append(y0r + (row_h_cur * 0.5))
+                y_points.append(float(yy))
                 qc_vals.append(float(qc_mpa))
                 fs_vals.append(float(fs_kpa))
             elif unit[0] == "meter":
@@ -5749,9 +5767,11 @@ class GeoCanvasEditor(tk.Tk):
                     f_raw = _parse_cell_int(farr[di]) if di < len(farr) else None
                     if q_raw is None and f_raw is None:
                         continue
+                    yy = self._depth_to_canvas_y_local(float(dv), clamp=True)
+                    if yy is None:
+                        continue
                     qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
-                    frac = max(0.0, min(0.999, float(dv) - float(meter_n)))
-                    y_points.append(y0r + (frac * row_h_cur))
+                    y_points.append(float(yy))
                     qc_vals.append(float(qc_mpa))
                     fs_vals.append(float(fs_kpa))
 
@@ -5775,8 +5795,8 @@ class GeoCanvasEditor(tk.Tk):
                 lb = min(float(column.column_depth_end), float(lyr.to_depth))
                 if lb - lt <= 1e-9:
                     continue
-                ly0 = self._depth_to_canvas_y(lt)
-                ly1 = self._depth_to_canvas_y(lb)
+                ly0 = self._depth_to_canvas_y_local(lt, clamp=True)
+                ly1 = self._depth_to_canvas_y_local(lb, clamp=True)
                 if ly0 is None or ly1 is None:
                     continue
                 ty0 = max(y0, min(ly0, ly1))
@@ -5883,8 +5903,8 @@ class GeoCanvasEditor(tk.Tk):
             handle_x = x1 - 2
             plus_x = x0 + 10
             if column.intervals:
-                top_y = self._depth_to_canvas_y(float(column.intervals[0].from_depth))
-                bot_y = self._depth_to_canvas_y(float(column.intervals[-1].to_depth))
+                top_y = self._depth_to_canvas_y_local(float(column.intervals[0].from_depth), clamp=True)
+                bot_y = self._depth_to_canvas_y_local(float(column.intervals[-1].to_depth), clamp=True)
                 if top_y is not None:
                     overlay_specs.append({"kind": "plus", "bbox": (plus_x - 6, top_y, plus_x + 6, top_y + 12), "boundary": 0, "hit_kind": "plus_top", "tag": f"layer_plus_top_{ti}"})
                 if bot_y is not None:
@@ -5897,7 +5917,7 @@ class GeoCanvasEditor(tk.Tk):
                     ])
             for bi in range(1, len(column.intervals)):
                 boundary = column.intervals[bi].from_depth
-                yy = self._depth_to_canvas_y(boundary)
+                yy = self._depth_to_canvas_y_local(boundary, clamp=True)
                 if yy is None:
                     continue
                 overlay_specs.extend([
@@ -7039,42 +7059,11 @@ class GeoCanvasEditor(tk.Tk):
             self.schedule_graph_redraw()
 
     def _canvas_y_to_depth(self, y: float) -> float | None:
-        units = getattr(self, "_grid_units", []) or []
-        base_grid = getattr(self, "_grid_base", []) or []
-        for disp_r, unit in enumerate(units):
-            y0r, y1r = self._row_y_bounds(disp_r)
+        for top_d, bot_d, y0r, y1r in self._depth_y_segments():
             if not (y0r <= y <= y1r):
                 continue
-            frac = (y - y0r) / max(1.0, (y1r - y0r))
-            if unit[0] == "meter":
-                meter_n = float(unit[1])
-                return meter_n + frac
-            if unit[0] != "row":
-                continue
-            try:
-                gi = int(unit[1])
-            except Exception:
-                continue
-            if not (0 <= gi < len(base_grid)):
-                continue
-            cur = _parse_depth_float(base_grid[gi])
-            if cur is None:
-                continue
-            prev = _parse_depth_float(base_grid[gi - 1]) if gi > 0 else None
-            nxt = _parse_depth_float(base_grid[gi + 1]) if gi + 1 < len(base_grid) else None
-            if prev is not None:
-                top_d = (float(prev) + float(cur)) * 0.5
-            elif nxt is not None:
-                top_d = float(cur) - (float(nxt) - float(cur)) * 0.5
-            else:
-                top_d = float(cur) - float(getattr(self, "step_m", 0.05) or 0.05) * 0.5
-            if nxt is not None:
-                bot_d = (float(cur) + float(nxt)) * 0.5
-            elif prev is not None:
-                bot_d = float(cur) + (float(cur) - float(prev)) * 0.5
-            else:
-                bot_d = float(cur) + float(getattr(self, "step_m", 0.05) or 0.05) * 0.5
-            return top_d + (bot_d - top_d) * frac
+            frac = (float(y) - float(y0r)) / max(1.0, float(y1r - y0r))
+            return float(top_d) + (float(bot_d) - float(top_d)) * frac
         return None
 
 
