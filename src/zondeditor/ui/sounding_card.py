@@ -721,12 +721,13 @@ class SoundingCard:
     def render_body_cell(self, canvas=None, *, row_y0: float, row_y1: float, field: str, text: str, fill: str, text_color: str):
         canvas = self.body_render_canvas(canvas)
         x0, y0, x1, y1 = self._map_body_rect(canvas, self.geometry.cell_bbox_world(row_y0, row_y1, field))
-        canvas.create_rectangle(x0, y0, x1, y1, fill=fill, outline="#d9d9d9")
+        table_tags = ("body_table_cells", f"body_table_cells_{self.test_index}")
+        canvas.create_rectangle(x0, y0, x1, y1, fill=fill, outline="#d9d9d9", tags=table_tags)
         anchor = "e"
         tx = x1 - 4.0
         if field == "depth":
             text_color = text_color or "#555"
-        canvas.create_text(tx, (y0 + y1) / 2.0, text=text, anchor=anchor, fill=text_color, font=("Segoe UI", 9))
+        canvas.create_text(tx, (y0 + y1) / 2.0, text=text, anchor=anchor, fill=text_color, font=("Segoe UI", 9), tags=table_tags)
         return (x0, y0, x1, y1)
 
     def render_ownership_snapshot(self) -> dict[str, object]:
