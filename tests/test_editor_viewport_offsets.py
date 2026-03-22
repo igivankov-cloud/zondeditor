@@ -1908,6 +1908,23 @@ def test_begin_edit_depth0_uses_explicit_debug_field_without_name_error(monkeypa
     assert editor._editing[:3] == (0, 0, "depth")
 
 
+def test_draw_layer_hatch_uses_interactive_hatch_usage(monkeypatch):
+    editor = _make_editor()
+    calls = []
+
+    monkeypatch.setattr(editor_module, "load_registered_hatch", lambda soil: object())
+    monkeypatch.setattr(
+        editor_module,
+        "render_hatch_pattern",
+        lambda canvas, rect, pattern, *, tags, scale_info=None: calls.append(scale_info or {}),
+    )
+
+    editor._draw_layer_hatch(0.0, 0.0, 20.0, 40.0, "песок", tags=("x",), canvas=_DummyBodyCanvas())
+
+    assert calls
+    assert calls[0]["usage"] == "editor_interactive"
+
+
 def test_bind_card_targets_rebinds_double_click_for_body_canvas():
     editor = _make_editor()
     editor.display_cols = [0]

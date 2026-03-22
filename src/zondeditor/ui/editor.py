@@ -96,7 +96,7 @@ from src.zondeditor.domain.layers import (
 
 from src.zondeditor.ui.consts import *
 from src.zondeditor.ui.helpers import _apply_win11_style, _setup_shared_logger, _validate_nonneg_float_key, _check_license_or_exit, _parse_depth_float, _try_parse_dt, _pick_icon_font, _validate_tid_key, _validate_depth_0_4_key, _format_date_ru, _format_time_ru, _canvas_view_bbox, _validate_hh_key, _validate_mm_key, _parse_cell_int, _max_zero_run, _noise_around, _interp_with_noise, _resource_path, _open_logs_folder
-from src.zondeditor.domain.hatching import HATCH_USAGE_EDITOR_EXPANDED, load_registered_hatch
+from src.zondeditor.domain.hatching import HATCH_USAGE_EDITOR_INTERACTIVE, load_registered_hatch
 from src.zondeditor.ui.render.hatch_renderer import render_hatch_pattern
 from src.zondeditor.ui.widgets import ToolTip, CalendarDialog
 from src.zondeditor.ui.ribbon import RibbonView
@@ -5835,7 +5835,7 @@ class GeoCanvasEditor(tk.Tk):
             rect,
             pattern,
             tags=tags,
-            scale_info={"usage": HATCH_USAGE_EDITOR_EXPANDED, "layer_height_px": float(y1 - y0), "logical_rect": logical_rect_local if logical_rect_local is not None else rect},
+            scale_info={"usage": HATCH_USAGE_EDITOR_INTERACTIVE, "layer_height_px": float(y1 - y0), "logical_rect": logical_rect_local if logical_rect_local is not None else rect},
         )
 
     def _log_active_card_body_debug(self, card: SoundingCard | None, *, table_span=None, graph_span=None, interval_spans=None, handle_positions=None):
