@@ -330,16 +330,23 @@ class SoundingCard:
                 pass
         return float(self._body_y0)
 
-    def _sync_body_canvas_view(self):
+    def _sync_body_canvas_view(self, *, reconfigure: bool = True):
         if self.body_canvas is None:
             return
-        try:
-            self.body_canvas.configure(
-                height=int(max(1.0, float(self._body_view_height or self.geometry.body_height))),
-                scrollregion=(0, 0, int(self.geometry.card_width), int(max(self.geometry.body_height, self._body_content_height))),
-            )
-        except Exception as exc:
-            self._log_mount_error("sync body_canvas", exc, host=self._body_host, widget=self.body_canvas)
+        needs_reconfigure = bool(reconfigure)
+        if not needs_reconfigure and hasattr(self.body_canvas, "cget"):
+            try:
+                needs_reconfigure = not bool(self.body_canvas.cget("scrollregion"))
+            except Exception:
+                needs_reconfigure = True
+        if needs_reconfigure:
+            try:
+                self.body_canvas.configure(
+                    height=int(max(1.0, float(self._body_view_height or self.geometry.body_height))),
+                    scrollregion=(0, 0, int(self.geometry.card_width), int(max(self.geometry.body_height, self._body_content_height))),
+                )
+            except Exception as exc:
+                self._log_mount_error("sync body_canvas", exc, host=self._body_host, widget=self.body_canvas)
         if hasattr(self.body_canvas, "yview_moveto"):
             total = max(1.0, float(self._body_content_height))
             frac = min(max(float(self._body_y0) / total, 0.0), 1.0)
@@ -359,13 +366,13 @@ class SoundingCard:
     def body_yview_moveto(self, fraction: float):
         total = max(1.0, float(self._body_content_height))
         self._body_y0 = min(max(float(fraction) * total, 0.0), self.max_body_y0())
-        self._sync_body_canvas_view()
+        self._sync_body_canvas_view(reconfigure=False)
         return self.body_yview()
 
     def body_yview_scroll(self, number: int, what: str = "units"):
         step = 24.0 if str(what) == "units" else max(1.0, float(self._body_view_height) * 0.9)
         self._body_y0 = min(max(float(self._body_y0) + (float(number) * step), 0.0), self.max_body_y0())
-        self._sync_body_canvas_view()
+        self._sync_body_canvas_view(reconfigure=False)
         return self.body_yview()
 
     def body_canvasy(self, value: float) -> float:
