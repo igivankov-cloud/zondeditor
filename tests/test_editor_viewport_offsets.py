@@ -1111,6 +1111,19 @@ def test_schedule_graph_redraw_is_suppressed_while_inline_editor_is_active():
     assert editor._graph_redraw_after_id is None
 
 
+def test_schedule_graph_redraw_is_suppressed_while_layer_drag_is_active():
+    editor = _make_editor()
+    editor.show_graphs = True
+    editor._layer_drag = {"ti": 0, "boundary": 1, "mode": "boundary"}
+    after_calls = []
+    editor.after = lambda delay, cb: after_calls.append((delay, cb)) or "after-id"
+
+    editor.schedule_graph_redraw()
+
+    assert after_calls == []
+    assert editor._graph_redraw_after_id is None
+
+
 def test_refresh_display_order_skips_rebuild_when_order_is_unchanged():
     editor = _make_editor()
     editor.tests = [SimpleNamespace(tid=2, dt=""), SimpleNamespace(tid=1, dt="")]
@@ -1201,6 +1214,22 @@ def test_redraw_graphs_now_is_suppressed_while_inline_editor_is_active():
     assert calls == []
 
 
+def test_redraw_graphs_now_is_suppressed_while_scroll_is_in_progress():
+    editor = _make_editor()
+    editor.show_graphs = True
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor._scroll_in_progress = True
+    calls = []
+    editor._clear_graph_layers = lambda: calls.append("clear")
+    editor._calc_layer_params_for_all_tests = lambda: calls.append("calc")
+    editor._recompute_graph_scales = lambda: calls.append("scales")
+    editor._refresh_display_order = lambda: calls.append("refresh")
+
+    editor._redraw_graphs_now()
+
+    assert calls == []
+
+
 def test_layer_drag_motion_refreshes_only_target_card():
     editor = _make_editor()
     editor.tests = [SimpleNamespace(tid=1, locked=False, experience_column=SimpleNamespace(intervals=[SimpleNamespace(from_depth=0.0)], column_depth_end=1.0))]
@@ -1230,6 +1259,75 @@ def test_layer_drag_motion_refreshes_only_target_card():
     assert "cancel" in calls
     assert ("calc", 0) in calls
     assert ("refresh", 0) in calls
+
+
+def test_set_layer_soil_from_ribbon_does_not_trigger_global_redraw_or_card_rebuild():
+    editor = _make_editor()
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor.ige_registry = {"ИГЭ-1": {"soil_type": "глина", "calc_mode": "x", "style": {}, "label": "ИГЭ-1", "ordinal": 1}}
+    editor._push_undo = lambda: None
+    editor._ensure_ige_entry = lambda ige_id: editor.ige_registry[ige_id]
+    editor._sync_ige_display_label = lambda ige_id, ent: None
+    editor._ensure_test_layers = lambda t: [SimpleNamespace(ige_id="ИГЭ-1")]
+    editor._apply_ige_to_layer = lambda lyr: applied.append(str(lyr.ige_id))
+    editor._sync_layers_panel = lambda: synced.append("layers")
+    editor.schedule_graph_redraw = lambda: scheduled.append("graphs")
+    editor._redraw = lambda: redraws.append("all")
+    editor._rebuild_sounding_cards = lambda: rebuilds.append("rebuild")
+    applied = []
+    synced = []
+    scheduled = []
+    redraws = []
+    rebuilds = []
+
+    editor._set_layer_soil_from_ribbon("ИГЭ-1", "песок")
+
+    assert applied == ["ИГЭ-1"]
+    assert synced == ["layers"]
+    assert scheduled == ["graphs"]
+    assert redraws == []
+    assert rebuilds == []
+
+
+def test_update_scrollregion_resyncs_all_existing_card_viewports_when_height_changes_without_rebuild():
+    editor = _make_editor()
+    editor.display_cols = [0, 1]
+    editor.tests = [SimpleNamespace(tid=1), SimpleNamespace(tid=2)]
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.canvas = _DummyBodyCanvas(height=120)
+    editor.hcanvas = SimpleNamespace()
+    editor.soundings_viewport = _DummyViewport(width=640, x0=0.0, fractions=(0.0, 1.0))
+    editor._total_body_height = lambda: 400
+    editor._rebuild_sounding_cards()
+    for ti in editor.display_cols:
+        card = editor._card_for_test(ti)
+        card.body_canvas = _DummyBodyCanvas(height=120)
+        card.set_body_scroll_context(view_height=120.0, content_height=400.0)
+
+    editor.canvas._height = 260
+    editor._update_scrollregion()
+
+    assert [int(editor._card_for_test(ti).body_canvas.cget("height")) for ti in editor.display_cols] == [260, 260]
+
+
+def test_depth_y_depth_roundtrip_stays_stable_at_row_midpoint():
+    editor = _make_editor()
+    editor.tests = [SimpleNamespace(depth=["0.00", "0.10", "0.20"], qc=["1", "2", "3"], fs=["1", "2", "3"])]
+    editor._grid_units = [("row", 0), ("row", 1), ("row", 2)]
+    editor._grid_base = [0.0, 0.1, 0.2]
+    editor._row_y_bounds = lambda row: (row * 20.0, row * 20.0 + 20.0)
+    editor.step_m = 0.1
+
+    y = editor._depth_to_canvas_y(0.10)
+    depth = editor._canvas_y_to_depth(y)
+
+    assert round(y, 2) == 30.0
+    assert round(depth, 2) == 0.10
 
 
 def test_center_toplevel_withdraws_before_showing_centered_window():
