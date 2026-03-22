@@ -96,7 +96,7 @@ from src.zondeditor.domain.layers import (
 
 from src.zondeditor.ui.consts import *
 from src.zondeditor.ui.helpers import _apply_win11_style, _setup_shared_logger, _validate_nonneg_float_key, _check_license_or_exit, _parse_depth_float, _try_parse_dt, _pick_icon_font, _validate_tid_key, _validate_depth_0_4_key, _format_date_ru, _format_time_ru, _canvas_view_bbox, _validate_hh_key, _validate_mm_key, _parse_cell_int, _max_zero_run, _noise_around, _interp_with_noise, _resource_path, _open_logs_folder
-from src.zondeditor.domain.hatching import HATCH_USAGE_EDITOR_INTERACTIVE, load_registered_hatch
+from src.zondeditor.domain.hatching import HATCH_USAGE_EDITOR_EXPANDED, HATCH_USAGE_EDITOR_INTERACTIVE, load_registered_hatch
 from src.zondeditor.ui.render.hatch_renderer import render_hatch_pattern
 from src.zondeditor.ui.widgets import ToolTip, CalendarDialog
 from src.zondeditor.ui.ribbon import RibbonView
@@ -5838,52 +5838,67 @@ class GeoCanvasEditor(tk.Tk):
             self.__dict__["_interactive_hatch_image_cache"] = cache
         return cache
 
-    def _interactive_hatch_image(self, soil_type: str, width: int, height: int):
+    def _interactive_hatch_image(self, soil_type: str, width: int, height: int, logical_rect=None):
         soil = str(soil_type or "").strip().lower().replace("ё", "е")
         w = max(1, int(width))
         h = max(1, int(height))
-        key = (soil, w, h)
+        phase = tuple(int(round(float(v))) for v in (logical_rect or (0.0, 0.0, float(w), float(h))))
+        key = (soil, w, h, phase)
         cache = self._interactive_hatch_cache()
         if key in cache:
             return cache[key]
+        pattern = load_registered_hatch(str(soil_type or ""))
+        if pattern is None:
+            return None
         image = tk.PhotoImage(width=w, height=h)
 
-        def _put(color: str, x0: int, y0: int, x1: int | None = None, y1: int | None = None):
-            xx0 = max(0, min(w, int(x0)))
-            yy0 = max(0, min(h, int(y0)))
-            xx1 = max(xx0 + 1, min(w, int(x1 if x1 is not None else (x0 + 1))))
-            yy1 = max(yy0 + 1, min(h, int(y1 if y1 is not None else (y0 + 1))))
-            image.put(color, to=(xx0, yy0, xx1, yy1))
+        class _RasterCanvas:
+            def __init__(self, photo, width_px: int, height_px: int):
+                self.photo = photo
+                self.width_px = width_px
+                self.height_px = height_px
 
-        if "грав" in soil and "пес" in soil:
-            for y in range(2, h, 12):
-                for x in range((y // 6) % 8, w, 12):
-                    _put("#7a5e3a", x, y, x + 4, y + 2)
-                    if x + 6 < w and y + 6 < h:
-                        _put("#7a5e3a", x + 4, y + 2, x + 6, y + 6)
-            for y in range(6, h, 12):
-                for x in range(6, w, 12):
-                    _put("#8b6b43", x, y)
-                    _put("#8b6b43", x + 1, y + 1)
-        elif "грав" in soil:
-            for y in range(2, h, 12):
-                for x in range((y // 6) % 10, w, 14):
-                    _put("#7a5e3a", x, y, x + 5, y + 2)
-                    if x + 7 < w and y + 7 < h:
-                        _put("#7a5e3a", x + 4, y + 2, x + 7, y + 7)
-        elif "пес" in soil:
-            for y in range(4, h, 10):
-                for x in range((y // 5) % 6, w, 10):
-                    _put("#8b6b43", x, y)
-                    if x + 2 < w and y + 2 < h:
-                        _put("#8b6b43", x + 2, y + 2)
-        elif "глин" in soil:
-            for y in range(4, h, 10):
-                _put("#7a5e3a", 0, y, w, y + 1)
-        else:
-            for y in range(4, h, 12):
-                for x in range(0, w, 12):
-                    _put("#7a5e3a", x, y, min(w, x + 6), min(h, y + 1))
+            def _put(self, color: str, x: int, y: int):
+                if 0 <= x < self.width_px and 0 <= y < self.height_px:
+                    self.photo.put(color, to=(x, y, x + 1, y + 1))
+
+            def create_line(self, x0, y0, x1, y1, *, fill="#000000", width=1, **_kwargs):
+                dx = float(x1) - float(x0)
+                dy = float(y1) - float(y0)
+                steps = max(1, int(max(abs(dx), abs(dy)) * 2))
+                radius = max(0, int(round(float(width) * 0.5)))
+                for step in range(steps + 1):
+                    t = float(step) / float(steps)
+                    px = int(round(float(x0) + dx * t))
+                    py = int(round(float(y0) + dy * t))
+                    for ox in range(-radius, radius + 1):
+                        for oy in range(-radius, radius + 1):
+                            self._put(fill, px + ox, py + oy)
+
+            def create_oval(self, x0, y0, x1, y1, *, fill="#000000", outline=None, **_kwargs):
+                cx = (float(x0) + float(x1)) * 0.5
+                cy = (float(y0) + float(y1)) * 0.5
+                rx = max(0.5, abs(float(x1) - float(x0)) * 0.5)
+                ry = max(0.5, abs(float(y1) - float(y0)) * 0.5)
+                left = int(math.floor(cx - rx))
+                right = int(math.ceil(cx + rx))
+                top = int(math.floor(cy - ry))
+                bottom = int(math.ceil(cy + ry))
+                color = fill or outline or "#000000"
+                for px in range(left, right + 1):
+                    for py in range(top, bottom + 1):
+                        nx = (float(px) - cx) / rx
+                        ny = (float(py) - cy) / ry
+                        if (nx * nx) + (ny * ny) <= 1.0:
+                            self._put(color, px, py)
+
+        render_hatch_pattern(
+            _RasterCanvas(image, w, h),
+            (0.0, 0.0, float(w), float(h)),
+            pattern,
+            tags=(),
+            scale_info={"usage": HATCH_USAGE_EDITOR_EXPANDED, "layer_height_px": float(h), "logical_rect": logical_rect or (0.0, 0.0, float(w), float(h))},
+        )
 
         cache[key] = image
         return image
@@ -5892,8 +5907,17 @@ class GeoCanvasEditor(tk.Tk):
         target = canvas or self.canvas
         width = max(1, int(round(float(x1) - float(x0))))
         height = max(1, int(round(float(y1) - float(y0))))
+        rect = (float(x0), float(y0), float(x1), float(y1))
+        logical_rect_local = logical_rect
+        if logical_rect_local is not None:
+            logical_rect_local = tuple(float(v) for v in logical_rect_local)
+            target_card = self._card_for_widget(target) if target is not None else None
+            if target_card is not None and target is getattr(target_card, "body_canvas", None):
+                lx0, ly0 = target_card.body_world_to_local(float(logical_rect_local[0]), float(logical_rect_local[1]))
+                lx1, ly1 = target_card.body_world_to_local(float(logical_rect_local[2]), float(logical_rect_local[3]))
+                logical_rect_local = (float(lx0), float(ly0), float(lx1), float(ly1))
         try:
-            image = self._interactive_hatch_image(str(soil_type or ""), width, height)
+            image = self._interactive_hatch_image(str(soil_type or ""), width, height, logical_rect=logical_rect_local or rect)
             if hasattr(target, "create_image"):
                 target.create_image(float(x0), float(y0), image=image, anchor="nw", tags=tags)
                 return
@@ -5904,10 +5928,10 @@ class GeoCanvasEditor(tk.Tk):
             return
         render_hatch_pattern(
             target,
-            (float(x0), float(y0), float(x1), float(y1)),
+            rect,
             pattern,
             tags=tags,
-            scale_info={"usage": HATCH_USAGE_EDITOR_INTERACTIVE, "layer_height_px": float(y1 - y0), "logical_rect": (float(x0), float(y0), float(x1), float(y1))},
+            scale_info={"usage": HATCH_USAGE_EDITOR_INTERACTIVE, "layer_height_px": float(y1 - y0), "logical_rect": logical_rect_local or rect},
         )
 
     def _log_active_card_body_debug(self, card: SoundingCard | None, *, table_span=None, graph_span=None, interval_spans=None, handle_positions=None):

@@ -1916,7 +1916,7 @@ def test_begin_edit_depth0_uses_explicit_debug_field_without_name_error(monkeypa
 def test_draw_layer_hatch_uses_cached_image_layer_before_vector_renderer(monkeypatch):
     editor = _make_editor()
     canvas = _DummyBodyCanvas(support_items=True)
-    editor._interactive_hatch_image = lambda soil, width, height: object()
+    editor._interactive_hatch_image = lambda soil, width, height, logical_rect=None: object()
     called = []
     monkeypatch.setattr(
         editor_module,
