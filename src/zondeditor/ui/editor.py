@@ -5145,6 +5145,53 @@ class GeoCanvasEditor(tk.Tk):
                 except Exception:
                     pass
 
+    def _clear_card_graph_layers(self, ti: int):
+        ti = int(ti)
+        card = self._card_for_test(ti)
+        if card is not None and hasattr(card, "clear_body_render_layers"):
+            card.clear_body_render_layers(
+                "graph_axes",
+                f"graph_axes_{ti}",
+                "graph_qc",
+                f"graph_qc_{ti}",
+                "graph_fs",
+                f"graph_fs_{ti}",
+                "graph_nodata",
+                f"graph_nodata_{ti}",
+                "layers_overlay",
+                f"layers_overlay_{ti}",
+                "layer_handles",
+                f"layer_handles_{ti}",
+            )
+        for cnv in (getattr(self, "canvas", None), getattr(self, "hcanvas", None)):
+            if cnv is None:
+                continue
+            for tag in (
+                f"graph_axes_{ti}",
+                f"graph_qc_{ti}",
+                f"graph_fs_{ti}",
+                f"graph_nodata_{ti}",
+                f"layers_overlay_{ti}",
+                f"layer_handles_{ti}",
+            ):
+                try:
+                    cnv.delete(tag)
+                except Exception:
+                    pass
+
+    def _drop_layer_hitboxes_for_test(self, ti: int):
+        ti = int(ti)
+        self._layer_handle_hitbox = [hit for hit in (getattr(self, "_layer_handle_hitbox", []) or []) if int(hit.get("ti", -1)) != ti]
+        self._layer_depth_box_hitbox = [hit for hit in (getattr(self, "_layer_depth_box_hitbox", []) or []) if int(hit.get("ti", -1)) != ti]
+        self._layer_plot_hitbox = [hit for hit in (getattr(self, "_layer_plot_hitbox", []) or []) if int(hit.get("ti", -1)) != ti]
+        self._layer_label_hitbox = [hit for hit in (getattr(self, "_layer_label_hitbox", []) or []) if int(hit.get("ti", -1)) != ti]
+
+    def _refresh_card_graph_layers(self, ti: int):
+        ti = int(ti)
+        self._clear_card_graph_layers(ti)
+        self._drop_layer_hitboxes_for_test(ti)
+        self._render_card_graph_layers(ti)
+
     def _test_last_data_index(self, t) -> int | None:
         qarr = getattr(t, "qc", []) or []
         farr = getattr(t, "fs", []) or []
@@ -7072,10 +7119,9 @@ class GeoCanvasEditor(tk.Tk):
             try:
                 if 0 <= ti < len(self.tests):
                     self._calc_layer_params_for_test(int(ti))
+                    self._refresh_card_graph_layers(int(ti))
             except Exception:
                 pass
-            self._redraw()
-            self.schedule_graph_redraw()
 
     def _canvas_y_to_depth(self, y: float) -> float | None:
         for top_d, bot_d, y0r, y1r in self._depth_y_segments():

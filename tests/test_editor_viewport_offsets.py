@@ -867,6 +867,57 @@ def test_layer_drag_motion_uses_card_body_canvas_coordinates():
     assert captured == [420.0]
 
 
+def test_layer_drag_release_refreshes_only_the_active_card():
+    editor = _make_editor()
+    editor.display_cols = [0, 1]
+    editor.tests = [SimpleNamespace(tid=1), SimpleNamespace(tid=2)]
+    editor._layer_drag = {"ti": 0, "boundary": 1, "mode": "boundary"}
+    editor._layer_handle_hitbox = [{"ti": 0, "kind": "boundary"}, {"ti": 1, "kind": "boundary"}]
+    editor._layer_depth_box_hitbox = [{"ti": 0, "kind": "boundary_depth_edit"}, {"ti": 1, "kind": "boundary_depth_edit"}]
+    editor._layer_plot_hitbox = [{"ti": 0, "kind": "interval"}, {"ti": 1, "kind": "interval"}]
+    editor._layer_label_hitbox = [{"ti": 0, "kind": "label"}, {"ti": 1, "kind": "label"}]
+    refreshed = []
+    calc_calls = []
+    redraw_calls = []
+    schedule_calls = []
+    editor._calc_layer_params_for_test = lambda ti: calc_calls.append(int(ti))
+    editor._refresh_card_graph_layers = lambda ti: refreshed.append(int(ti))
+    editor._redraw = lambda: redraw_calls.append("all")
+    editor.schedule_graph_redraw = lambda: schedule_calls.append("scheduled")
+
+    editor._on_layer_drag_release(SimpleNamespace(widget=None))
+
+    assert calc_calls == [0]
+    assert refreshed == [0]
+    assert redraw_calls == []
+    assert schedule_calls == []
+    assert editor._layer_drag is None
+
+
+def test_refresh_card_graph_layers_replaces_hitboxes_only_for_target_card():
+    editor = _make_editor()
+    editor.display_cols = [0, 1]
+    editor.tests = [SimpleNamespace(tid=1), SimpleNamespace(tid=2)]
+    editor._layer_handle_hitbox = [{"ti": 0, "kind": "boundary", "marker": "old0"}, {"ti": 1, "kind": "boundary", "marker": "keep1"}]
+    editor._layer_depth_box_hitbox = [{"ti": 0, "kind": "boundary_depth_edit", "marker": "old0"}, {"ti": 1, "kind": "boundary_depth_edit", "marker": "keep1"}]
+    editor._layer_plot_hitbox = [{"ti": 0, "kind": "interval", "marker": "old0"}, {"ti": 1, "kind": "interval", "marker": "keep1"}]
+    editor._layer_label_hitbox = [{"ti": 0, "kind": "label", "marker": "old0"}, {"ti": 1, "kind": "label", "marker": "keep1"}]
+    editor._clear_card_graph_layers = lambda ti: None
+    editor._render_card_graph_layers = lambda ti: (
+        editor._layer_handle_hitbox.append({"ti": ti, "kind": "boundary", "marker": "new0"}),
+        editor._layer_depth_box_hitbox.append({"ti": ti, "kind": "boundary_depth_edit", "marker": "new0"}),
+        editor._layer_plot_hitbox.append({"ti": ti, "kind": "interval", "marker": "new0"}),
+        editor._layer_label_hitbox.append({"ti": ti, "kind": "label", "marker": "new0"}),
+    )
+
+    editor._refresh_card_graph_layers(0)
+
+    assert [hit["marker"] for hit in editor._layer_handle_hitbox] == ["keep1", "new0"]
+    assert [hit["marker"] for hit in editor._layer_depth_box_hitbox] == ["keep1", "new0"]
+    assert [hit["marker"] for hit in editor._layer_plot_hitbox] == ["keep1", "new0"]
+    assert [hit["marker"] for hit in editor._layer_label_hitbox] == ["keep1", "new0"]
+
+
 def test_compact_toggle_redraw_clears_stale_body_rows_from_card_canvas():
     editor = _make_editor()
     editor.tests = [SimpleNamespace(tid=1, dt="01.01.2026 10:00", export_on=True, locked=False, qc=["10", "11", "12"], fs=["5", "6", "7"], depth=["0.00", "0.10", "0.20"])]
