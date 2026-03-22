@@ -5051,17 +5051,30 @@ class GeoCanvasEditor(tk.Tk):
 
 
     def schedule_graph_redraw(self):
-        prev = getattr(self, "_graph_redraw_after_id", None)
+        prev = self.__dict__.get("_graph_redraw_after_id", None)
         if prev is not None:
             try:
                 self.after_cancel(prev)
             except Exception:
                 pass
+        if getattr(self, "_editing", None):
+            self._graph_redraw_after_id = None
+            return
         if not self._is_graph_panel_visible():
             self._clear_graph_layers()
             self._graph_redraw_after_id = None
             return
         self._graph_redraw_after_id = self.after(60, self._redraw_graphs_now)
+
+    def _cancel_pending_graph_redraw(self):
+        prev = self.__dict__.get("_graph_redraw_after_id", None)
+        if prev is None:
+            return
+        try:
+            self.after_cancel(prev)
+        except Exception:
+            pass
+        self._graph_redraw_after_id = None
 
     def _recompute_graph_scales(self):
         """Compute shared (file-level) X scales for graph columns."""
@@ -8515,6 +8528,7 @@ class GeoCanvasEditor(tk.Tk):
         if self._is_test_locked(int(ti)):
             self._set_status("Опыт заблокирован")
             return
+        self._cancel_pending_graph_redraw()
         self._end_edit(commit=True)
         t = self.tests[ti]
         # Не даём вводить значения "после конца" выбранного канала.
@@ -8634,6 +8648,7 @@ class GeoCanvasEditor(tk.Tk):
         if self._is_test_locked(int(ti)):
             self._set_status("Опыт заблокирован")
             return
+        self._cancel_pending_graph_redraw()
         self._end_edit(commit=True)
         t = self.tests[ti]
         if not getattr(t, "depth", None):

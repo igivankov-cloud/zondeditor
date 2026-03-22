@@ -185,6 +185,8 @@ def _make_editor():
     editor._editing = None
     editor._marks_index = {}
     editor._inline_edit_active = False
+    editor._debug_tail_edit = False
+    editor._graph_redraw_after_id = None
     return editor
 
 
@@ -1039,6 +1041,77 @@ def test_refresh_after_cell_edit_falls_back_to_global_redraw_when_shared_scale_c
     assert local_calls == []
     assert graph_calls == []
     assert redraw_calls == ["all"]
+
+
+def test_schedule_graph_redraw_is_suppressed_while_inline_editor_is_active():
+    editor = _make_editor()
+    editor.show_graphs = True
+    editor._editing = (0, 0, "qc", object(), 0)
+    after_calls = []
+    editor.after = lambda delay, cb: after_calls.append((delay, cb)) or "after-id"
+
+    editor.schedule_graph_redraw()
+
+    assert after_calls == []
+    assert editor._graph_redraw_after_id is None
+
+
+def test_begin_edit_cancels_pending_graph_redraw_before_placing_editor(monkeypatch):
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(qc=["10"], fs=["5"], depth=["0.00"], tid=1, locked=False)]
+    editor.flags = {1: SimpleNamespace(invalid=False, force_cells=set(), interp_cells=set(), user_cells=set(), algo_cells=set())}
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 320), xview_fractions=lambda: (0.0, 1.0))
+    editor._grid_units = [("row", 0)]
+    editor._grid_row_maps = {0: {0: 0}}
+    editor._row_y_bounds = lambda row: (0.0, 22.0)
+    editor._row_tops = [0.0, 22.0]
+    editor._refresh_display_order = lambda: None
+    editor._ensure_cell_visible = lambda *args, **kwargs: None
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(rootx=140, rooty=220)
+    editor._sounding_cards = {0: card}
+    cancelled = []
+    editor._graph_redraw_after_id = "after-id"
+    editor.after_cancel = lambda after_id: cancelled.append(after_id)
+
+    class _FakeEntry:
+        def __init__(self, parent, **kwargs):
+            self.parent = parent
+        def insert(self, *_args):
+            pass
+        def get(self):
+            return "10"
+        def configure(self, **_kwargs):
+            pass
+        def select_range(self, *_args):
+            pass
+        def place(self, **_kwargs):
+            pass
+        def focus_set(self):
+            pass
+        def bind(self, *_args, **_kwargs):
+            pass
+        def icursor(self, *_args):
+            pass
+        def after_idle(self, fn):
+            fn()
+
+    monkeypatch.setattr(editor_module.tk, "Entry", lambda parent, **kwargs: _FakeEntry(parent, **kwargs))
+    editor.register = lambda fn: fn
+
+    editor._begin_edit(0, 0, "qc", display_row=0)
+
+    assert cancelled == ["after-id"]
+    assert editor._graph_redraw_after_id is None
 
 
 def test_center_toplevel_withdraws_before_showing_centered_window():
