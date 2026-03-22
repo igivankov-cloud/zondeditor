@@ -986,6 +986,61 @@ def test_refresh_card_graph_layers_replaces_hitboxes_only_for_target_card():
     assert [hit["marker"] for hit in editor._layer_label_hitbox] == ["keep1", "new0"]
 
 
+def test_refresh_after_cell_edit_redraws_only_target_card_when_shared_scale_is_unchanged():
+    editor = _make_editor()
+    editor.show_graphs = True
+    editor.tests = [SimpleNamespace(tid=1), SimpleNamespace(tid=2)]
+    editor.graph_qc_max_mpa = 30.0
+    editor.graph_fs_max_kpa = 500.0
+    editor.graph_qc_max_source = "data"
+    editor.graph_fs_max_source = "data"
+    editor.graph_qc_max_display = 30.0
+    editor.graph_fs_max_display = 500.0
+    local_calls = []
+    graph_calls = []
+    redraw_calls = []
+    editor._recompute_graph_scales = lambda: None
+    editor._refresh_single_card = lambda ti, **kwargs: local_calls.append(int(ti))
+    editor._refresh_card_graph_layers = lambda ti: graph_calls.append(int(ti))
+    editor._redraw = lambda: redraw_calls.append("all")
+
+    editor._refresh_after_cell_edit(1)
+
+    assert local_calls == [1]
+    assert graph_calls == [1]
+    assert redraw_calls == []
+
+
+def test_refresh_after_cell_edit_falls_back_to_global_redraw_when_shared_scale_changes():
+    editor = _make_editor()
+    editor.show_graphs = True
+    editor.tests = [SimpleNamespace(tid=1), SimpleNamespace(tid=2)]
+    editor.graph_qc_max_mpa = 30.0
+    editor.graph_fs_max_kpa = 500.0
+    editor.graph_qc_max_source = "data"
+    editor.graph_fs_max_source = "data"
+    editor.graph_qc_max_display = 30.0
+    editor.graph_fs_max_display = 500.0
+    local_calls = []
+    graph_calls = []
+    redraw_calls = []
+
+    def _change_scales():
+        editor.graph_qc_max_mpa = 35.0
+        editor.graph_qc_max_display = 35.0
+
+    editor._recompute_graph_scales = _change_scales
+    editor._refresh_single_card = lambda ti, **kwargs: local_calls.append(int(ti))
+    editor._refresh_card_graph_layers = lambda ti: graph_calls.append(int(ti))
+    editor._redraw = lambda: redraw_calls.append("all")
+
+    editor._refresh_after_cell_edit(0)
+
+    assert local_calls == []
+    assert graph_calls == []
+    assert redraw_calls == ["all"]
+
+
 def test_center_toplevel_withdraws_before_showing_centered_window():
     editor = _make_editor()
     editor.winfo_rootx = lambda: 100

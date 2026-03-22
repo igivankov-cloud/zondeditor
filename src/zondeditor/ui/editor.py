@@ -5191,6 +5191,30 @@ class GeoCanvasEditor(tk.Tk):
         self._drop_layer_hitboxes_for_test(ti)
         self._render_card_graph_layers(ti)
 
+    def _graph_scale_snapshot(self) -> tuple[float, float, str, str, float | None, float | None]:
+        return (
+            float(self.__dict__.get("graph_qc_max_mpa", 0.0) or 0.0),
+            float(self.__dict__.get("graph_fs_max_kpa", 0.0) or 0.0),
+            str(self.__dict__.get("graph_qc_max_source", "unknown") or "unknown"),
+            str(self.__dict__.get("graph_fs_max_source", "unknown") or "unknown"),
+            None if self.__dict__.get("graph_qc_max_display", None) is None else float(self.__dict__.get("graph_qc_max_display") or 0.0),
+            None if self.__dict__.get("graph_fs_max_display", None) is None else float(self.__dict__.get("graph_fs_max_display") or 0.0),
+        )
+
+    def _refresh_after_cell_edit(self, ti: int):
+        ti = int(ti)
+        if not self._is_graph_panel_visible():
+            self._redraw()
+            return
+        scales_before = self._graph_scale_snapshot()
+        self._recompute_graph_scales()
+        scales_changed = self._graph_scale_snapshot() != scales_before
+        if scales_changed:
+            self._redraw()
+            return
+        self._refresh_single_card(ti)
+        self._refresh_card_graph_layers(ti)
+
     def _test_last_data_index(self, t) -> int | None:
         qarr = getattr(t, "qc", []) or []
         farr = getattr(t, "fs", []) or []
@@ -7582,6 +7606,220 @@ class GeoCanvasEditor(tk.Tk):
         x0, y0, x1, y1 = card.geometry.header_bounds_world
         return (x0, y0 + float(self.pad_y), x1, y0 + float(self.pad_y + self.hdr_h))
 
+    def _refresh_single_card(self, ti: int, *, diagnostics=None, show_graphs: bool | None = None):
+        ti = int(ti)
+        self._refresh_display_order()
+        if ti not in (getattr(self, "display_cols", []) or []):
+            return
+        card = self._card_for_test(ti)
+        if card is None:
+            return
+        try:
+            col = (getattr(self, "display_cols", []) or []).index(ti)
+        except ValueError:
+            return
+        if diagnostics is None:
+            diagnostics = self._diagnostics_report()
+        if show_graphs is None:
+            show_graphs = bool(self._is_graph_panel_visible())
+
+        max_rows = len(getattr(self, "_grid", []) or [])
+        grid = getattr(self, "_grid_base", []) or []
+        t = self.tests[ti]
+        self._log_card_canvas_clip_debug(card, phase="before_body_redraw")
+        for widget, label in ((getattr(card, "header_canvas", None), "header"), (getattr(card, "body_canvas", None), "body")):
+            if widget is None or not hasattr(widget, "delete"):
+                continue
+            try:
+                widget.delete("all")
+            except Exception:
+                if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+                    print(f"[CARDCLIP] phase=clear_failed ti={card.test_index} target={label}", file=sys.stderr)
+
+        x0, y0, x1, y1 = self._header_bbox(col)
+        ex_on = bool(getattr(t, "export_on", True))
+        fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
+        td = diagnostics.by_test.get(int(getattr(t, "tid", 0) or 0))
+        has_missing_values = bool(td and td.missing_rows)
+        hdr_fill = self._header_fill_for_test(
+            invalid=bool(td.invalid) if td is not None else bool(getattr(fl, "invalid", False)),
+            has_missing=bool(has_missing_values),
+            export_on=bool(ex_on),
+        )
+        hdr_text = "#111" if ex_on else "#8a8a8a"
+        hdr_icon = "#444" if ex_on else "#8a8a8a"
+        dt_val = getattr(t, "dt", "") or ""
+        if isinstance(dt_val, datetime.datetime):
+            dt_line = dt_val.strftime("%d.%m.%Y %H:%M:%S")
+        elif isinstance(dt_val, datetime.date):
+            dt_line = dt_val.strftime("%d.%m.%Y 00:00:00")
+        else:
+            dt_line = str(dt_val).strip()
+        dt_line = re.sub(r"(\d{2}:\d{2}):\d{2}\b", r"\1", dt_line)
+        card.render_header(
+            getattr(card, "header_canvas", None) or self.hcanvas,
+            title=f"Опыт {t.tid}",
+            datetime_text=dt_line,
+            header_fill=hdr_fill,
+            header_text=hdr_text,
+            header_icon=hdr_icon,
+            export_on=bool(ex_on),
+            lock_on=bool(getattr(t, "locked", False)),
+            hover=getattr(self, "_hover", None),
+            icon_calendar=ICON_CALENDAR,
+            icon_copy=ICON_COPY,
+            icon_delete=ICON_DELETE,
+            icon_font=_pick_icon_font(12),
+            hdr_h=float(self.hdr_h),
+            show_inclinometer=str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True)),
+            show_graph_scale=bool(show_graphs),
+            qc_scale_max=float(self.__dict__.get("graph_qc_max_mpa", 0.0) or 0.0),
+            fs_scale_max=float(self.__dict__.get("graph_fs_max_kpa", 0.0) or 0.0),
+            qc_scale_source=str(self.__dict__.get("graph_qc_max_source", "unknown") or "unknown"),
+            fs_scale_source=str(self.__dict__.get("graph_fs_max_source", "unknown") or "unknown"),
+            qc_scale_display=float(self.__dict__.get("graph_qc_max_display", self.__dict__.get("graph_qc_max_mpa", 0.0)) or 0.0),
+            fs_scale_display=float(self.__dict__.get("graph_fs_max_display", self.__dict__.get("graph_fs_max_kpa", 0.0)) or 0.0),
+            qc_scale_unit="МПа",
+            fs_scale_unit="кПа",
+        )
+
+        mp = self._grid_row_maps.get(ti, {})
+        units = getattr(self, "_grid_units", []) or []
+        for r in range(max_rows):
+            unit = units[r] if r < len(units) else ("row", r)
+            is_meter_row = (unit[0] == "meter")
+            meter_n = int(unit[1]) if is_meter_row else None
+            base_row = int(unit[1]) if unit[0] == "row" else None
+            depth_txt = f"{grid[base_row]:.2f}" if base_row is not None and base_row < len(grid) and grid[base_row] is not None else ""
+            data_i = mp.get(r, None)
+            q_arr = (getattr(t, "qc", []) or [])
+            f_arr = (getattr(t, "fs", []) or [])
+            has_row = (data_i is not None) and (data_i < max(len(q_arr), len(f_arr)))
+            qc_txt = str(q_arr[data_i]) if (data_i is not None and data_i < len(q_arr)) else ""
+            fs_txt = str(f_arr[data_i]) if (data_i is not None and data_i < len(f_arr)) else ""
+            incl_txt = ""
+            incl_enabled = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True))
+            if incl_enabled:
+                incl_list = getattr(t, "incl", None)
+                if has_row and incl_list is not None and data_i < len(incl_list):
+                    incl_txt = str(incl_list[data_i])
+            meter_qc_max = None
+            meter_fs_max = None
+            if is_meter_row:
+                depth_txt = f"{meter_n}–{meter_n + 1} м"
+                for di in range(max(len(q_arr), len(f_arr))):
+                    dv = self._depth_at_index(t, di)
+                    if dv is None or not (meter_n <= dv < (meter_n + 1)):
+                        continue
+                    q_raw = _parse_cell_int(q_arr[di]) if di < len(q_arr) else None
+                    f_raw = _parse_cell_int(f_arr[di]) if di < len(f_arr) else None
+                    if q_raw is None and f_raw is None:
+                        continue
+                    qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
+                    if q_raw is not None:
+                        meter_qc_max = float(qc_mpa) if meter_qc_max is None else max(float(meter_qc_max), float(qc_mpa))
+                    if f_raw is not None:
+                        meter_fs_max = float(fs_kpa) if meter_fs_max is None else max(float(meter_fs_max), float(fs_kpa))
+                qc_txt = "" if meter_qc_max is None else (f"{meter_qc_max:.2f}".rstrip("0").rstrip("."))
+                fs_txt = "" if meter_fs_max is None else str(int(round(float(meter_fs_max))))
+                if meter_qc_max is None and meter_fs_max is None:
+                    depth_txt = ""
+                if incl_enabled:
+                    incl_txt = ""
+            if incl_enabled and has_row and (incl_txt is None or str(incl_txt).strip() == ""):
+                incl_txt = "0"
+            is_blank_row = (qc_txt.strip() == "" and fs_txt.strip() == "" and (incl_txt.strip() == "" if incl_enabled else True))
+            if not has_row and not is_meter_row:
+                depth_txt = ""
+            _is_editing_this = False
+            try:
+                ed = getattr(self, "_editing", None)
+                if ed and len(ed) >= 3:
+                    ed_ti, ed_row = ed[0], ed[1]
+                    if ed_ti == ti and data_i is not None and ed_row == data_i:
+                        _is_editing_this = True
+            except Exception:
+                _is_editing_this = False
+            if has_row and is_blank_row and not _is_editing_this and not is_meter_row:
+                depth_txt = ""
+            meter_has_data = bool((meter_qc_max is not None) or (meter_fs_max is not None)) if is_meter_row else False
+            if is_meter_row:
+                depth_fill = "#f3f6fb" if meter_has_data else "white"
+            elif has_row and int(data_i) == 0:
+                depth_fill = "white"
+            else:
+                depth_fill = (GUI_DEPTH_BG if has_row else "white")
+            if not depth_txt:
+                depth_fill = "white"
+
+            def fill_for(kind: str):
+                if is_meter_row:
+                    return depth_fill
+                if not has_row or is_blank_row:
+                    return "white"
+                try:
+                    if has_row and kind in ("qc", "fs") and data_i is not None:
+                        raw_val = (t.qc[data_i] if kind == "qc" else t.fs[data_i])
+                        if (_parse_cell_int(raw_val) or 0) == 0 and (data_i, kind) not in getattr(fl, "user_cells", set()):
+                            return (GUI_ORANGE_P if getattr(self, "_algo_preview_mode", False) else GUI_ORANGE)
+                except Exception:
+                    pass
+                mk = (self._marks_index or {}).get(self._mark_key(int(getattr(t, "tid", 0) or 0), self._safe_depth_m(t, int(data_i)), str(kind))) if data_i is not None else None
+                if isinstance(mk, dict):
+                    clr = str(mk.get("color") or "").strip().lower()
+                    if clr == "orange":
+                        return GUI_ORANGE
+                    if clr == "purple":
+                        return GUI_PURPLE
+                    if clr == "green":
+                        return GUI_GREEN
+                    if clr == "blue":
+                        return (GUI_BLUE_P if getattr(self, "_algo_preview_mode", False) else GUI_BLUE)
+                if (data_i, kind) in getattr(fl, "user_cells", set()):
+                    return GUI_PURPLE
+                if (data_i, kind) in getattr(fl, "algo_cells", set()):
+                    return GUI_GREEN
+                if (data_i, kind) in fl.force_cells:
+                    return (GUI_BLUE_P if getattr(self, "_algo_preview_mode", False) else GUI_BLUE)
+                if (data_i, kind) in fl.interp_cells:
+                    return (GUI_ORANGE_P if getattr(self, "_algo_preview_mode", False) else GUI_ORANGE)
+                return "white"
+
+            cells = [("depth", depth_txt, depth_fill), ("qc", qc_txt, fill_for("qc")), ("fs", fs_txt, fill_for("fs"))]
+            if incl_enabled:
+                cells.append(("incl", incl_txt, fill_for("incl")))
+            for field, txt, fill in cells:
+                if bool(getattr(self, "compact_1m", False)) and is_meter_row and field in ("qc", "fs"):
+                    txt = ""
+                try:
+                    if getattr(self, "_rc_preview", None) == (ti, r):
+                        fill = GUI_RED
+                except Exception:
+                    pass
+                bx0, by0, bx1, by1 = self._cell_bbox(col, r, field)
+                color = "#555" if field == "depth" else ("#666" if is_meter_row and field in ("qc", "fs") else "#000")
+                if not ex_on:
+                    color = "#8a8a8a" if field != "depth" else "#9a9a9a"
+                card.render_body_cell(getattr(card, "body_canvas", None) or self.canvas, row_y0=float(by0), row_y1=float(by1), field=field, text=txt, fill=fill, text_color=color)
+
+        if bool(getattr(t, "locked", False)):
+            body_h = float(self._total_body_height())
+            if body_h > 0:
+                if getattr(card, "body_canvas", None) is not None:
+                    lx0, ly0 = card.body_world_to_local(x0, 0.0)
+                    lx1, ly1 = card.body_world_to_local(x1, body_h)
+                    card.body_canvas.create_rectangle(lx0, ly0, lx1, ly1, fill="#d0d0d0", outline="", stipple="gray50")
+                else:
+                    self.canvas.create_rectangle(x0, 0, x1, body_h, fill="#d0d0d0", outline="", stipple="gray50")
+            if getattr(card, "header_canvas", None) is not None:
+                hx0, hy0 = card.header_world_to_local(x0, y0)
+                hx1, hy1 = card.header_world_to_local(x1, y1)
+                card.header_canvas.create_rectangle(hx0, hy0, hx1, hy1, fill="#d0d0d0", outline="", stipple="gray50")
+            else:
+                self.hcanvas.create_rectangle(x0, y0, x1, y1, fill="#d0d0d0", outline="", stipple="gray50")
+        card.redraw_if_needed("body")
+        self._log_card_canvas_clip_debug(card, phase="after_body_redraw")
+
 
     def _redraw(self):
         self._sync_view_ribbon_state()
@@ -7615,262 +7853,7 @@ class GeoCanvasEditor(tk.Tk):
 
         diagnostics = self._diagnostics_report()
         for col, ti in enumerate(self.display_cols):
-            t = self.tests[ti]
-            card = self._card_for_test(int(ti))
-            if card is not None:
-                self._log_card_canvas_clip_debug(card, phase="before_body_redraw")
-                for widget, label in ((getattr(card, "header_canvas", None), "header"), (getattr(card, "body_canvas", None), "body")):
-                    if widget is None or not hasattr(widget, "delete"):
-                        continue
-                    try:
-                        widget.delete("all")
-                    except Exception:
-                        if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
-                            print(f"[CARDCLIP] phase=clear_failed ti={card.test_index} target={label}", file=sys.stderr)
-            x0, y0, x1, y1 = self._header_bbox(col)
-
-            # checked = will be exported
-            ex_on = bool(getattr(t, "export_on", True))
-            fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
-            td = diagnostics.by_test.get(int(getattr(t, "tid", 0) or 0))
-            has_missing_values = bool(td and td.missing_rows)
-            hdr_fill = self._header_fill_for_test(
-                invalid=bool(td.invalid) if td is not None else bool(getattr(fl, "invalid", False)),
-                has_missing=bool(has_missing_values),
-                export_on=bool(ex_on),
-            )
-            hdr_text = "#111" if ex_on else "#8a8a8a"
-            hdr_icon = "#444" if ex_on else "#8a8a8a"
-
-            dt_val = getattr(t, "dt", "") or ""
-            if isinstance(dt_val, datetime.datetime):
-                dt_line = dt_val.strftime("%d.%m.%Y %H:%M:%S")
-            elif isinstance(dt_val, datetime.date):
-                dt_line = dt_val.strftime("%d.%m.%Y 00:00:00")
-            else:
-                dt_line = str(dt_val).strip()
-            dt_line = re.sub(r"(\d{2}:\d{2}):\d{2}\b", r"\1", dt_line)
-            if card is not None:
-                card.render_header(
-                    getattr(card, "header_canvas", None) or self.hcanvas,  # legacy fallback only if a card target is unavailable
-                    title=f"Опыт {t.tid}",
-                    datetime_text=dt_line,
-                    header_fill=hdr_fill,
-                    header_text=hdr_text,
-                    header_icon=hdr_icon,
-                    export_on=bool(ex_on),
-                    lock_on=bool(getattr(t, "locked", False)),
-                    hover=getattr(self, "_hover", None),
-                    icon_calendar=ICON_CALENDAR,
-                    icon_copy=ICON_COPY,
-                    icon_delete=ICON_DELETE,
-                    icon_font=_pick_icon_font(12),
-                    hdr_h=float(self.hdr_h),
-                    show_inclinometer=str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True)),
-                    show_graph_scale=bool(show_graphs),
-                    qc_scale_max=float(self.__dict__.get("graph_qc_max_mpa", 0.0) or 0.0),
-                    fs_scale_max=float(self.__dict__.get("graph_fs_max_kpa", 0.0) or 0.0),
-                    qc_scale_source=str(self.__dict__.get("graph_qc_max_source", "unknown") or "unknown"),
-                    fs_scale_source=str(self.__dict__.get("graph_fs_max_source", "unknown") or "unknown"),
-                    qc_scale_display=float(self.__dict__.get("graph_qc_max_display", self.__dict__.get("graph_qc_max_mpa", 0.0)) or 0.0),
-                    fs_scale_display=float(self.__dict__.get("graph_fs_max_display", self.__dict__.get("graph_fs_max_kpa", 0.0)) or 0.0),
-                    qc_scale_unit="МПа",
-                    fs_scale_unit="кПа",
-                )
-
-            # --- ТАБЛИЦА (canvas) ---
-            mp = self._grid_row_maps.get(ti, {})
-            start_r = self._grid_start_rows.get(ti, 0)
-            units = getattr(self, "_grid_units", []) or []
-
-            for r in range(max_rows):
-                unit = units[r] if r < len(units) else ("row", r)
-                is_meter_row = (unit[0] == "meter")
-                meter_n = int(unit[1]) if is_meter_row else None
-                base_row = int(unit[1]) if unit[0] == "row" else None
-                if base_row is not None and base_row < len(grid) and grid[base_row] is not None:
-                    depth_txt = f"{grid[base_row]:.2f}"
-                else:
-                    depth_txt = ""
-
-                data_i = mp.get(r, None)
-                q_arr = (getattr(t, "qc", []) or [])
-                f_arr = (getattr(t, "fs", []) or [])
-                has_row = (data_i is not None) and (data_i < max(len(q_arr), len(f_arr)))
-                qc_txt = str(q_arr[data_i]) if (data_i is not None and data_i < len(q_arr)) else ""
-                fs_txt = str(f_arr[data_i]) if (data_i is not None and data_i < len(f_arr)) else ""
-                if self._is_tail_display_row(int(r)):
-                    self._tail_debug_log(
-                        "TAIL_RENDER",
-                        f"ti={int(ti)} disp_r={int(r)} data_i={data_i} qc_exists={bool(data_i is not None and data_i < len(q_arr))} fs_exists={bool(data_i is not None and data_i < len(f_arr))} qc_txt={repr(qc_txt)} fs_txt={repr(fs_txt)} has_row={bool(has_row)}",
-                        ti=int(ti),
-                    )
-                incl_txt = ""
-                incl_enabled = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True))
-                if incl_enabled:
-                    incl_list = getattr(t, "incl", None)
-                    if has_row and incl_list is not None and data_i < len(incl_list):
-                        incl_txt = str(incl_list[data_i])
-
-                meter_qc_max = None
-                meter_fs_max = None
-                if is_meter_row:
-                    depth_txt = f"{meter_n}–{meter_n + 1} м"
-                    qarr = getattr(t, "qc", []) or []
-                    farr = getattr(t, "fs", []) or []
-                    for di in range(max(len(qarr), len(farr))):
-                        dv = self._depth_at_index(t, di)
-                        if dv is None or not (meter_n <= dv < (meter_n + 1)):
-                            continue
-                        q_raw = _parse_cell_int(qarr[di]) if di < len(qarr) else None
-                        f_raw = _parse_cell_int(farr[di]) if di < len(farr) else None
-                        if q_raw is None and f_raw is None:
-                            continue
-                        qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
-                        if q_raw is not None:
-                            meter_qc_max = float(qc_mpa) if meter_qc_max is None else max(float(meter_qc_max), float(qc_mpa))
-                        if f_raw is not None:
-                            meter_fs_max = float(fs_kpa) if meter_fs_max is None else max(float(meter_fs_max), float(fs_kpa))
-                    qc_txt = "" if meter_qc_max is None else (f"{meter_qc_max:.2f}".rstrip("0").rstrip("."))
-                    fs_txt = "" if meter_fs_max is None else str(int(round(float(meter_fs_max))))
-                    if meter_qc_max is None and meter_fs_max is None:
-                        depth_txt = ""
-                    if incl_enabled:
-                        incl_txt = ""
-
-                # K4: если канал инклинометра отсутствует/пустой — показываем 0
-                if incl_enabled:
-                    try:
-                        if has_row and (incl_txt is None or str(incl_txt).strip() == ""):
-                            incl_txt = "0"
-                    except Exception:
-                        pass
-
-
-                is_blank_row = (qc_txt.strip()=="" and fs_txt.strip()=="" and (incl_txt.strip()=="" if incl_enabled else True))
-
-                if not has_row and not is_meter_row:
-                    depth_txt = ""
-
-                # Если строка данных пустая (оба значения пустые) — скрываем глубину напротив,
-                # но во время редактирования показываем глубину (чтобы было понятно, куда вводим).
-                _is_editing_this = False
-                try:
-                    ed = getattr(self, '_editing', None)
-                    if ed and len(ed) >= 3:
-                        ed_ti, ed_row, _ed_field = ed[0], ed[1], ed[2]
-                        if ed_ti == ti and data_i is not None and ed_row == data_i:
-                            _is_editing_this = True
-                except Exception:
-                    _is_editing_this = False
-                if has_row and is_blank_row and not _is_editing_this and not is_meter_row:
-                    depth_txt = ""
-
-
-                meter_has_data = bool((meter_qc_max is not None) or (meter_fs_max is not None)) if is_meter_row else False
-
-                if is_meter_row:
-                    # В свернутом режиме: существующий интервал окрашен единообразно,
-                    # отсутствующий интервал (пустая зона) — белый.
-                    depth_fill = "#f3f6fb" if meter_has_data else "white"
-                elif has_row and int(data_i) == 0:
-                    depth_fill = "white"   # editable cell (только абсолютная первая data-row)
-                else:
-                    depth_fill = (GUI_DEPTH_BG if has_row else "white")
-
-                if not depth_txt:
-                    depth_fill = "white"
-
-                def fill_for(kind: str):
-                    # Обычная логика по существующим/пустым строкам
-                    if is_meter_row:
-                        # Для существующего meter-интервала все ячейки строки одного цвета.
-                        return depth_fill
-                    if not has_row:
-                        return "white"
-                    if is_blank_row:
-                        return "white"
-
-                    # Нули (пропуски) подсвечиваем оранжевым во всех опытах, включая некорректные.
-                    try:
-                        if has_row and kind in ("qc", "fs") and data_i is not None:
-                            raw_val = (t.qc[data_i] if kind == "qc" else t.fs[data_i])
-                            if (_parse_cell_int(raw_val) or 0) == 0 and (data_i, kind) not in getattr(fl, "user_cells", set()):
-                                return (GUI_ORANGE_P if getattr(self, '_algo_preview_mode', False) else GUI_ORANGE)
-                    except Exception:
-                        pass
-
-                    mk = (self._marks_index or {}).get(self._mark_key(int(getattr(t, 'tid', 0) or 0), self._safe_depth_m(t, int(data_i)), str(kind))) if data_i is not None else None
-                    if isinstance(mk, dict):
-                        clr = str(mk.get("color") or "").strip().lower()
-                        if clr == "orange":
-                            return GUI_ORANGE
-                        if clr == "purple":
-                            return GUI_PURPLE
-                        if clr == "green":
-                            return GUI_GREEN
-                        if clr == "blue":
-                            return (GUI_BLUE_P if getattr(self, '_algo_preview_mode', False) else GUI_BLUE)
-                    if (data_i, kind) in getattr(fl, 'user_cells', set()):
-                        return GUI_PURPLE
-                    if (data_i, kind) in getattr(fl, 'algo_cells', set()):
-                        return GUI_GREEN
-                    if (data_i, kind) in fl.force_cells:
-                        return (GUI_BLUE_P if getattr(self, '_algo_preview_mode', False) else GUI_BLUE)
-                    if (data_i, kind) in fl.interp_cells:
-                        return (GUI_ORANGE_P if getattr(self, '_algo_preview_mode', False) else GUI_ORANGE)
-
-                    return "white" 
-
-                cells = [
-                    ("depth", depth_txt, depth_fill),
-                    ("qc", qc_txt, fill_for("qc")),
-                    ("fs", fs_txt, fill_for("fs")),
-                ]
-                if incl_enabled:
-                    cells.append(("incl", incl_txt, fill_for("incl")))
-
-                for field, txt, fill in cells:
-                    if bool(getattr(self, "compact_1m", False)) and is_meter_row and field in ("qc", "fs"):
-                        txt = ""
-                    # preview highlight for context-menu deletion
-                    try:
-                        if getattr(self, "_rc_preview", None) == (ti, r):
-                            fill = GUI_RED
-                    except Exception:
-                        pass
-                    bx0, by0, bx1, by1 = self._cell_bbox(col, r, field)
-                    if field == "depth":
-                        color = "#555"
-                    else:
-                        color = "#666" if is_meter_row and field in ("qc", "fs") else "#000"
-                    if not ex_on:
-                        color = "#8a8a8a" if field != "depth" else "#9a9a9a"
-                    if card is not None:
-                        card.render_body_cell(getattr(card, "body_canvas", None) or self.canvas, row_y0=float(by0), row_y1=float(by1), field=field, text=txt, fill=fill, text_color=color)  # legacy fallback only
-                    else:
-                        self.canvas.create_rectangle(bx0, by0, bx1, by1, fill=fill, outline=GUI_GRID)
-                        self.canvas.create_text(bx1 - 4, (by0 + by1) / 2, text=txt, anchor="e", fill=color, font=("Segoe UI", 9))
-
-            if bool(getattr(t, "locked", False)):
-                body_h = float(self._total_body_height())
-                if body_h > 0:
-                    if card is not None and getattr(card, "body_canvas", None) is not None:
-                        lx0, ly0 = card.body_world_to_local(x0, 0.0)
-                        lx1, ly1 = card.body_world_to_local(x1, body_h)
-                        card.body_canvas.create_rectangle(lx0, ly0, lx1, ly1, fill="#d0d0d0", outline="", stipple="gray50")
-                    else:
-                        self.canvas.create_rectangle(x0, 0, x1, body_h, fill="#d0d0d0", outline="", stipple="gray50")
-                if card is not None and getattr(card, "header_canvas", None) is not None:
-                    hx0, hy0 = card.header_world_to_local(x0, y0)
-                    hx1, hy1 = card.header_world_to_local(x1, y1)
-                    card.header_canvas.create_rectangle(hx0, hy0, hx1, hy1, fill="#d0d0d0", outline="", stipple="gray50")
-                else:
-                    self.hcanvas.create_rectangle(x0, y0, x1, y1, fill="#d0d0d0", outline="", stipple="gray50")
-
-            if card is not None:
-                card.redraw_if_needed("body")
-                self._log_card_canvas_clip_debug(card, phase="after_body_redraw")
+            self._refresh_single_card(int(ti), diagnostics=diagnostics, show_graphs=show_graphs)
 
         self._update_scrollregion()
         if self._is_graph_panel_visible():
@@ -8849,8 +8832,7 @@ class GeoCanvasEditor(tk.Tk):
                 # 1) Кликнули и ушли без изменения видимого текста: no-op.
                 if old_text.strip() == val_text.strip():
                     self._tail_debug_log("TAIL_EDIT", f"end_edit NOOP_TEXT ti={int(ti)} field={field} row={int(row)} old={repr(old_text)} new={repr(val_text)}", ti=int(ti))
-                    self._redraw()
-                    self.schedule_graph_redraw()
+                    self._refresh_after_cell_edit(int(ti))
                     return
 
                 old_norm = self._sanitize_cell_int(old_text)
@@ -8859,8 +8841,7 @@ class GeoCanvasEditor(tk.Tk):
                 # 2) Нормализованные значения совпали: тоже no-op.
                 if old_norm.strip() == newv.strip():
                     self._tail_debug_log("TAIL_EDIT", f"end_edit NOOP_NORM ti={int(ti)} field={field} row={int(row)} old_norm={repr(old_norm)} new_norm={repr(newv)}", ti=int(ti))
-                    self._redraw()
-                    self.schedule_graph_redraw()
+                    self._refresh_after_cell_edit(int(ti))
                     return
 
                 # Важная семантика: implicit focusout/blur с пустым raw значения НЕ равен
@@ -8872,8 +8853,7 @@ class GeoCanvasEditor(tk.Tk):
                         f"end_edit IMPLICIT_EMPTY_NOOP ti={int(ti)} field={field} row={int(row)} reason={end_reason} old={repr(old_text)} raw={repr(val_text)}",
                         ti=int(ti),
                     )
-                    self._redraw()
-                    self.schedule_graph_redraw()
+                    self._refresh_after_cell_edit(int(ti))
                     return
 
                 # Undo: фиксируем снимок ДО изменения данных/раскраски
@@ -8943,8 +8923,7 @@ class GeoCanvasEditor(tk.Tk):
                     pass
                 fl.invalid = False
                 self.flags[t.tid] = fl
-            self._redraw()
-            self.schedule_graph_redraw()
+            self._refresh_after_cell_edit(int(ti))
 
     def _last_filled_row(self, t: TestData) -> int:
         """Последняя строка с данными (qc или fs не пустые)."""
