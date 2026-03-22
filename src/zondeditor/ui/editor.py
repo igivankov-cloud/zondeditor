@@ -96,7 +96,7 @@ from src.zondeditor.domain.layers import (
 
 from src.zondeditor.ui.consts import *
 from src.zondeditor.ui.helpers import _apply_win11_style, _setup_shared_logger, _validate_nonneg_float_key, _check_license_or_exit, _parse_depth_float, _try_parse_dt, _pick_icon_font, _validate_tid_key, _validate_depth_0_4_key, _format_date_ru, _format_time_ru, _canvas_view_bbox, _validate_hh_key, _validate_mm_key, _parse_cell_int, _max_zero_run, _noise_around, _interp_with_noise, _resource_path, _open_logs_folder
-from src.zondeditor.domain.hatching import HATCH_USAGE_EDITOR_EXPANDED, load_registered_hatch
+from src.zondeditor.domain.hatching import HATCH_USAGE_EDITOR_EXPANDED, HATCH_USAGE_EDITOR_INTERACTIVE, load_registered_hatch
 from src.zondeditor.ui.render.hatch_renderer import render_hatch_pattern
 from src.zondeditor.ui.widgets import ToolTip, CalendarDialog
 from src.zondeditor.ui.ribbon import RibbonView
@@ -4534,6 +4534,12 @@ class GeoCanvasEditor(tk.Tk):
             return int(ti)
 
     def _rebuild_sounding_cards(self):
+        if self.__dict__.get("_editing", None):
+            self._dev_interaction_guard("rebuild_cards_during_edit", detail=f"editing={self._editing[:3]}")
+        if self.__dict__.get("_layer_drag", None):
+            self._dev_interaction_guard("rebuild_cards_during_drag", detail=f"drag={dict(self._layer_drag)}")
+        if bool(self.__dict__.get("_scroll_in_progress", False)):
+            self._dev_interaction_guard("rebuild_cards_during_scroll")
         cards: dict[int, SoundingCard] = {}
         previous = dict(self.__dict__.get("_sounding_cards", {}) or {})
         preserved_y = {int(ti): tuple(card.body_yview()) for ti, card in previous.items() if hasattr(card, "body_yview")}
@@ -4596,6 +4602,7 @@ class GeoCanvasEditor(tk.Tk):
             self._active_test_idx = None
         self._sounding_cards = cards
         self._shared_body_yview_fraction = shared_start
+        self._cards_rebuild_seq = int(self.__dict__.get("_cards_rebuild_seq", 0) or 0) + 1
         return cards
 
     def _bind_card_targets(self, card: SoundingCard):
@@ -4699,6 +4706,26 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             return float(self._total_body_height())
 
+    def _sync_card_viewports(self):
+        cards = list((self.__dict__.get("_sounding_cards", {}) or {}).values())
+        if not cards:
+            return
+        view_h = float(self._card_body_view_height())
+        body_h = float(self._total_body_height())
+        top_y = float(self._get_body_view_top_canvas_y())
+        for card in cards:
+            try:
+                card.set_body_scroll_context(view_height=view_h, content_height=body_h)
+            except Exception:
+                pass
+        if body_h <= max(1.0, view_h):
+            shared_frac = 0.0
+        else:
+            max_top = max(0.0, body_h - max(1.0, view_h))
+            target_top = min(max(top_y, 0.0), max_top)
+            shared_frac = 0.0 if body_h <= 1.0 else (target_top / body_h)
+        self._apply_shared_body_yview_fraction(shared_frac)
+
     def _card_yview_snapshot(self) -> dict[int, tuple[float, float]]:
         return {int(ti): tuple(card.body_yview()) for ti, card in (self.__dict__.get("_sounding_cards", {}) or {}).items() if hasattr(card, "body_yview")}
 
@@ -4733,6 +4760,11 @@ class GeoCanvasEditor(tk.Tk):
         anchor = self._card_for_widget(getattr(self, "_evt_widget", None)) or self._active_body_card() or cards[0]
         if anchor is None or not hasattr(anchor, "body_yview_scroll"):
             return None
+        if hasattr(anchor, "body_yview"):
+            try:
+                anchor.body_yview()
+            except Exception:
+                pass
         anchor.body_yview_scroll(delta, what)
         frac = float(anchor.body_yview()[0]) if hasattr(anchor, "body_yview") else self._shared_body_yview_fraction()
         self._shared_body_yview_fraction = frac
@@ -4749,6 +4781,19 @@ class GeoCanvasEditor(tk.Tk):
                 return card
         return None
 
+    def _dev_interaction_guard(self, tag: str, *, detail: str = "", assert_only: bool = False):
+        enabled = bool(self.__dict__.get("_debug_redraw_guards", False))
+        strict = bool(self.__dict__.get("_debug_redraw_guards_assert", False))
+        if not enabled and not strict:
+            return
+        msg = f"[REDRAW_GUARD] {tag}"
+        if detail:
+            msg = f"{msg} {detail}"
+        if enabled:
+            print(msg, file=sys.stderr)
+        if strict or assert_only:
+            raise AssertionError(msg)
+
     def _is_card_target_widget(self, widget) -> bool:
         if widget is None:
             return False
@@ -4758,12 +4803,12 @@ class GeoCanvasEditor(tk.Tk):
         return False
 
     def _active_body_card(self) -> SoundingCard | None:
-        active = getattr(self, "_active_test_idx", None)
+        active = self.__dict__.get("_active_test_idx", None)
         if active is not None:
             card = self._card_for_test(int(active))
             if card is not None:
                 return card
-        cols = getattr(self, "display_cols", []) or []
+        cols = self.__dict__.get("display_cols", []) or []
         return self._card_for_test(int(cols[0])) if cols else None
 
     def _body_view_origin(self, ti: int | None = None) -> tuple[float, float]:
@@ -4951,6 +4996,7 @@ class GeoCanvasEditor(tk.Tk):
             view_h = int(self.canvas.winfo_height() or 1)
         except Exception:
             view_h = 1
+        self._sync_card_viewports()
         need_v = body_h > max(1, view_h)
         if not need_v:
             try:
@@ -5043,7 +5089,11 @@ class GeoCanvasEditor(tk.Tk):
         return sorted(range(len(self.tests)), key=_key)
 
     def _refresh_display_order(self):
-        self.display_cols = self._sorted_display_indices()
+        new_order = self._sorted_display_indices()
+        old_order = list(getattr(self, "display_cols", []) or [])
+        self.display_cols = new_order
+        if old_order == new_order and len((getattr(self, "_sounding_cards", {}) or {})) == len(new_order):
+            return
         try:
             self._rebuild_sounding_cards()
         except Exception:
@@ -5051,17 +5101,35 @@ class GeoCanvasEditor(tk.Tk):
 
 
     def schedule_graph_redraw(self):
-        prev = getattr(self, "_graph_redraw_after_id", None)
+        prev = self.__dict__.get("_graph_redraw_after_id", None)
         if prev is not None:
             try:
                 self.after_cancel(prev)
             except Exception:
                 pass
+        if self.__dict__.get("_editing", None):
+            self._dev_interaction_guard("schedule_graph_redraw_during_edit", detail=f"editing={self._editing[:3]}")
+            self._graph_redraw_after_id = None
+            return
+        if self.__dict__.get("_layer_drag", None):
+            self._dev_interaction_guard("schedule_graph_redraw_during_drag", detail=f"drag={dict(self._layer_drag)}")
+            self._graph_redraw_after_id = None
+            return
         if not self._is_graph_panel_visible():
             self._clear_graph_layers()
             self._graph_redraw_after_id = None
             return
         self._graph_redraw_after_id = self.after(60, self._redraw_graphs_now)
+
+    def _cancel_pending_graph_redraw(self):
+        prev = self.__dict__.get("_graph_redraw_after_id", None)
+        if prev is None:
+            return
+        try:
+            self.after_cancel(prev)
+        except Exception:
+            pass
+        self._graph_redraw_after_id = None
 
     def _recompute_graph_scales(self):
         """Compute shared (file-level) X scales for graph columns."""
@@ -5190,6 +5258,46 @@ class GeoCanvasEditor(tk.Tk):
         self._clear_card_graph_layers(ti)
         self._drop_layer_hitboxes_for_test(ti)
         self._render_card_graph_layers(ti)
+
+    def _refresh_card_graph_curves(self, ti: int):
+        ti = int(ti)
+        card = self._card_for_test(ti)
+        if card is not None and hasattr(card, "clear_body_render_layers"):
+            card.clear_body_render_layers(
+                "graph_axes",
+                f"graph_axes_{ti}",
+                "graph_qc",
+                f"graph_qc_{ti}",
+                "graph_fs",
+                f"graph_fs_{ti}",
+                "graph_nodata",
+                f"graph_nodata_{ti}",
+            )
+        self._render_card_graph_layers(ti, include_geology=False)
+
+    def _graph_scale_snapshot(self) -> tuple[float, float, str, str, float | None, float | None]:
+        return (
+            float(self.__dict__.get("graph_qc_max_mpa", 0.0) or 0.0),
+            float(self.__dict__.get("graph_fs_max_kpa", 0.0) or 0.0),
+            str(self.__dict__.get("graph_qc_max_source", "unknown") or "unknown"),
+            str(self.__dict__.get("graph_fs_max_source", "unknown") or "unknown"),
+            None if self.__dict__.get("graph_qc_max_display", None) is None else float(self.__dict__.get("graph_qc_max_display") or 0.0),
+            None if self.__dict__.get("graph_fs_max_display", None) is None else float(self.__dict__.get("graph_fs_max_display") or 0.0),
+        )
+
+    def _refresh_after_cell_edit(self, ti: int):
+        ti = int(ti)
+        if not self._is_graph_panel_visible():
+            self._redraw()
+            return
+        scales_before = self._graph_scale_snapshot()
+        self._recompute_graph_scales()
+        scales_changed = self._graph_scale_snapshot() != scales_before
+        if scales_changed:
+            self._redraw()
+            return
+        self._refresh_single_card(ti, preserve_geology=True)
+        self._refresh_card_graph_curves(ti)
 
     def _test_last_data_index(self, t) -> int | None:
         qarr = getattr(t, "qc", []) or []
@@ -5723,27 +5831,107 @@ class GeoCanvasEditor(tk.Tk):
             **payload,
         )
 
-    def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, soil_type: str, tags, logical_rect=None, canvas=None):
-        # Единая система: внешние JSON-штриховки через domain.hatching registry.
+    def _interactive_hatch_cache(self) -> dict[tuple[str, int, int], object]:
+        cache = self.__dict__.get("_interactive_hatch_image_cache", None)
+        if cache is None:
+            cache = {}
+            self.__dict__["_interactive_hatch_image_cache"] = cache
+        return cache
+
+    def _interactive_hatch_image(self, soil_type: str, width: int, height: int, logical_rect=None):
+        soil = str(soil_type or "").strip().lower().replace("ё", "е")
+        w = max(1, int(width))
+        h = max(1, int(height))
+        phase = tuple(int(round(float(v))) for v in (logical_rect or (0.0, 0.0, float(w), float(h))))
+        key = (soil, w, h, phase)
+        cache = self._interactive_hatch_cache()
+        if key in cache:
+            return cache[key]
         pattern = load_registered_hatch(str(soil_type or ""))
         if pattern is None:
-            # Временный fallback: без штриховки, если внешний JSON не зарегистрирован.
-            return
+            return None
+        image = tk.PhotoImage(width=w, height=h)
+
+        class _RasterCanvas:
+            def __init__(self, photo, width_px: int, height_px: int):
+                self.photo = photo
+                self.width_px = width_px
+                self.height_px = height_px
+
+            def _put(self, color: str, x: int, y: int):
+                if 0 <= x < self.width_px and 0 <= y < self.height_px:
+                    self.photo.put(color, to=(x, y, x + 1, y + 1))
+
+            def create_line(self, x0, y0, x1, y1, *, fill="#000000", width=1, **_kwargs):
+                dx = float(x1) - float(x0)
+                dy = float(y1) - float(y0)
+                steps = max(1, int(max(abs(dx), abs(dy)) * 2))
+                radius = max(0, int(round(float(width) * 0.5)))
+                for step in range(steps + 1):
+                    t = float(step) / float(steps)
+                    px = int(round(float(x0) + dx * t))
+                    py = int(round(float(y0) + dy * t))
+                    for ox in range(-radius, radius + 1):
+                        for oy in range(-radius, radius + 1):
+                            self._put(fill, px + ox, py + oy)
+
+            def create_oval(self, x0, y0, x1, y1, *, fill="#000000", outline=None, **_kwargs):
+                cx = (float(x0) + float(x1)) * 0.5
+                cy = (float(y0) + float(y1)) * 0.5
+                rx = max(0.5, abs(float(x1) - float(x0)) * 0.5)
+                ry = max(0.5, abs(float(y1) - float(y0)) * 0.5)
+                left = int(math.floor(cx - rx))
+                right = int(math.ceil(cx + rx))
+                top = int(math.floor(cy - ry))
+                bottom = int(math.ceil(cy + ry))
+                color = fill or outline or "#000000"
+                for px in range(left, right + 1):
+                    for py in range(top, bottom + 1):
+                        nx = (float(px) - cx) / rx
+                        ny = (float(py) - cy) / ry
+                        if (nx * nx) + (ny * ny) <= 1.0:
+                            self._put(color, px, py)
+
+        render_hatch_pattern(
+            _RasterCanvas(image, w, h),
+            (0.0, 0.0, float(w), float(h)),
+            pattern,
+            tags=(),
+            scale_info={"usage": HATCH_USAGE_EDITOR_EXPANDED, "layer_height_px": float(h), "logical_rect": logical_rect or (0.0, 0.0, float(w), float(h))},
+        )
+
+        cache[key] = image
+        return image
+
+    def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, soil_type: str, tags, logical_rect=None, canvas=None):
+        target = canvas or self.canvas
+        width = max(1, int(round(float(x1) - float(x0))))
+        height = max(1, int(round(float(y1) - float(y0))))
         rect = (float(x0), float(y0), float(x1), float(y1))
-        logical_rect_local = None
-        if logical_rect is not None:
-            logical_rect_local = tuple(float(v) for v in logical_rect)
-            target_card = self._card_for_widget(canvas) if canvas is not None else None
-            if target_card is not None and canvas is getattr(target_card, "body_canvas", None):
+        logical_rect_local = logical_rect
+        if logical_rect_local is not None:
+            logical_rect_local = tuple(float(v) for v in logical_rect_local)
+            target_card = self._card_for_widget(target) if target is not None else None
+            if target_card is not None and target is getattr(target_card, "body_canvas", None):
                 lx0, ly0 = target_card.body_world_to_local(float(logical_rect_local[0]), float(logical_rect_local[1]))
                 lx1, ly1 = target_card.body_world_to_local(float(logical_rect_local[2]), float(logical_rect_local[3]))
                 logical_rect_local = (float(lx0), float(ly0), float(lx1), float(ly1))
+        try:
+            image = self._interactive_hatch_image(str(soil_type or ""), width, height, logical_rect=logical_rect_local or rect)
+            if hasattr(target, "create_image"):
+                target.create_image(float(x0), float(y0), image=image, anchor="nw", tags=tags)
+                return
+        except Exception:
+            pass
+        pattern = load_registered_hatch(str(soil_type or ""))
+        if pattern is None:
+            return
         render_hatch_pattern(
-            canvas or self.canvas,
+            target,
             rect,
             pattern,
             tags=tags,
-            scale_info={"usage": HATCH_USAGE_EDITOR_EXPANDED, "layer_height_px": float(y1 - y0), "logical_rect": logical_rect_local if logical_rect_local is not None else rect},
+            scale_info={"usage": HATCH_USAGE_EDITOR_INTERACTIVE, "layer_height_px": float(y1 - y0), "logical_rect": logical_rect_local or rect},
         )
 
     def _log_active_card_body_debug(self, card: SoundingCard | None, *, table_span=None, graph_span=None, interval_spans=None, handle_positions=None):
@@ -5759,7 +5947,7 @@ class GeoCanvasEditor(tk.Tk):
             file=sys.stderr,
         )
 
-    def _render_card_graph_layers(self, ti: int):
+    def _render_card_graph_layers(self, ti: int, *, include_geology: bool = True):
         card = self._card_for_test(int(ti))
         if card is None:
             return
@@ -5788,7 +5976,7 @@ class GeoCanvasEditor(tk.Tk):
                 pass
         t = self.tests[ti]
         show_graphs = bool(getattr(self, "show_graphs", False))
-        show_geology = bool(getattr(self, "show_geology_column", True))
+        show_geology = bool(getattr(self, "show_geology_column", True)) and bool(include_geology)
         interval_specs = []
         overlay_specs = []
         layer_spans = []
@@ -6032,12 +6220,22 @@ class GeoCanvasEditor(tk.Tk):
 
     def _redraw_graphs_now(self):
         self._graph_redraw_after_id = None
+        if self.__dict__.get("_editing", None):
+            self._dev_interaction_guard("redraw_graphs_now_during_edit", detail=f"editing={self._editing[:3]}")
+            return
+        if self.__dict__.get("_layer_drag", None):
+            self._dev_interaction_guard("redraw_graphs_now_during_drag", detail=f"drag={dict(self._layer_drag)}")
+            return
+        if bool(self.__dict__.get("_scroll_in_progress", False)):
+            self._dev_interaction_guard("redraw_graphs_now_during_scroll")
+            return
         self._clear_graph_layers()
         if not self._is_graph_panel_visible():
             return
         if not getattr(self, "tests", None):
             return
 
+        self._sync_card_viewports()
         self._calc_layer_params_for_all_tests()
         self._recompute_graph_scales()
         self._layer_handle_hitbox = []
@@ -6093,14 +6291,28 @@ class GeoCanvasEditor(tk.Tk):
             self._active_test_idx = int(ti)
             self._sync_layers_panel()
             self.schedule_graph_redraw()
+        captured_cell_target = None
+        if kind == "cell" and ti is not None and row is not None:
+            try:
+                mp_capture = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {}) or {}
+                captured_cell_target = {
+                    "ti": int(ti),
+                    "display_row": int(row),
+                    "field": field,
+                    "data_row": mp_capture.get(int(row), None),
+                }
+            except Exception:
+                captured_cell_target = None
 
         # Любой клик по UI (иконки/пустые/глубина) сначала закрывает активную ячейку
         # (кроме случая, когда мы тут же откроем новое редактирование).
+        switching_cell_edit = False
         try:
             if getattr(self, '_editing', None):
                 # не закрываем, если клик по текущему Entry
                 ed = self._editing[3] if len(self._editing) >= 4 else None
                 if ed is None or event.widget is not ed:
+                    switching_cell_edit = bool(hit and hit[0] == "cell")
                     self._end_edit(commit=True)
         except Exception:
             pass
@@ -6268,8 +6480,10 @@ class GeoCanvasEditor(tk.Tk):
                 return
 
             if field == "depth":
-                data_row0 = mp.get(row, None)
+                data_row0 = captured_cell_target.get("data_row", None) if captured_cell_target else mp.get(row, None)
                 if data_row0 == 0:
+                    self._pending_edit_ensure_visible = not bool(switching_cell_edit)
+                    self._pending_edit_lock_row = bool(switching_cell_edit)
                     self._begin_edit_depth0(ti, display_row=row)
                     return
                 meter_n = self._expanded_meter_for_depth_cell(ti, row)
@@ -6279,7 +6493,7 @@ class GeoCanvasEditor(tk.Tk):
                 return
 
             # qc/fs cells
-            data_row = mp.get(row, None)
+            data_row = captured_cell_target.get("data_row", None) if captured_cell_target else mp.get(row, None)
             if data_row is None:
                 return
 
@@ -6291,6 +6505,8 @@ class GeoCanvasEditor(tk.Tk):
                 if self._is_test_locked(int(ti)):
                     self._set_status("Опыт заблокирован")
                     return
+                self._pending_edit_ensure_visible = not bool(switching_cell_edit)
+                self._pending_edit_lock_row = bool(switching_cell_edit)
                 self._begin_edit(ti, data_row, field, display_row=row)
                 self.schedule_graph_redraw()
             return
@@ -7088,6 +7304,7 @@ class GeoCanvasEditor(tk.Tk):
         drag = getattr(self, "_layer_drag", None)
         if not drag:
             return
+        self._cancel_pending_graph_redraw()
         ti = int(drag.get("ti", -1))
         if self._is_test_locked(ti):
             return
@@ -7115,7 +7332,8 @@ class GeoCanvasEditor(tk.Tk):
                 snapped_depth = float(t.experience_column.intervals[boundary].from_depth) if 0 <= boundary < len(t.experience_column.intervals) else float(depth)
                 tip = f"Граница: {snapped_depth:.2f} м"
             self._set_status(tip)
-            self._redraw_graphs_now()
+            self._calc_layer_params_for_test(int(ti))
+            self._refresh_card_graph_layers(int(ti))
         except Exception:
             pass
 
@@ -7582,8 +7800,236 @@ class GeoCanvasEditor(tk.Tk):
         x0, y0, x1, y1 = card.geometry.header_bounds_world
         return (x0, y0 + float(self.pad_y), x1, y0 + float(self.pad_y + self.hdr_h))
 
+    def _refresh_single_card(self, ti: int, *, diagnostics=None, show_graphs: bool | None = None, preserve_geology: bool = False):
+        ti = int(ti)
+        self._refresh_display_order()
+        if ti not in (getattr(self, "display_cols", []) or []):
+            return
+        card = self._card_for_test(ti)
+        if card is None:
+            return
+        try:
+            col = (getattr(self, "display_cols", []) or []).index(ti)
+        except ValueError:
+            return
+        if diagnostics is None:
+            diagnostics = self._diagnostics_report()
+        if show_graphs is None:
+            show_graphs = bool(self._is_graph_panel_visible())
+
+        max_rows = len(getattr(self, "_grid", []) or [])
+        grid = getattr(self, "_grid_base", []) or []
+        t = self.tests[ti]
+        self._log_card_canvas_clip_debug(card, phase="before_body_redraw")
+        header_canvas = getattr(card, "header_canvas", None)
+        if header_canvas is not None and hasattr(header_canvas, "delete"):
+            try:
+                header_canvas.delete("all")
+            except Exception:
+                if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+                    print(f"[CARDCLIP] phase=clear_failed ti={card.test_index} target=header", file=sys.stderr)
+        body_canvas = getattr(card, "body_canvas", None)
+        if preserve_geology and body_canvas is not None and hasattr(card, "clear_body_render_layers"):
+            try:
+                card.clear_body_render_layers("body_table_cells", f"body_table_cells_{ti}")
+            except Exception:
+                if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+                    print(f"[CARDCLIP] phase=clear_failed ti={card.test_index} target=body_table_cells", file=sys.stderr)
+        elif body_canvas is not None and hasattr(body_canvas, "delete"):
+            try:
+                body_canvas.delete("all")
+            except Exception:
+                if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+                    print(f"[CARDCLIP] phase=clear_failed ti={card.test_index} target=body", file=sys.stderr)
+
+        x0, y0, x1, y1 = self._header_bbox(col)
+        ex_on = bool(getattr(t, "export_on", True))
+        fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
+        td = diagnostics.by_test.get(int(getattr(t, "tid", 0) or 0))
+        has_missing_values = bool(td and td.missing_rows)
+        hdr_fill = self._header_fill_for_test(
+            invalid=bool(td.invalid) if td is not None else bool(getattr(fl, "invalid", False)),
+            has_missing=bool(has_missing_values),
+            export_on=bool(ex_on),
+        )
+        hdr_text = "#111" if ex_on else "#8a8a8a"
+        hdr_icon = "#444" if ex_on else "#8a8a8a"
+        dt_val = getattr(t, "dt", "") or ""
+        if isinstance(dt_val, datetime.datetime):
+            dt_line = dt_val.strftime("%d.%m.%Y %H:%M:%S")
+        elif isinstance(dt_val, datetime.date):
+            dt_line = dt_val.strftime("%d.%m.%Y 00:00:00")
+        else:
+            dt_line = str(dt_val).strip()
+        dt_line = re.sub(r"(\d{2}:\d{2}):\d{2}\b", r"\1", dt_line)
+        card.render_header(
+            getattr(card, "header_canvas", None) or self.hcanvas,
+            title=f"Опыт {t.tid}",
+            datetime_text=dt_line,
+            header_fill=hdr_fill,
+            header_text=hdr_text,
+            header_icon=hdr_icon,
+            export_on=bool(ex_on),
+            lock_on=bool(getattr(t, "locked", False)),
+            hover=getattr(self, "_hover", None),
+            icon_calendar=ICON_CALENDAR,
+            icon_copy=ICON_COPY,
+            icon_delete=ICON_DELETE,
+            icon_font=_pick_icon_font(12),
+            hdr_h=float(self.hdr_h),
+            show_inclinometer=str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True)),
+            show_graph_scale=bool(show_graphs),
+            qc_scale_max=float(self.__dict__.get("graph_qc_max_mpa", 0.0) or 0.0),
+            fs_scale_max=float(self.__dict__.get("graph_fs_max_kpa", 0.0) or 0.0),
+            qc_scale_source=str(self.__dict__.get("graph_qc_max_source", "unknown") or "unknown"),
+            fs_scale_source=str(self.__dict__.get("graph_fs_max_source", "unknown") or "unknown"),
+            qc_scale_display=float(self.__dict__.get("graph_qc_max_display", self.__dict__.get("graph_qc_max_mpa", 0.0)) or 0.0),
+            fs_scale_display=float(self.__dict__.get("graph_fs_max_display", self.__dict__.get("graph_fs_max_kpa", 0.0)) or 0.0),
+            qc_scale_unit="МПа",
+            fs_scale_unit="кПа",
+        )
+
+        mp = self._grid_row_maps.get(ti, {})
+        units = getattr(self, "_grid_units", []) or []
+        for r in range(max_rows):
+            unit = units[r] if r < len(units) else ("row", r)
+            is_meter_row = (unit[0] == "meter")
+            meter_n = int(unit[1]) if is_meter_row else None
+            base_row = int(unit[1]) if unit[0] == "row" else None
+            depth_txt = f"{grid[base_row]:.2f}" if base_row is not None and base_row < len(grid) and grid[base_row] is not None else ""
+            data_i = mp.get(r, None)
+            q_arr = (getattr(t, "qc", []) or [])
+            f_arr = (getattr(t, "fs", []) or [])
+            has_row = (data_i is not None) and (data_i < max(len(q_arr), len(f_arr)))
+            qc_txt = str(q_arr[data_i]) if (data_i is not None and data_i < len(q_arr)) else ""
+            fs_txt = str(f_arr[data_i]) if (data_i is not None and data_i < len(f_arr)) else ""
+            incl_txt = ""
+            incl_enabled = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True))
+            if incl_enabled:
+                incl_list = getattr(t, "incl", None)
+                if has_row and incl_list is not None and data_i < len(incl_list):
+                    incl_txt = str(incl_list[data_i])
+            meter_qc_max = None
+            meter_fs_max = None
+            if is_meter_row:
+                depth_txt = f"{meter_n}–{meter_n + 1} м"
+                for di in range(max(len(q_arr), len(f_arr))):
+                    dv = self._depth_at_index(t, di)
+                    if dv is None or not (meter_n <= dv < (meter_n + 1)):
+                        continue
+                    q_raw = _parse_cell_int(q_arr[di]) if di < len(q_arr) else None
+                    f_raw = _parse_cell_int(f_arr[di]) if di < len(f_arr) else None
+                    if q_raw is None and f_raw is None:
+                        continue
+                    qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
+                    if q_raw is not None:
+                        meter_qc_max = float(qc_mpa) if meter_qc_max is None else max(float(meter_qc_max), float(qc_mpa))
+                    if f_raw is not None:
+                        meter_fs_max = float(fs_kpa) if meter_fs_max is None else max(float(meter_fs_max), float(fs_kpa))
+                qc_txt = "" if meter_qc_max is None else (f"{meter_qc_max:.2f}".rstrip("0").rstrip("."))
+                fs_txt = "" if meter_fs_max is None else str(int(round(float(meter_fs_max))))
+                if meter_qc_max is None and meter_fs_max is None:
+                    depth_txt = ""
+                if incl_enabled:
+                    incl_txt = ""
+            if incl_enabled and has_row and (incl_txt is None or str(incl_txt).strip() == ""):
+                incl_txt = "0"
+            is_blank_row = (qc_txt.strip() == "" and fs_txt.strip() == "" and (incl_txt.strip() == "" if incl_enabled else True))
+            if not has_row and not is_meter_row:
+                depth_txt = ""
+            _is_editing_this = False
+            try:
+                ed = getattr(self, "_editing", None)
+                if ed and len(ed) >= 3:
+                    ed_ti, ed_row = ed[0], ed[1]
+                    if ed_ti == ti and data_i is not None and ed_row == data_i:
+                        _is_editing_this = True
+            except Exception:
+                _is_editing_this = False
+            if has_row and is_blank_row and not _is_editing_this and not is_meter_row:
+                depth_txt = ""
+            meter_has_data = bool((meter_qc_max is not None) or (meter_fs_max is not None)) if is_meter_row else False
+            if is_meter_row:
+                depth_fill = "#f3f6fb" if meter_has_data else "white"
+            elif has_row and int(data_i) == 0:
+                depth_fill = "white"
+            else:
+                depth_fill = (GUI_DEPTH_BG if has_row else "white")
+            if not depth_txt:
+                depth_fill = "white"
+
+            def fill_for(kind: str):
+                if is_meter_row:
+                    return depth_fill
+                if not has_row or is_blank_row:
+                    return "white"
+                try:
+                    if has_row and kind in ("qc", "fs") and data_i is not None:
+                        raw_val = (t.qc[data_i] if kind == "qc" else t.fs[data_i])
+                        if (_parse_cell_int(raw_val) or 0) == 0 and (data_i, kind) not in getattr(fl, "user_cells", set()):
+                            return (GUI_ORANGE_P if getattr(self, "_algo_preview_mode", False) else GUI_ORANGE)
+                except Exception:
+                    pass
+                mk = (self._marks_index or {}).get(self._mark_key(int(getattr(t, "tid", 0) or 0), self._safe_depth_m(t, int(data_i)), str(kind))) if data_i is not None else None
+                if isinstance(mk, dict):
+                    clr = str(mk.get("color") or "").strip().lower()
+                    if clr == "orange":
+                        return GUI_ORANGE
+                    if clr == "purple":
+                        return GUI_PURPLE
+                    if clr == "green":
+                        return GUI_GREEN
+                    if clr == "blue":
+                        return (GUI_BLUE_P if getattr(self, "_algo_preview_mode", False) else GUI_BLUE)
+                if (data_i, kind) in getattr(fl, "user_cells", set()):
+                    return GUI_PURPLE
+                if (data_i, kind) in getattr(fl, "algo_cells", set()):
+                    return GUI_GREEN
+                if (data_i, kind) in fl.force_cells:
+                    return (GUI_BLUE_P if getattr(self, "_algo_preview_mode", False) else GUI_BLUE)
+                if (data_i, kind) in fl.interp_cells:
+                    return (GUI_ORANGE_P if getattr(self, "_algo_preview_mode", False) else GUI_ORANGE)
+                return "white"
+
+            cells = [("depth", depth_txt, depth_fill), ("qc", qc_txt, fill_for("qc")), ("fs", fs_txt, fill_for("fs"))]
+            if incl_enabled:
+                cells.append(("incl", incl_txt, fill_for("incl")))
+            for field, txt, fill in cells:
+                if bool(getattr(self, "compact_1m", False)) and is_meter_row and field in ("qc", "fs"):
+                    txt = ""
+                try:
+                    if getattr(self, "_rc_preview", None) == (ti, r):
+                        fill = GUI_RED
+                except Exception:
+                    pass
+                bx0, by0, bx1, by1 = self._cell_bbox(col, r, field)
+                color = "#555" if field == "depth" else ("#666" if is_meter_row and field in ("qc", "fs") else "#000")
+                if not ex_on:
+                    color = "#8a8a8a" if field != "depth" else "#9a9a9a"
+                card.render_body_cell(getattr(card, "body_canvas", None) or self.canvas, row_y0=float(by0), row_y1=float(by1), field=field, text=txt, fill=fill, text_color=color)
+
+        if bool(getattr(t, "locked", False)):
+            body_h = float(self._total_body_height())
+            if body_h > 0:
+                if getattr(card, "body_canvas", None) is not None:
+                    lx0, ly0 = card.body_world_to_local(x0, 0.0)
+                    lx1, ly1 = card.body_world_to_local(x1, body_h)
+                    card.body_canvas.create_rectangle(lx0, ly0, lx1, ly1, fill="#d0d0d0", outline="", stipple="gray50")
+                else:
+                    self.canvas.create_rectangle(x0, 0, x1, body_h, fill="#d0d0d0", outline="", stipple="gray50")
+            if getattr(card, "header_canvas", None) is not None:
+                hx0, hy0 = card.header_world_to_local(x0, y0)
+                hx1, hy1 = card.header_world_to_local(x1, y1)
+                card.header_canvas.create_rectangle(hx0, hy0, hx1, hy1, fill="#d0d0d0", outline="", stipple="gray50")
+            else:
+                self.hcanvas.create_rectangle(x0, y0, x1, y1, fill="#d0d0d0", outline="", stipple="gray50")
+        card.redraw_if_needed("body")
+        self._log_card_canvas_clip_debug(card, phase="after_body_redraw")
+
 
     def _redraw(self):
+        if self.__dict__.get("_editing", None):
+            self._dev_interaction_guard("global_redraw_during_edit", detail=f"editing={self._editing[:3]}")
         self._sync_view_ribbon_state()
         self._refresh_display_order()
         try:
@@ -7615,262 +8061,7 @@ class GeoCanvasEditor(tk.Tk):
 
         diagnostics = self._diagnostics_report()
         for col, ti in enumerate(self.display_cols):
-            t = self.tests[ti]
-            card = self._card_for_test(int(ti))
-            if card is not None:
-                self._log_card_canvas_clip_debug(card, phase="before_body_redraw")
-                for widget, label in ((getattr(card, "header_canvas", None), "header"), (getattr(card, "body_canvas", None), "body")):
-                    if widget is None or not hasattr(widget, "delete"):
-                        continue
-                    try:
-                        widget.delete("all")
-                    except Exception:
-                        if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
-                            print(f"[CARDCLIP] phase=clear_failed ti={card.test_index} target={label}", file=sys.stderr)
-            x0, y0, x1, y1 = self._header_bbox(col)
-
-            # checked = will be exported
-            ex_on = bool(getattr(t, "export_on", True))
-            fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
-            td = diagnostics.by_test.get(int(getattr(t, "tid", 0) or 0))
-            has_missing_values = bool(td and td.missing_rows)
-            hdr_fill = self._header_fill_for_test(
-                invalid=bool(td.invalid) if td is not None else bool(getattr(fl, "invalid", False)),
-                has_missing=bool(has_missing_values),
-                export_on=bool(ex_on),
-            )
-            hdr_text = "#111" if ex_on else "#8a8a8a"
-            hdr_icon = "#444" if ex_on else "#8a8a8a"
-
-            dt_val = getattr(t, "dt", "") or ""
-            if isinstance(dt_val, datetime.datetime):
-                dt_line = dt_val.strftime("%d.%m.%Y %H:%M:%S")
-            elif isinstance(dt_val, datetime.date):
-                dt_line = dt_val.strftime("%d.%m.%Y 00:00:00")
-            else:
-                dt_line = str(dt_val).strip()
-            dt_line = re.sub(r"(\d{2}:\d{2}):\d{2}\b", r"\1", dt_line)
-            if card is not None:
-                card.render_header(
-                    getattr(card, "header_canvas", None) or self.hcanvas,  # legacy fallback only if a card target is unavailable
-                    title=f"Опыт {t.tid}",
-                    datetime_text=dt_line,
-                    header_fill=hdr_fill,
-                    header_text=hdr_text,
-                    header_icon=hdr_icon,
-                    export_on=bool(ex_on),
-                    lock_on=bool(getattr(t, "locked", False)),
-                    hover=getattr(self, "_hover", None),
-                    icon_calendar=ICON_CALENDAR,
-                    icon_copy=ICON_COPY,
-                    icon_delete=ICON_DELETE,
-                    icon_font=_pick_icon_font(12),
-                    hdr_h=float(self.hdr_h),
-                    show_inclinometer=str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True)),
-                    show_graph_scale=bool(show_graphs),
-                    qc_scale_max=float(self.__dict__.get("graph_qc_max_mpa", 0.0) or 0.0),
-                    fs_scale_max=float(self.__dict__.get("graph_fs_max_kpa", 0.0) or 0.0),
-                    qc_scale_source=str(self.__dict__.get("graph_qc_max_source", "unknown") or "unknown"),
-                    fs_scale_source=str(self.__dict__.get("graph_fs_max_source", "unknown") or "unknown"),
-                    qc_scale_display=float(self.__dict__.get("graph_qc_max_display", self.__dict__.get("graph_qc_max_mpa", 0.0)) or 0.0),
-                    fs_scale_display=float(self.__dict__.get("graph_fs_max_display", self.__dict__.get("graph_fs_max_kpa", 0.0)) or 0.0),
-                    qc_scale_unit="МПа",
-                    fs_scale_unit="кПа",
-                )
-
-            # --- ТАБЛИЦА (canvas) ---
-            mp = self._grid_row_maps.get(ti, {})
-            start_r = self._grid_start_rows.get(ti, 0)
-            units = getattr(self, "_grid_units", []) or []
-
-            for r in range(max_rows):
-                unit = units[r] if r < len(units) else ("row", r)
-                is_meter_row = (unit[0] == "meter")
-                meter_n = int(unit[1]) if is_meter_row else None
-                base_row = int(unit[1]) if unit[0] == "row" else None
-                if base_row is not None and base_row < len(grid) and grid[base_row] is not None:
-                    depth_txt = f"{grid[base_row]:.2f}"
-                else:
-                    depth_txt = ""
-
-                data_i = mp.get(r, None)
-                q_arr = (getattr(t, "qc", []) or [])
-                f_arr = (getattr(t, "fs", []) or [])
-                has_row = (data_i is not None) and (data_i < max(len(q_arr), len(f_arr)))
-                qc_txt = str(q_arr[data_i]) if (data_i is not None and data_i < len(q_arr)) else ""
-                fs_txt = str(f_arr[data_i]) if (data_i is not None and data_i < len(f_arr)) else ""
-                if self._is_tail_display_row(int(r)):
-                    self._tail_debug_log(
-                        "TAIL_RENDER",
-                        f"ti={int(ti)} disp_r={int(r)} data_i={data_i} qc_exists={bool(data_i is not None and data_i < len(q_arr))} fs_exists={bool(data_i is not None and data_i < len(f_arr))} qc_txt={repr(qc_txt)} fs_txt={repr(fs_txt)} has_row={bool(has_row)}",
-                        ti=int(ti),
-                    )
-                incl_txt = ""
-                incl_enabled = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True))
-                if incl_enabled:
-                    incl_list = getattr(t, "incl", None)
-                    if has_row and incl_list is not None and data_i < len(incl_list):
-                        incl_txt = str(incl_list[data_i])
-
-                meter_qc_max = None
-                meter_fs_max = None
-                if is_meter_row:
-                    depth_txt = f"{meter_n}–{meter_n + 1} м"
-                    qarr = getattr(t, "qc", []) or []
-                    farr = getattr(t, "fs", []) or []
-                    for di in range(max(len(qarr), len(farr))):
-                        dv = self._depth_at_index(t, di)
-                        if dv is None or not (meter_n <= dv < (meter_n + 1)):
-                            continue
-                        q_raw = _parse_cell_int(qarr[di]) if di < len(qarr) else None
-                        f_raw = _parse_cell_int(farr[di]) if di < len(farr) else None
-                        if q_raw is None and f_raw is None:
-                            continue
-                        qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
-                        if q_raw is not None:
-                            meter_qc_max = float(qc_mpa) if meter_qc_max is None else max(float(meter_qc_max), float(qc_mpa))
-                        if f_raw is not None:
-                            meter_fs_max = float(fs_kpa) if meter_fs_max is None else max(float(meter_fs_max), float(fs_kpa))
-                    qc_txt = "" if meter_qc_max is None else (f"{meter_qc_max:.2f}".rstrip("0").rstrip("."))
-                    fs_txt = "" if meter_fs_max is None else str(int(round(float(meter_fs_max))))
-                    if meter_qc_max is None and meter_fs_max is None:
-                        depth_txt = ""
-                    if incl_enabled:
-                        incl_txt = ""
-
-                # K4: если канал инклинометра отсутствует/пустой — показываем 0
-                if incl_enabled:
-                    try:
-                        if has_row and (incl_txt is None or str(incl_txt).strip() == ""):
-                            incl_txt = "0"
-                    except Exception:
-                        pass
-
-
-                is_blank_row = (qc_txt.strip()=="" and fs_txt.strip()=="" and (incl_txt.strip()=="" if incl_enabled else True))
-
-                if not has_row and not is_meter_row:
-                    depth_txt = ""
-
-                # Если строка данных пустая (оба значения пустые) — скрываем глубину напротив,
-                # но во время редактирования показываем глубину (чтобы было понятно, куда вводим).
-                _is_editing_this = False
-                try:
-                    ed = getattr(self, '_editing', None)
-                    if ed and len(ed) >= 3:
-                        ed_ti, ed_row, _ed_field = ed[0], ed[1], ed[2]
-                        if ed_ti == ti and data_i is not None and ed_row == data_i:
-                            _is_editing_this = True
-                except Exception:
-                    _is_editing_this = False
-                if has_row and is_blank_row and not _is_editing_this and not is_meter_row:
-                    depth_txt = ""
-
-
-                meter_has_data = bool((meter_qc_max is not None) or (meter_fs_max is not None)) if is_meter_row else False
-
-                if is_meter_row:
-                    # В свернутом режиме: существующий интервал окрашен единообразно,
-                    # отсутствующий интервал (пустая зона) — белый.
-                    depth_fill = "#f3f6fb" if meter_has_data else "white"
-                elif has_row and int(data_i) == 0:
-                    depth_fill = "white"   # editable cell (только абсолютная первая data-row)
-                else:
-                    depth_fill = (GUI_DEPTH_BG if has_row else "white")
-
-                if not depth_txt:
-                    depth_fill = "white"
-
-                def fill_for(kind: str):
-                    # Обычная логика по существующим/пустым строкам
-                    if is_meter_row:
-                        # Для существующего meter-интервала все ячейки строки одного цвета.
-                        return depth_fill
-                    if not has_row:
-                        return "white"
-                    if is_blank_row:
-                        return "white"
-
-                    # Нули (пропуски) подсвечиваем оранжевым во всех опытах, включая некорректные.
-                    try:
-                        if has_row and kind in ("qc", "fs") and data_i is not None:
-                            raw_val = (t.qc[data_i] if kind == "qc" else t.fs[data_i])
-                            if (_parse_cell_int(raw_val) or 0) == 0 and (data_i, kind) not in getattr(fl, "user_cells", set()):
-                                return (GUI_ORANGE_P if getattr(self, '_algo_preview_mode', False) else GUI_ORANGE)
-                    except Exception:
-                        pass
-
-                    mk = (self._marks_index or {}).get(self._mark_key(int(getattr(t, 'tid', 0) or 0), self._safe_depth_m(t, int(data_i)), str(kind))) if data_i is not None else None
-                    if isinstance(mk, dict):
-                        clr = str(mk.get("color") or "").strip().lower()
-                        if clr == "orange":
-                            return GUI_ORANGE
-                        if clr == "purple":
-                            return GUI_PURPLE
-                        if clr == "green":
-                            return GUI_GREEN
-                        if clr == "blue":
-                            return (GUI_BLUE_P if getattr(self, '_algo_preview_mode', False) else GUI_BLUE)
-                    if (data_i, kind) in getattr(fl, 'user_cells', set()):
-                        return GUI_PURPLE
-                    if (data_i, kind) in getattr(fl, 'algo_cells', set()):
-                        return GUI_GREEN
-                    if (data_i, kind) in fl.force_cells:
-                        return (GUI_BLUE_P if getattr(self, '_algo_preview_mode', False) else GUI_BLUE)
-                    if (data_i, kind) in fl.interp_cells:
-                        return (GUI_ORANGE_P if getattr(self, '_algo_preview_mode', False) else GUI_ORANGE)
-
-                    return "white" 
-
-                cells = [
-                    ("depth", depth_txt, depth_fill),
-                    ("qc", qc_txt, fill_for("qc")),
-                    ("fs", fs_txt, fill_for("fs")),
-                ]
-                if incl_enabled:
-                    cells.append(("incl", incl_txt, fill_for("incl")))
-
-                for field, txt, fill in cells:
-                    if bool(getattr(self, "compact_1m", False)) and is_meter_row and field in ("qc", "fs"):
-                        txt = ""
-                    # preview highlight for context-menu deletion
-                    try:
-                        if getattr(self, "_rc_preview", None) == (ti, r):
-                            fill = GUI_RED
-                    except Exception:
-                        pass
-                    bx0, by0, bx1, by1 = self._cell_bbox(col, r, field)
-                    if field == "depth":
-                        color = "#555"
-                    else:
-                        color = "#666" if is_meter_row and field in ("qc", "fs") else "#000"
-                    if not ex_on:
-                        color = "#8a8a8a" if field != "depth" else "#9a9a9a"
-                    if card is not None:
-                        card.render_body_cell(getattr(card, "body_canvas", None) or self.canvas, row_y0=float(by0), row_y1=float(by1), field=field, text=txt, fill=fill, text_color=color)  # legacy fallback only
-                    else:
-                        self.canvas.create_rectangle(bx0, by0, bx1, by1, fill=fill, outline=GUI_GRID)
-                        self.canvas.create_text(bx1 - 4, (by0 + by1) / 2, text=txt, anchor="e", fill=color, font=("Segoe UI", 9))
-
-            if bool(getattr(t, "locked", False)):
-                body_h = float(self._total_body_height())
-                if body_h > 0:
-                    if card is not None and getattr(card, "body_canvas", None) is not None:
-                        lx0, ly0 = card.body_world_to_local(x0, 0.0)
-                        lx1, ly1 = card.body_world_to_local(x1, body_h)
-                        card.body_canvas.create_rectangle(lx0, ly0, lx1, ly1, fill="#d0d0d0", outline="", stipple="gray50")
-                    else:
-                        self.canvas.create_rectangle(x0, 0, x1, body_h, fill="#d0d0d0", outline="", stipple="gray50")
-                if card is not None and getattr(card, "header_canvas", None) is not None:
-                    hx0, hy0 = card.header_world_to_local(x0, y0)
-                    hx1, hy1 = card.header_world_to_local(x1, y1)
-                    card.header_canvas.create_rectangle(hx0, hy0, hx1, hy1, fill="#d0d0d0", outline="", stipple="gray50")
-                else:
-                    self.hcanvas.create_rectangle(x0, y0, x1, y1, fill="#d0d0d0", outline="", stipple="gray50")
-
-            if card is not None:
-                card.redraw_if_needed("body")
-                self._log_card_canvas_clip_debug(card, phase="after_body_redraw")
+            self._refresh_single_card(int(ti), diagnostics=diagnostics, show_graphs=show_graphs)
 
         self._update_scrollregion()
         if self._is_graph_panel_visible():
@@ -8532,6 +8723,7 @@ class GeoCanvasEditor(tk.Tk):
         if self._is_test_locked(int(ti)):
             self._set_status("Опыт заблокирован")
             return
+        self._cancel_pending_graph_redraw()
         self._end_edit(commit=True)
         t = self.tests[ti]
         # Не даём вводить значения "после конца" выбранного канала.
@@ -8553,22 +8745,28 @@ class GeoCanvasEditor(tk.Tk):
         if display_row is None:
             display_row = row
 
-        # В нижнем хвосте после commit предыдущей ячейки индекс data-row может сдвинуться.
-        # Приоритетно берём актуальный data_i из текущей карты display->data.
-        try:
-            mp_now = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {}) or {}
-            mapped_row = mp_now.get(int(display_row), None)
-            if mapped_row is not None and int(mapped_row) != int(row):
-                self._tail_debug_log("TAIL_ENTRY", f"begin_edit REMAP ti={int(ti)} field={field} disp_r={int(display_row)} row_arg={int(row)} row_mapped={int(mapped_row)}", ti=int(ti))
-                row = int(mapped_row)
-        except Exception:
-            pass
+        lock_row = bool(self.__dict__.pop("_pending_edit_lock_row", False))
+        if not lock_row:
+            # В нижнем хвосте после commit предыдущей ячейки индекс data-row может сдвинуться.
+            # Приоритетно берём актуальный data_i из текущей карты display->data.
+            try:
+                mp_now = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {}) or {}
+                mapped_row = mp_now.get(int(display_row), None)
+                if mapped_row is not None and int(mapped_row) != int(row):
+                    self._tail_debug_log("TAIL_ENTRY", f"begin_edit REMAP ti={int(ti)} field={field} disp_r={int(display_row)} row_arg={int(row)} row_mapped={int(mapped_row)}", ti=int(ti))
+                    row = int(mapped_row)
+            except Exception:
+                pass
 
         self._refresh_display_order()
         col = self.display_cols.index(ti)
 
-        # Автопрокрутка (стрелки/Enter): держим ячейку в видимой зоне
-        self._ensure_cell_visible(col, display_row, field)
+        # Автопрокрутка (стрелки/Enter): держим ячейку в видимой зоне.
+        # Для switch-by-click по уже видимой ячейке пропускаем viewport move,
+        # чтобы commit предыдущего editor не мог сдвинуть таблицу прямо перед новым open.
+        ensure_visible = bool(self.__dict__.pop("_pending_edit_ensure_visible", True))
+        if ensure_visible:
+            self._ensure_cell_visible(col, display_row, field)
 
         card = self._card_for_test(int(ti))
         y0, y1 = self._row_y_bounds(display_row)
@@ -8584,6 +8782,7 @@ class GeoCanvasEditor(tk.Tk):
         self._tail_debug_log("TAIL_ENTRY", f"begin_edit SOURCE ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} source_before_create={repr(current_raw)} source_norm={repr(current)} len_field={len(vals)}", ti=int(ti))
         parent_canvas = getattr(card, "body_canvas", None) or self.canvas
         e = tk.Entry(parent_canvas, validate="key", validatecommand=(self.register(self._validate_cell_int_key), "%P"))
+        rebuild_seq_before_open = int(self.__dict__.get("_cards_rebuild_seq", 0) or 0)
         self._tail_debug_log("TAIL_ENTRY", f"begin_edit CREATED ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} entry_text_after_create={repr(e.get())}", ti=int(ti))
         e.insert(0, current)
         self._tail_debug_log("TAIL_ENTRY", f"begin_edit INSERTED ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} entry_text_after_insert={repr(e.get())}", ti=int(ti))
@@ -8601,6 +8800,12 @@ class GeoCanvasEditor(tk.Tk):
             # На некоторых темах/платформах выделение теряется из-за клика,
             # поэтому закрепляем поведение «видно + выделено целиком» после фокуса.
             def _tail_select_after_idle():
+                rebuild_seq_after_open = int(self.__dict__.get("_cards_rebuild_seq", 0) or 0)
+                if rebuild_seq_after_open != rebuild_seq_before_open:
+                    self._dev_interaction_guard(
+                        "rebuild_cards_same_tick_as_begin_edit",
+                        detail=f"ti={int(ti)} field={field} before={rebuild_seq_before_open} after={rebuild_seq_after_open}",
+                    )
                 e.focus_set()
                 e.icursor(tk.END)
                 e.select_range(0, tk.END)
@@ -8641,7 +8846,7 @@ class GeoCanvasEditor(tk.Tk):
         for _k in ("<Up>","<Down>","<Left>","<Right>"):
             e.bind(_k, self._on_arrow_key)
         e.bind("<Escape>", lambda _ev: (setattr(self, "_edit_end_reason", "escape"), self._end_edit(commit=False)))
-        e.bind("<FocusOut>", lambda _ev: (setattr(self, "_edit_end_reason", "focusout"), self._end_edit(commit=True)))
+        e.bind("<FocusOut>", lambda _ev, _e=e: self._end_edit_if_widget(_e, commit=True, reason="focusout"))
 
         self._editing = (ti, row, field, e, display_row)
         self._editing_meta = {"new_tail": bool(new_tail), "row": int(row), "field": str(field), "ti": int(ti)}
@@ -8651,6 +8856,7 @@ class GeoCanvasEditor(tk.Tk):
         if self._is_test_locked(int(ti)):
             self._set_status("Опыт заблокирован")
             return
+        self._cancel_pending_graph_redraw()
         self._end_edit(commit=True)
         t = self.tests[ti]
         if not getattr(t, "depth", None):
@@ -8659,8 +8865,11 @@ class GeoCanvasEditor(tk.Tk):
         self._refresh_display_order()
         col = self.display_cols.index(ti)
 
-        # Автопрокрутка (стрелки/Enter)
-        self._ensure_cell_visible(col, display_row, "depth")
+        # Автопрокрутка (стрелки/Enter). Для switch-by-click по видимой ячейке
+        # не двигаем viewport между commit старого editor и open нового.
+        ensure_visible = bool(self.__dict__.pop("_pending_edit_ensure_visible", True))
+        if ensure_visible:
+            self._ensure_cell_visible(col, display_row, "depth")
 
         card = self._card_for_test(int(ti))
         y0, y1 = self._row_y_bounds(display_row)
@@ -8675,7 +8884,7 @@ class GeoCanvasEditor(tk.Tk):
         e = tk.Entry(parent_canvas, validate="key", validatecommand=(self.register(_validate_depth_0_4_key), "%P"))
         e.insert(0, current)
         e.select_range(0, tk.END)
-        self._log_cell_edit_debug(stage="begin_edit", widget=parent_canvas, card=card, world=(bx0, by0, bx1, by1), local=(vx0, vy0), hit=("cell", ti, display_row, field), editor_rect=(vx0 + 1, vy0 + 1, (bx1 - bx0) - 2, (by1 - by0) - 2))
+        self._log_cell_edit_debug(stage="begin_edit", widget=parent_canvas, card=card, world=(bx0, by0, bx1, by1), local=(vx0, vy0), hit=("cell", ti, display_row, "depth0"), editor_rect=(vx0 + 1, vy0 + 1, (bx1 - bx0) - 2, (by1 - by0) - 2))
         e.place(x=vx0 + 1, y=vy0 + 1, width=(bx1 - bx0) - 2, height=(by1 - by0) - 2)
         e.focus_set()
 
@@ -8685,7 +8894,7 @@ class GeoCanvasEditor(tk.Tk):
 
         e.bind("<Return>", lambda _ev: commit())
         e.bind("<Escape>", lambda _ev: self._end_edit_depth0(ti, e, commit=False))
-        e.bind("<FocusOut>", lambda _ev: self._end_edit_depth0(ti, e, commit=True))
+        e.bind("<FocusOut>", lambda _ev, _e=e: self._end_edit_depth0_if_widget(ti, _e, commit=True))
 
         self._editing = (ti, 0, "depth", e, display_row)
         self._editing_meta = {"new_tail": False, "row": 0, "field": "depth", "ti": int(ti)}
@@ -8775,6 +8984,25 @@ class GeoCanvasEditor(tk.Tk):
         self._redraw_graphs_now()
         self.schedule_graph_redraw()
 
+    def _editing_widget(self):
+        editing = self.__dict__.get("_editing", None)
+        if not editing or len(editing) < 4:
+            return None
+        return editing[3]
+
+    def _end_edit_if_widget(self, widget, commit: bool, *, reason: str = "focusout"):
+        current = self._editing_widget()
+        if current is None or current is not widget:
+            return
+        self._edit_end_reason = str(reason or "focusout")
+        self._end_edit(commit=commit)
+
+    def _end_edit_depth0_if_widget(self, ti: int, widget, commit: bool):
+        current = self._editing_widget()
+        if current is None or current is not widget:
+            return
+        self._end_edit_depth0(int(ti), widget, commit=commit)
+
     def _cleanup_new_tail_row_if_empty(self, ti: int, row: int, *, reason: str = "") -> bool:
         if ti is None or ti < 0 or ti >= len(getattr(self, "tests", []) or []):
             return False
@@ -8849,8 +9077,7 @@ class GeoCanvasEditor(tk.Tk):
                 # 1) Кликнули и ушли без изменения видимого текста: no-op.
                 if old_text.strip() == val_text.strip():
                     self._tail_debug_log("TAIL_EDIT", f"end_edit NOOP_TEXT ti={int(ti)} field={field} row={int(row)} old={repr(old_text)} new={repr(val_text)}", ti=int(ti))
-                    self._redraw()
-                    self.schedule_graph_redraw()
+                    self._refresh_after_cell_edit(int(ti))
                     return
 
                 old_norm = self._sanitize_cell_int(old_text)
@@ -8859,8 +9086,7 @@ class GeoCanvasEditor(tk.Tk):
                 # 2) Нормализованные значения совпали: тоже no-op.
                 if old_norm.strip() == newv.strip():
                     self._tail_debug_log("TAIL_EDIT", f"end_edit NOOP_NORM ti={int(ti)} field={field} row={int(row)} old_norm={repr(old_norm)} new_norm={repr(newv)}", ti=int(ti))
-                    self._redraw()
-                    self.schedule_graph_redraw()
+                    self._refresh_after_cell_edit(int(ti))
                     return
 
                 # Важная семантика: implicit focusout/blur с пустым raw значения НЕ равен
@@ -8872,8 +9098,7 @@ class GeoCanvasEditor(tk.Tk):
                         f"end_edit IMPLICIT_EMPTY_NOOP ti={int(ti)} field={field} row={int(row)} reason={end_reason} old={repr(old_text)} raw={repr(val_text)}",
                         ti=int(ti),
                     )
-                    self._redraw()
-                    self.schedule_graph_redraw()
+                    self._refresh_after_cell_edit(int(ti))
                     return
 
                 # Undo: фиксируем снимок ДО изменения данных/раскраски
@@ -8943,8 +9168,7 @@ class GeoCanvasEditor(tk.Tk):
                     pass
                 fl.invalid = False
                 self.flags[t.tid] = fl
-            self._redraw()
-            self.schedule_graph_redraw()
+            self._refresh_after_cell_edit(int(ti))
 
     def _last_filled_row(self, t: TestData) -> int:
         """Последняя строка с данными (qc или fs не пустые)."""
@@ -9120,10 +9344,14 @@ class GeoCanvasEditor(tk.Tk):
             return self._on_mousewheel_x(event)
         delta = int(-1 * (event.delta / 120)) if event.delta else 0
         if delta != 0:
-            frac = self._scroll_all_cards_body_yview(delta, "units")
-            if frac is None:
-                self.canvas.yview_scroll(delta, "units")
-            self._sync_header_body_after_scroll()
+            self.__dict__["_scroll_in_progress"] = True
+            try:
+                frac = self._scroll_all_cards_body_yview(delta, "units")
+                if frac is None:
+                    self.canvas.yview_scroll(delta, "units")
+                self._sync_header_body_after_scroll()
+            finally:
+                self.__dict__["_scroll_in_progress"] = False
         return "break"
 
     def _on_mousewheel_linux(self, direction):
@@ -9132,10 +9360,14 @@ class GeoCanvasEditor(tk.Tk):
         self._end_edit(commit=True)
         if bool(getattr(self, "_shift_pressed", False)):
             return self._on_mousewheel_linux_x(direction)
-        frac = self._scroll_all_cards_body_yview(direction, "units")
-        if frac is None:
-            self.canvas.yview_scroll(direction, "units")
-        self._sync_header_body_after_scroll()
+        self.__dict__["_scroll_in_progress"] = True
+        try:
+            frac = self._scroll_all_cards_body_yview(direction, "units")
+            if frac is None:
+                self.canvas.yview_scroll(direction, "units")
+            self._sync_header_body_after_scroll()
+        finally:
+            self.__dict__["_scroll_in_progress"] = False
         return "break"
 
     def _get_body_view_top_canvas_y(self) -> float:
