@@ -1744,6 +1744,105 @@ def test_left_click_switch_between_cells_marks_next_editor_to_skip_ensure_visibl
     assert calls == [("end", True), ("begin", 0, 1, "qc", 1, False)]
 
 
+def test_left_click_switch_keeps_captured_data_row_when_commit_mutates_grid_map():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(qc=["10", "11", "12"], fs=["5", "6", "7"], depth=["3.00", "3.10", "4.30"], tid=1, locked=False)]
+    editor.flags = {1: SimpleNamespace(invalid=False, force_cells=set(), interp_cells=set(), user_cells=set(), algo_cells=set())}
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor._sync_layers_panel = lambda: None
+    editor.schedule_graph_redraw = lambda: None
+    editor._hit_test = lambda x, y: ("cell", 0, 0, "fs")
+    editor._layer_ige_picker = None
+    editor._layer_ige_picker_meta = None
+    editor._is_real_interval_cell = lambda ti, row, field: True
+    editor._grid_row_maps = {0: {0: 0}}
+    editor._editing = (0, 0, "qc", object(), 0)
+    editor._editing_meta = {"row": 0, "field": "qc", "ti": 0}
+    calls = []
+
+    def _end_edit(commit=True):
+        calls.append(("end", commit))
+        editor._grid_row_maps = {0: {0: 2}}
+        editor._editing = None
+        editor._editing_meta = None
+
+    editor._end_edit = _end_edit
+    editor._begin_edit = lambda ti, data_row, field, display_row=None, new_tail=False: calls.append(("begin", ti, data_row, field, display_row, editor.__dict__.get("_pending_edit_lock_row")))
+
+    editor._on_left_click(SimpleNamespace(widget=object(), x=0, y=0))
+
+    assert calls == [("end", True), ("begin", 0, 0, "fs", 0, True)]
+
+
+def test_begin_edit_keeps_same_row_and_viewport_top_during_click_switch(monkeypatch):
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(qc=["10", "11", "12"], fs=["5", "6", "7"], depth=["3.00", "3.10", "4.30"], tid=1, locked=False)]
+    editor.flags = {1: SimpleNamespace(invalid=False, force_cells=set(), interp_cells=set(), user_cells=set(), algo_cells=set())}
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 320), xview_fractions=lambda: (0.0, 1.0))
+    editor._grid_row_maps = {0: {0: 2}}
+    editor._row_y_bounds = lambda row: (60.0, 82.0)
+    editor._row_tops = [0.0, 60.0, 82.0]
+    editor._refresh_display_order = lambda: None
+    editor._ensure_cell_visible = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("ensure_cell_visible must be skipped for same-row click switch"))
+    editor._cancel_pending_graph_redraw = lambda: None
+    editor._end_edit = lambda commit=True: None
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(height=120, y0=60.0, rootx=100, rooty=200)
+    card.set_body_scroll_context(view_height=120.0, content_height=400.0)
+    editor._sounding_cards = {0: card}
+    editor._pending_edit_ensure_visible = False
+    editor._pending_edit_lock_row = True
+    editor.register = lambda fn: fn
+    editor._editing = None
+    entries = []
+
+    class _FakeEntry:
+        def __init__(self, parent, **kwargs):
+            self.parent = parent
+        def insert(self, *_args):
+            pass
+        def get(self):
+            return "6"
+        def configure(self, **_kwargs):
+            pass
+        def select_range(self, *_args):
+            pass
+        def place(self, **_kwargs):
+            pass
+        def focus_set(self):
+            pass
+        def bind(self, *_args, **_kwargs):
+            pass
+        def icursor(self, *_args):
+            pass
+        def after_idle(self, fn):
+            fn()
+
+    monkeypatch.setattr(editor_module.tk, "Entry", lambda parent, **kwargs: entries.append(_FakeEntry(parent, **kwargs)) or entries[-1])
+
+    top_before = card.body_canvas._y0
+    editor._begin_edit(0, 0, "fs", display_row=0)
+
+    assert editor._editing[:3] == (0, 0, "fs")
+    assert card.body_canvas._y0 == top_before
+
+
 def test_end_edit_if_widget_ignores_stale_focusout_for_old_editor():
     editor = _make_editor()
     old_entry = object()

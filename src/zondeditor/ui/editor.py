@@ -6195,6 +6195,18 @@ class GeoCanvasEditor(tk.Tk):
             self._active_test_idx = int(ti)
             self._sync_layers_panel()
             self.schedule_graph_redraw()
+        captured_cell_target = None
+        if kind == "cell" and ti is not None and row is not None:
+            try:
+                mp_capture = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {}) or {}
+                captured_cell_target = {
+                    "ti": int(ti),
+                    "display_row": int(row),
+                    "field": field,
+                    "data_row": mp_capture.get(int(row), None),
+                }
+            except Exception:
+                captured_cell_target = None
 
         # Любой клик по UI (иконки/пустые/глубина) сначала закрывает активную ячейку
         # (кроме случая, когда мы тут же откроем новое редактирование).
@@ -6372,9 +6384,10 @@ class GeoCanvasEditor(tk.Tk):
                 return
 
             if field == "depth":
-                data_row0 = mp.get(row, None)
+                data_row0 = captured_cell_target.get("data_row", None) if captured_cell_target else mp.get(row, None)
                 if data_row0 == 0:
                     self._pending_edit_ensure_visible = not bool(switching_cell_edit)
+                    self._pending_edit_lock_row = bool(switching_cell_edit)
                     self._begin_edit_depth0(ti, display_row=row)
                     return
                 meter_n = self._expanded_meter_for_depth_cell(ti, row)
@@ -6384,7 +6397,7 @@ class GeoCanvasEditor(tk.Tk):
                 return
 
             # qc/fs cells
-            data_row = mp.get(row, None)
+            data_row = captured_cell_target.get("data_row", None) if captured_cell_target else mp.get(row, None)
             if data_row is None:
                 return
 
@@ -6397,6 +6410,7 @@ class GeoCanvasEditor(tk.Tk):
                     self._set_status("Опыт заблокирован")
                     return
                 self._pending_edit_ensure_visible = not bool(switching_cell_edit)
+                self._pending_edit_lock_row = bool(switching_cell_edit)
                 self._begin_edit(ti, data_row, field, display_row=row)
                 self.schedule_graph_redraw()
             return
@@ -8623,16 +8637,18 @@ class GeoCanvasEditor(tk.Tk):
         if display_row is None:
             display_row = row
 
-        # В нижнем хвосте после commit предыдущей ячейки индекс data-row может сдвинуться.
-        # Приоритетно берём актуальный data_i из текущей карты display->data.
-        try:
-            mp_now = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {}) or {}
-            mapped_row = mp_now.get(int(display_row), None)
-            if mapped_row is not None and int(mapped_row) != int(row):
-                self._tail_debug_log("TAIL_ENTRY", f"begin_edit REMAP ti={int(ti)} field={field} disp_r={int(display_row)} row_arg={int(row)} row_mapped={int(mapped_row)}", ti=int(ti))
-                row = int(mapped_row)
-        except Exception:
-            pass
+        lock_row = bool(self.__dict__.pop("_pending_edit_lock_row", False))
+        if not lock_row:
+            # В нижнем хвосте после commit предыдущей ячейки индекс data-row может сдвинуться.
+            # Приоритетно берём актуальный data_i из текущей карты display->data.
+            try:
+                mp_now = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {}) or {}
+                mapped_row = mp_now.get(int(display_row), None)
+                if mapped_row is not None and int(mapped_row) != int(row):
+                    self._tail_debug_log("TAIL_ENTRY", f"begin_edit REMAP ti={int(ti)} field={field} disp_r={int(display_row)} row_arg={int(row)} row_mapped={int(mapped_row)}", ti=int(ti))
+                    row = int(mapped_row)
+            except Exception:
+                pass
 
         self._refresh_display_order()
         col = self.display_cols.index(ti)
