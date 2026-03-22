@@ -109,6 +109,11 @@ class _DummyBodyCanvas:
     def create_window(self, *args, **kwargs):
         return self._add_item("window", *args, **kwargs)
 
+    def create_image(self, *args, **kwargs):
+        if self._support_items:
+            return self._add_item("image", *args, **kwargs)
+        self.draw_calls.append(("image", args, kwargs))
+
     def find_all(self):
         return tuple(item["id"] for item in self._items)
 
@@ -185,6 +190,8 @@ def _make_editor():
     editor._editing = None
     editor._marks_index = {}
     editor._inline_edit_active = False
+    editor._debug_tail_edit = False
+    editor._graph_redraw_after_id = None
     return editor
 
 
@@ -762,6 +769,61 @@ def test_card_body_scrollregion_tracks_content_height_after_rebuild():
     assert card.dev_selfcheck_snapshot()["body_yview"] == (0.0, 0.3)
 
 
+def test_update_scrollregion_resyncs_existing_card_viewports_when_height_changes_without_rebuild():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.canvas = _DummyBodyCanvas(height=120)
+    editor.hcanvas = SimpleNamespace()
+    editor.soundings_viewport = _DummyViewport(width=320, x0=0.0, fractions=(0.0, 1.0))
+    editor._total_body_height = lambda: 400
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(height=120)
+    card.set_body_scroll_context(view_height=120.0, content_height=400.0)
+
+    assert int(card.body_canvas.cget("height")) == 120
+
+    editor.canvas._height = 240
+    editor._update_scrollregion()
+
+    assert int(card.body_canvas.cget("height")) == 240
+
+
+def test_sync_card_viewports_clamps_shared_scroll_to_zero_when_content_fits_after_local_refresh():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.canvas = _DummyBodyCanvas(height=120)
+    editor.hcanvas = SimpleNamespace()
+    editor.soundings_viewport = _DummyViewport(width=320, x0=0.0, fractions=(0.0, 1.0))
+    editor._row_tops = [0.0, 400.0]
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(height=120)
+    card.set_body_scroll_context(view_height=120.0, content_height=400.0)
+    editor._apply_shared_body_yview_fraction(0.5)
+
+    editor.canvas._height = 500
+    editor._row_tops = [0.0, 100.0]
+    editor._sync_card_viewports()
+
+    card = editor._card_for_test(0)
+    assert round(editor_module.GeoCanvasEditor._shared_body_yview_fraction(editor), 2) == 0.0
+    assert round(card.body_yview()[0], 2) == 0.0
+
 
 def test_redraw_graphs_now_does_not_crash_when_graphs_and_layers_are_disabled():
     editor = _make_editor()
@@ -984,6 +1046,348 @@ def test_refresh_card_graph_layers_replaces_hitboxes_only_for_target_card():
     assert [hit["marker"] for hit in editor._layer_depth_box_hitbox] == ["keep1", "new0"]
     assert [hit["marker"] for hit in editor._layer_plot_hitbox] == ["keep1", "new0"]
     assert [hit["marker"] for hit in editor._layer_label_hitbox] == ["keep1", "new0"]
+
+
+def test_refresh_after_cell_edit_redraws_only_target_card_when_shared_scale_is_unchanged():
+    editor = _make_editor()
+    editor.show_graphs = True
+    editor.tests = [SimpleNamespace(tid=1), SimpleNamespace(tid=2)]
+    editor.graph_qc_max_mpa = 30.0
+    editor.graph_fs_max_kpa = 500.0
+    editor.graph_qc_max_source = "data"
+    editor.graph_fs_max_source = "data"
+    editor.graph_qc_max_display = 30.0
+    editor.graph_fs_max_display = 500.0
+    local_calls = []
+    graph_calls = []
+    redraw_calls = []
+    editor._recompute_graph_scales = lambda: None
+    editor._refresh_single_card = lambda ti, **kwargs: local_calls.append((int(ti), bool(kwargs.get("preserve_geology", False))))
+    editor._refresh_card_graph_curves = lambda ti: graph_calls.append(int(ti))
+    editor._redraw = lambda: redraw_calls.append("all")
+
+    editor._refresh_after_cell_edit(1)
+
+    assert local_calls == [(1, True)]
+    assert graph_calls == [1]
+    assert redraw_calls == []
+
+
+def test_refresh_after_cell_edit_falls_back_to_global_redraw_when_shared_scale_changes():
+    editor = _make_editor()
+    editor.show_graphs = True
+    editor.tests = [SimpleNamespace(tid=1), SimpleNamespace(tid=2)]
+    editor.graph_qc_max_mpa = 30.0
+    editor.graph_fs_max_kpa = 500.0
+    editor.graph_qc_max_source = "data"
+    editor.graph_fs_max_source = "data"
+    editor.graph_qc_max_display = 30.0
+    editor.graph_fs_max_display = 500.0
+    local_calls = []
+    graph_calls = []
+    redraw_calls = []
+
+    def _change_scales():
+        editor.graph_qc_max_mpa = 35.0
+        editor.graph_qc_max_display = 35.0
+
+    editor._recompute_graph_scales = _change_scales
+    editor._refresh_single_card = lambda ti, **kwargs: local_calls.append(int(ti))
+    editor._refresh_card_graph_layers = lambda ti: graph_calls.append(int(ti))
+    editor._redraw = lambda: redraw_calls.append("all")
+
+    editor._refresh_after_cell_edit(0)
+
+    assert local_calls == []
+    assert graph_calls == []
+    assert redraw_calls == ["all"]
+
+
+def test_schedule_graph_redraw_is_suppressed_while_inline_editor_is_active():
+    editor = _make_editor()
+    editor.show_graphs = True
+    editor._editing = (0, 0, "qc", object(), 0)
+    after_calls = []
+    editor.after = lambda delay, cb: after_calls.append((delay, cb)) or "after-id"
+
+    editor.schedule_graph_redraw()
+
+    assert after_calls == []
+    assert editor._graph_redraw_after_id is None
+
+
+def test_schedule_graph_redraw_is_suppressed_while_layer_drag_is_active():
+    editor = _make_editor()
+    editor.show_graphs = True
+    editor._layer_drag = {"ti": 0, "boundary": 1, "mode": "boundary"}
+    after_calls = []
+    editor.after = lambda delay, cb: after_calls.append((delay, cb)) or "after-id"
+
+    editor.schedule_graph_redraw()
+
+    assert after_calls == []
+    assert editor._graph_redraw_after_id is None
+
+
+def test_refresh_display_order_skips_rebuild_when_order_is_unchanged():
+    editor = _make_editor()
+    editor.tests = [SimpleNamespace(tid=2, dt=""), SimpleNamespace(tid=1, dt="")]
+    editor.display_sort_mode = "tid"
+    editor.display_cols = [1, 0]
+    editor._sounding_cards = {1: object(), 0: object()}
+    rebuild_calls = []
+    editor._rebuild_sounding_cards = lambda: rebuild_calls.append("rebuild")
+
+    editor._refresh_display_order()
+
+    assert editor.display_cols == [1, 0]
+    assert rebuild_calls == []
+
+
+def test_begin_edit_cancels_pending_graph_redraw_before_placing_editor(monkeypatch):
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(qc=["10"], fs=["5"], depth=["0.00"], tid=1, locked=False)]
+    editor.flags = {1: SimpleNamespace(invalid=False, force_cells=set(), interp_cells=set(), user_cells=set(), algo_cells=set())}
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 320), xview_fractions=lambda: (0.0, 1.0))
+    editor._grid_units = [("row", 0)]
+    editor._grid_row_maps = {0: {0: 0}}
+    editor._row_y_bounds = lambda row: (0.0, 22.0)
+    editor._row_tops = [0.0, 22.0]
+    editor._refresh_display_order = lambda: None
+    editor._ensure_cell_visible = lambda *args, **kwargs: None
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(rootx=140, rooty=220)
+    editor._sounding_cards = {0: card}
+    cancelled = []
+    editor._graph_redraw_after_id = "after-id"
+    editor.after_cancel = lambda after_id: cancelled.append(after_id)
+
+    class _FakeEntry:
+        def __init__(self, parent, **kwargs):
+            self.parent = parent
+        def insert(self, *_args):
+            pass
+        def get(self):
+            return "10"
+        def configure(self, **_kwargs):
+            pass
+        def select_range(self, *_args):
+            pass
+        def place(self, **_kwargs):
+            pass
+        def focus_set(self):
+            pass
+        def bind(self, *_args, **_kwargs):
+            pass
+        def icursor(self, *_args):
+            pass
+        def after_idle(self, fn):
+            fn()
+
+    monkeypatch.setattr(editor_module.tk, "Entry", lambda parent, **kwargs: _FakeEntry(parent, **kwargs))
+    editor.register = lambda fn: fn
+
+    editor._begin_edit(0, 0, "qc", display_row=0)
+
+    assert cancelled == ["after-id"]
+    assert editor._graph_redraw_after_id is None
+
+
+def test_redraw_graphs_now_is_suppressed_while_inline_editor_is_active():
+    editor = _make_editor()
+    editor.show_graphs = True
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor._editing = (0, 0, "qc", object(), 0)
+    calls = []
+    editor._clear_graph_layers = lambda: calls.append("clear")
+    editor._calc_layer_params_for_all_tests = lambda: calls.append("calc")
+    editor._recompute_graph_scales = lambda: calls.append("scales")
+    editor._refresh_display_order = lambda: calls.append("refresh")
+    editor._render_card_graph_layers = lambda ti: calls.append(("render", ti))
+
+    editor._redraw_graphs_now()
+
+    assert calls == []
+
+
+def test_redraw_graphs_now_is_suppressed_while_scroll_is_in_progress():
+    editor = _make_editor()
+    editor.show_graphs = True
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor._scroll_in_progress = True
+    calls = []
+    editor._clear_graph_layers = lambda: calls.append("clear")
+    editor._calc_layer_params_for_all_tests = lambda: calls.append("calc")
+    editor._recompute_graph_scales = lambda: calls.append("scales")
+    editor._refresh_display_order = lambda: calls.append("refresh")
+
+    editor._redraw_graphs_now()
+
+    assert calls == []
+
+
+def test_layer_drag_motion_refreshes_only_target_card():
+    editor = _make_editor()
+    editor.tests = [SimpleNamespace(tid=1, locked=False, experience_column=SimpleNamespace(intervals=[SimpleNamespace(from_depth=0.0)], column_depth_end=1.0))]
+    editor._layer_drag = {"ti": 0, "boundary": 0, "mode": "boundary"}
+    editor._is_test_locked = lambda ti: False
+    editor._card_for_widget = lambda widget: SimpleNamespace(body_canvas=widget, body_local_to_world=lambda x, y: (x, y))
+    editor._canvas_y_to_depth = lambda y: 1.25
+    editor._ensure_test_experience_column = lambda t: t.experience_column
+    editor._calc_layer_params_for_test = lambda ti: calls.append(("calc", ti))
+    editor._refresh_card_graph_layers = lambda ti: calls.append(("refresh", ti))
+    editor._cancel_pending_graph_redraw = lambda: calls.append("cancel")
+    editor._set_status = lambda text: calls.append(("status", text))
+    event = SimpleNamespace(widget=_DummyBodyCanvas(), x=10, y=20)
+    calls = []
+
+    import src.zondeditor.ui.editor as editor_module_local
+    original_move = editor_module_local.move_experience_column_boundary
+    try:
+        editor_module_local.move_experience_column_boundary = lambda column, boundary, depth: SimpleNamespace(
+            intervals=[SimpleNamespace(from_depth=depth)],
+            column_depth_end=depth + 1.0,
+        )
+        editor._on_layer_drag_motion(event)
+    finally:
+        editor_module_local.move_experience_column_boundary = original_move
+
+    assert "cancel" in calls
+    assert ("calc", 0) in calls
+    assert ("refresh", 0) in calls
+
+
+def test_set_layer_soil_from_ribbon_does_not_trigger_global_redraw_or_card_rebuild():
+    editor = _make_editor()
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor.ige_registry = {"ИГЭ-1": {"soil_type": "глина", "calc_mode": "x", "style": {}, "label": "ИГЭ-1", "ordinal": 1}}
+    editor._push_undo = lambda: None
+    editor._ensure_ige_entry = lambda ige_id: editor.ige_registry[ige_id]
+    editor._sync_ige_display_label = lambda ige_id, ent: None
+    editor._ensure_test_layers = lambda t: [SimpleNamespace(ige_id="ИГЭ-1")]
+    editor._apply_ige_to_layer = lambda lyr: applied.append(str(lyr.ige_id))
+    editor._sync_layers_panel = lambda: synced.append("layers")
+    editor.schedule_graph_redraw = lambda: scheduled.append("graphs")
+    editor._redraw = lambda: redraws.append("all")
+    editor._rebuild_sounding_cards = lambda: rebuilds.append("rebuild")
+    applied = []
+    synced = []
+    scheduled = []
+    redraws = []
+    rebuilds = []
+
+    editor._set_layer_soil_from_ribbon("ИГЭ-1", "песок")
+
+    assert applied == ["ИГЭ-1"]
+    assert synced == ["layers"]
+    assert scheduled == ["graphs"]
+    assert redraws == []
+    assert rebuilds == []
+
+
+def test_update_scrollregion_resyncs_all_existing_card_viewports_when_height_changes_without_rebuild():
+    editor = _make_editor()
+    editor.display_cols = [0, 1]
+    editor.tests = [SimpleNamespace(tid=1), SimpleNamespace(tid=2)]
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.canvas = _DummyBodyCanvas(height=120)
+    editor.hcanvas = SimpleNamespace()
+    editor.soundings_viewport = _DummyViewport(width=640, x0=0.0, fractions=(0.0, 1.0))
+    editor._total_body_height = lambda: 400
+    editor._rebuild_sounding_cards()
+    for ti in editor.display_cols:
+        card = editor._card_for_test(ti)
+        card.body_canvas = _DummyBodyCanvas(height=120)
+        card.set_body_scroll_context(view_height=120.0, content_height=400.0)
+
+    editor.canvas._height = 260
+    editor._update_scrollregion()
+
+    assert [int(editor._card_for_test(ti).body_canvas.cget("height")) for ti in editor.display_cols] == [260, 260]
+
+
+def test_sync_card_viewports_uses_actual_canvas_top_not_stale_shared_fraction():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.canvas = _DummyBodyCanvas(height=120)
+    editor.hcanvas = SimpleNamespace()
+    editor.soundings_viewport = _DummyViewport(width=320, x0=0.0, fractions=(0.0, 1.0))
+    editor._total_body_height = lambda: 400
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(height=120, y0=0.0)
+    card.set_body_scroll_context(view_height=120.0, content_height=400.0)
+    card._body_y0 = 160.0
+    editor._shared_body_yview_fraction = 0.4
+
+    editor._sync_card_viewports()
+
+    assert round(editor_module.GeoCanvasEditor._shared_body_yview_fraction(editor), 2) == 0.0
+    assert round(card.body_yview()[0], 2) == 0.0
+
+
+def test_scroll_path_normalizes_anchor_before_scrolling_after_local_refresh():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.canvas = _DummyBodyCanvas(height=120)
+    editor.hcanvas = SimpleNamespace()
+    editor.soundings_viewport = _DummyViewport(width=320, x0=0.0, fractions=(0.0, 1.0))
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(height=120, y0=0.0)
+    card.set_body_scroll_context(view_height=120.0, content_height=400.0)
+    card._body_y0 = 160.0
+    editor._evt_widget = card.body_canvas
+
+    frac = editor._scroll_all_cards_body_yview(-1, "units")
+
+    assert round(frac, 2) == 0.0
+    assert round(card.body_yview()[0], 2) == 0.0
+
+
+def test_depth_y_depth_roundtrip_stays_stable_at_row_midpoint():
+    editor = _make_editor()
+    editor.tests = [SimpleNamespace(depth=["0.00", "0.10", "0.20"], qc=["1", "2", "3"], fs=["1", "2", "3"])]
+    editor._grid_units = [("row", 0), ("row", 1), ("row", 2)]
+    editor._grid_base = [0.0, 0.1, 0.2]
+    editor._row_y_bounds = lambda row: (row * 20.0, row * 20.0 + 20.0)
+    editor.step_m = 0.1
+
+    y = editor._depth_to_canvas_y(0.10)
+    depth = editor._canvas_y_to_depth(y)
+
+    assert round(y, 2) == 30.0
+    assert round(depth, 2) == 0.10
 
 
 def test_center_toplevel_withdraws_before_showing_centered_window():
@@ -1224,6 +1628,9 @@ def test_click_on_body_cell_triggers_begin_edit_and_survives_global_click_guard(
     editor._layer_plot_hitbox = []
     editor._layer_ige_picker = None
     editor._layer_ige_picker_meta = None
+    editor._row_tops = [0.0, 22.0, 44.0]
+    editor._is_real_interval_cell = lambda ti, row, field: True
+    editor._grid_row_maps = {0: {0: 0, 1: 1}}
     editor._rebuild_sounding_cards()
     card = editor._card_for_test(0)
     card.body_canvas = _DummyBodyCanvas()
@@ -1303,6 +1710,291 @@ def test_begin_edit_editor_rect_stays_inside_card_body_after_shared_scroll(monke
     assert 0 <= placed['x'] <= card.geometry.card_width
     assert 0 <= placed['y'] <= 22.0
 
+
+def test_left_click_switch_between_cells_marks_next_editor_to_skip_ensure_visible():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(qc=["10", "11"], fs=["5", "6"], depth=["0.00", "0.10"], tid=1, locked=False)]
+    editor.flags = {1: SimpleNamespace(invalid=False, force_cells=set(), interp_cells=set(), user_cells=set(), algo_cells=set())}
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor._sync_layers_panel = lambda: None
+    editor.schedule_graph_redraw = lambda: None
+    editor._layer_depth_box_hitbox = []
+    editor._layer_handle_hitbox = []
+    editor._layer_label_hitbox = []
+    editor._layer_plot_hitbox = []
+    editor._layer_ige_picker = None
+    editor._layer_ige_picker_meta = None
+    editor._row_tops = [0.0, 22.0, 44.0]
+    editor._is_real_interval_cell = lambda ti, row, field: True
+    editor._grid_row_maps = {0: {0: 0, 1: 1}}
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas()
+    editor._sounding_cards = {0: card}
+    editor._editing = (0, 0, "qc", object(), 0)
+    editor._editing_meta = {"row": 0, "field": "qc", "ti": 0}
+    calls = []
+    editor._end_edit = lambda commit=True: (calls.append(("end", commit)), setattr(editor, "_editing", None), setattr(editor, "_editing_meta", None))
+    editor._begin_edit = lambda ti, data_row, field, display_row=None, new_tail=False: calls.append(("begin", ti, data_row, field, display_row, editor.__dict__.get("_pending_edit_ensure_visible")))
+
+    editor._on_left_click(SimpleNamespace(widget=card.body_canvas, x=80, y=32))
+
+    assert calls == [("end", True), ("begin", 0, 1, "qc", 1, False)]
+
+
+def test_left_click_switch_keeps_captured_data_row_when_commit_mutates_grid_map():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(qc=["10", "11", "12"], fs=["5", "6", "7"], depth=["3.00", "3.10", "4.30"], tid=1, locked=False)]
+    editor.flags = {1: SimpleNamespace(invalid=False, force_cells=set(), interp_cells=set(), user_cells=set(), algo_cells=set())}
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor._sync_layers_panel = lambda: None
+    editor.schedule_graph_redraw = lambda: None
+    editor._hit_test = lambda x, y: ("cell", 0, 0, "fs")
+    editor._layer_ige_picker = None
+    editor._layer_ige_picker_meta = None
+    editor._is_real_interval_cell = lambda ti, row, field: True
+    editor._grid_row_maps = {0: {0: 0}}
+    editor._editing = (0, 0, "qc", object(), 0)
+    editor._editing_meta = {"row": 0, "field": "qc", "ti": 0}
+    calls = []
+
+    def _end_edit(commit=True):
+        calls.append(("end", commit))
+        editor._grid_row_maps = {0: {0: 2}}
+        editor._editing = None
+        editor._editing_meta = None
+
+    editor._end_edit = _end_edit
+    editor._begin_edit = lambda ti, data_row, field, display_row=None, new_tail=False: calls.append(("begin", ti, data_row, field, display_row, editor.__dict__.get("_pending_edit_lock_row")))
+
+    editor._on_left_click(SimpleNamespace(widget=object(), x=0, y=0))
+
+    assert calls == [("end", True), ("begin", 0, 0, "fs", 0, True)]
+
+
+def test_begin_edit_keeps_same_row_and_viewport_top_during_click_switch(monkeypatch):
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(qc=["10", "11", "12"], fs=["5", "6", "7"], depth=["3.00", "3.10", "4.30"], tid=1, locked=False)]
+    editor.flags = {1: SimpleNamespace(invalid=False, force_cells=set(), interp_cells=set(), user_cells=set(), algo_cells=set())}
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 320), xview_fractions=lambda: (0.0, 1.0))
+    editor._grid_row_maps = {0: {0: 2}}
+    editor._row_y_bounds = lambda row: (60.0, 82.0)
+    editor._row_tops = [0.0, 60.0, 82.0]
+    editor._refresh_display_order = lambda: None
+    editor._ensure_cell_visible = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("ensure_cell_visible must be skipped for same-row click switch"))
+    editor._cancel_pending_graph_redraw = lambda: None
+    editor._end_edit = lambda commit=True: None
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(height=120, y0=60.0, rootx=100, rooty=200)
+    card.set_body_scroll_context(view_height=120.0, content_height=400.0)
+    editor._sounding_cards = {0: card}
+    editor._pending_edit_ensure_visible = False
+    editor._pending_edit_lock_row = True
+    editor.register = lambda fn: fn
+    editor._editing = None
+    entries = []
+
+    class _FakeEntry:
+        def __init__(self, parent, **kwargs):
+            self.parent = parent
+        def insert(self, *_args):
+            pass
+        def get(self):
+            return "6"
+        def configure(self, **_kwargs):
+            pass
+        def select_range(self, *_args):
+            pass
+        def place(self, **_kwargs):
+            pass
+        def focus_set(self):
+            pass
+        def bind(self, *_args, **_kwargs):
+            pass
+        def icursor(self, *_args):
+            pass
+        def after_idle(self, fn):
+            fn()
+
+    monkeypatch.setattr(editor_module.tk, "Entry", lambda parent, **kwargs: entries.append(_FakeEntry(parent, **kwargs)) or entries[-1])
+
+    top_before = card.body_canvas._y0
+    editor._begin_edit(0, 0, "fs", display_row=0)
+
+    assert editor._editing[:3] == (0, 0, "fs")
+    assert card.body_canvas._y0 == top_before
+
+
+def test_end_edit_if_widget_ignores_stale_focusout_for_old_editor():
+    editor = _make_editor()
+    old_entry = object()
+    new_entry = object()
+    editor._editing = (0, 1, "qc", new_entry, 1)
+    editor._editing_meta = {"row": 1, "field": "qc", "ti": 0}
+    calls = []
+    editor._end_edit = lambda commit=True: calls.append(commit)
+
+    editor._end_edit_if_widget(old_entry, commit=True, reason="focusout")
+
+    assert calls == []
+    assert editor._editing[3] is new_entry
+
+
+def test_begin_edit_depth0_uses_explicit_debug_field_without_name_error(monkeypatch):
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(qc=["10"], fs=["5"], depth=["0.00"], tid=1, locked=False)]
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 320), xview_fractions=lambda: (0.0, 1.0))
+    editor._row_y_bounds = lambda row: (0.0, 22.0)
+    editor._row_tops = [0.0, 22.0]
+    editor._refresh_display_order = lambda: None
+    editor._ensure_cell_visible = lambda *args, **kwargs: None
+    editor._cancel_pending_graph_redraw = lambda: None
+    editor._end_edit = lambda commit=True: None
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(rootx=100, rooty=200)
+    editor._sounding_cards = {0: card}
+    editor.register = lambda fn: fn
+    hits = []
+
+    class _FakeEntry:
+        def __init__(self, parent, **kwargs):
+            self.parent = parent
+        def insert(self, *_args):
+            pass
+        def get(self):
+            return "0.00"
+        def select_range(self, *_args):
+            pass
+        def place(self, **_kwargs):
+            pass
+        def focus_set(self):
+            pass
+        def bind(self, *_args, **_kwargs):
+            pass
+
+    monkeypatch.setattr(editor_module.tk, "Entry", lambda parent, **kwargs: _FakeEntry(parent, **kwargs))
+    editor._log_cell_edit_debug = lambda **kwargs: hits.append(kwargs.get("hit"))
+
+    editor._begin_edit_depth0(0, display_row=0)
+
+    assert hits == [("cell", 0, 0, "depth0")]
+    assert editor._editing[:3] == (0, 0, "depth")
+
+
+def test_draw_layer_hatch_uses_cached_image_layer_before_vector_renderer(monkeypatch):
+    editor = _make_editor()
+    canvas = _DummyBodyCanvas(support_items=True)
+    editor._interactive_hatch_image = lambda soil, width, height, logical_rect=None: object()
+    called = []
+    monkeypatch.setattr(
+        editor_module,
+        "render_hatch_pattern",
+        lambda *args, **kwargs: called.append("vector"),
+    )
+
+    editor._draw_layer_hatch(0.0, 0.0, 20.0, 40.0, "песок", tags=("x",), canvas=canvas)
+
+    assert called == []
+    assert [item["type"] for item in canvas._items] == ["image"]
+
+
+def test_refresh_card_graph_curves_does_not_drop_geology_hitboxes():
+    editor = _make_editor()
+    editor.display_cols = [0, 1]
+    editor.tests = [SimpleNamespace(tid=1), SimpleNamespace(tid=2)]
+    editor._layer_handle_hitbox = [{"ti": 0, "marker": "keep0"}, {"ti": 1, "marker": "keep1"}]
+    editor._layer_depth_box_hitbox = [{"ti": 0, "marker": "keep0"}, {"ti": 1, "marker": "keep1"}]
+    editor._layer_plot_hitbox = [{"ti": 0, "marker": "keep0"}, {"ti": 1, "marker": "keep1"}]
+    editor._layer_label_hitbox = [{"ti": 0, "marker": "keep0"}, {"ti": 1, "marker": "keep1"}]
+    calls = []
+    editor._card_for_test = lambda ti: SimpleNamespace(clear_body_render_layers=lambda *tags: calls.append((int(ti), tags)))
+    editor._render_card_graph_layers = lambda ti, **kwargs: calls.append(("render", int(ti), kwargs))
+
+    editor._refresh_card_graph_curves(0)
+
+    assert ("render", 0, {"include_geology": False}) in calls
+    assert [hit["marker"] for hit in editor._layer_plot_hitbox] == ["keep0", "keep1"]
+
+
+def test_redraw_graphs_now_skips_geology_refresh_when_layer_is_not_dirty():
+    editor = _make_editor()
+    editor.tests = [object()]
+    editor.display_cols = [0]
+    editor._is_graph_panel_visible = lambda: True
+    editor._sync_card_viewports = lambda: None
+    editor._calc_layer_params_for_all_tests = lambda: None
+    editor._recompute_graph_scales = lambda: None
+    editor._refresh_display_order = lambda: None
+    clear_calls = []
+    geology_clears = []
+    render_calls = []
+    editor._clear_graph_layers = lambda include_geology=True: clear_calls.append(bool(include_geology))
+    editor._clear_card_geology_layers = lambda ti: geology_clears.append(int(ti))
+    editor._render_card_graph_layers = lambda ti, include_geology=True: render_calls.append((int(ti), bool(include_geology)))
+    editor.__dict__["_geology_dirty_state"] = set()
+
+    editor._redraw_graphs_now()
+
+    assert clear_calls == [False]
+    assert geology_clears == []
+    assert render_calls == [(0, False)]
+
+
+def test_redraw_graphs_now_refreshes_geology_only_for_dirty_cards():
+    editor = _make_editor()
+    editor.tests = [object(), object()]
+    editor.display_cols = [0, 1]
+    editor._is_graph_panel_visible = lambda: True
+    editor._sync_card_viewports = lambda: None
+    editor._calc_layer_params_for_all_tests = lambda: None
+    editor._recompute_graph_scales = lambda: None
+    editor._refresh_display_order = lambda: None
+    geology_clears = []
+    render_calls = []
+    dropped = []
+    editor._clear_graph_layers = lambda include_geology=True: None
+    editor._clear_card_geology_layers = lambda ti: geology_clears.append(int(ti))
+    editor._drop_layer_hitboxes_for_test = lambda ti: dropped.append(int(ti))
+    editor._render_card_graph_layers = lambda ti, include_geology=True: render_calls.append((int(ti), bool(include_geology)))
+    editor.__dict__["_geology_dirty_state"] = {1}
+
+    editor._redraw_graphs_now()
+
+    assert geology_clears == [1]
+    assert dropped == [1]
+    assert render_calls == [(0, False), (1, True)]
 
 
 def test_bind_card_targets_rebinds_double_click_for_body_canvas():
