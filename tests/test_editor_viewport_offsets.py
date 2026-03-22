@@ -1315,6 +1315,61 @@ def test_update_scrollregion_resyncs_all_existing_card_viewports_when_height_cha
     assert [int(editor._card_for_test(ti).body_canvas.cget("height")) for ti in editor.display_cols] == [260, 260]
 
 
+def test_sync_card_viewports_uses_actual_canvas_top_not_stale_shared_fraction():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.canvas = _DummyBodyCanvas(height=120)
+    editor.hcanvas = SimpleNamespace()
+    editor.soundings_viewport = _DummyViewport(width=320, x0=0.0, fractions=(0.0, 1.0))
+    editor._total_body_height = lambda: 400
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(height=120, y0=0.0)
+    card.set_body_scroll_context(view_height=120.0, content_height=400.0)
+    card._body_y0 = 160.0
+    editor._shared_body_yview_fraction = 0.4
+
+    editor._sync_card_viewports()
+
+    assert round(editor_module.GeoCanvasEditor._shared_body_yview_fraction(editor), 2) == 0.0
+    assert round(card.body_yview()[0], 2) == 0.0
+
+
+def test_scroll_path_normalizes_anchor_before_scrolling_after_local_refresh():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.canvas = _DummyBodyCanvas(height=120)
+    editor.hcanvas = SimpleNamespace()
+    editor.soundings_viewport = _DummyViewport(width=320, x0=0.0, fractions=(0.0, 1.0))
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(height=120, y0=0.0)
+    card.set_body_scroll_context(view_height=120.0, content_height=400.0)
+    card._body_y0 = 160.0
+    editor._evt_widget = card.body_canvas
+
+    frac = editor._scroll_all_cards_body_yview(-1, "units")
+
+    assert round(frac, 2) == 0.0
+    assert round(card.body_yview()[0], 2) == 0.0
+
+
 def test_depth_y_depth_roundtrip_stays_stable_at_row_midpoint():
     editor = _make_editor()
     editor.tests = [SimpleNamespace(depth=["0.00", "0.10", "0.20"], qc=["1", "2", "3"], fs=["1", "2", "3"])]

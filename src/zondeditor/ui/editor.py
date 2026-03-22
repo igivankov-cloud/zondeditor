@@ -4712,7 +4712,7 @@ class GeoCanvasEditor(tk.Tk):
             return
         view_h = float(self._card_body_view_height())
         body_h = float(self._total_body_height())
-        shared_frac = float(self.__dict__.get("_shared_body_yview_fraction", 0.0) or 0.0)
+        top_y = float(self._get_body_view_top_canvas_y())
         for card in cards:
             try:
                 card.set_body_scroll_context(view_height=view_h, content_height=body_h)
@@ -4720,6 +4720,10 @@ class GeoCanvasEditor(tk.Tk):
                 pass
         if body_h <= max(1.0, view_h):
             shared_frac = 0.0
+        else:
+            max_top = max(0.0, body_h - max(1.0, view_h))
+            target_top = min(max(top_y, 0.0), max_top)
+            shared_frac = 0.0 if body_h <= 1.0 else (target_top / body_h)
         self._apply_shared_body_yview_fraction(shared_frac)
 
     def _card_yview_snapshot(self) -> dict[int, tuple[float, float]]:
@@ -4756,6 +4760,11 @@ class GeoCanvasEditor(tk.Tk):
         anchor = self._card_for_widget(getattr(self, "_evt_widget", None)) or self._active_body_card() or cards[0]
         if anchor is None or not hasattr(anchor, "body_yview_scroll"):
             return None
+        if hasattr(anchor, "body_yview"):
+            try:
+                anchor.body_yview()
+            except Exception:
+                pass
         anchor.body_yview_scroll(delta, what)
         frac = float(anchor.body_yview()[0]) if hasattr(anchor, "body_yview") else self._shared_body_yview_fraction()
         self._shared_body_yview_fraction = frac
@@ -4794,12 +4803,12 @@ class GeoCanvasEditor(tk.Tk):
         return False
 
     def _active_body_card(self) -> SoundingCard | None:
-        active = getattr(self, "_active_test_idx", None)
+        active = self.__dict__.get("_active_test_idx", None)
         if active is not None:
             card = self._card_for_test(int(active))
             if card is not None:
                 return card
-        cols = getattr(self, "display_cols", []) or []
+        cols = self.__dict__.get("display_cols", []) or []
         return self._card_for_test(int(cols[0])) if cols else None
 
     def _body_view_origin(self, ti: int | None = None) -> tuple[float, float]:
