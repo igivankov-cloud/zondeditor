@@ -1858,6 +1858,56 @@ def test_end_edit_if_widget_ignores_stale_focusout_for_old_editor():
     assert editor._editing[3] is new_entry
 
 
+def test_begin_edit_depth0_uses_explicit_debug_field_without_name_error(monkeypatch):
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(qc=["10"], fs=["5"], depth=["0.00"], tid=1, locked=False)]
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 320), xview_fractions=lambda: (0.0, 1.0))
+    editor._row_y_bounds = lambda row: (0.0, 22.0)
+    editor._row_tops = [0.0, 22.0]
+    editor._refresh_display_order = lambda: None
+    editor._ensure_cell_visible = lambda *args, **kwargs: None
+    editor._cancel_pending_graph_redraw = lambda: None
+    editor._end_edit = lambda commit=True: None
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(rootx=100, rooty=200)
+    editor._sounding_cards = {0: card}
+    editor.register = lambda fn: fn
+    hits = []
+
+    class _FakeEntry:
+        def __init__(self, parent, **kwargs):
+            self.parent = parent
+        def insert(self, *_args):
+            pass
+        def get(self):
+            return "0.00"
+        def select_range(self, *_args):
+            pass
+        def place(self, **_kwargs):
+            pass
+        def focus_set(self):
+            pass
+        def bind(self, *_args, **_kwargs):
+            pass
+
+    monkeypatch.setattr(editor_module.tk, "Entry", lambda parent, **kwargs: _FakeEntry(parent, **kwargs))
+    editor._log_cell_edit_debug = lambda **kwargs: hits.append(kwargs.get("hit"))
+
+    editor._begin_edit_depth0(0, display_row=0)
+
+    assert hits == [("cell", 0, 0, "depth0")]
+    assert editor._editing[:3] == (0, 0, "depth")
+
+
 def test_bind_card_targets_rebinds_double_click_for_body_canvas():
     editor = _make_editor()
     editor.display_cols = [0]

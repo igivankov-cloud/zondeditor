@@ -8776,7 +8776,7 @@ class GeoCanvasEditor(tk.Tk):
         e = tk.Entry(parent_canvas, validate="key", validatecommand=(self.register(_validate_depth_0_4_key), "%P"))
         e.insert(0, current)
         e.select_range(0, tk.END)
-        self._log_cell_edit_debug(stage="begin_edit", widget=parent_canvas, card=card, world=(bx0, by0, bx1, by1), local=(vx0, vy0), hit=("cell", ti, display_row, field), editor_rect=(vx0 + 1, vy0 + 1, (bx1 - bx0) - 2, (by1 - by0) - 2))
+        self._log_cell_edit_debug(stage="begin_edit", widget=parent_canvas, card=card, world=(bx0, by0, bx1, by1), local=(vx0, vy0), hit=("cell", ti, display_row, "depth0"), editor_rect=(vx0 + 1, vy0 + 1, (bx1 - bx0) - 2, (by1 - by0) - 2))
         e.place(x=vx0 + 1, y=vy0 + 1, width=(bx1 - bx0) - 2, height=(by1 - by0) - 2)
         e.focus_set()
 
