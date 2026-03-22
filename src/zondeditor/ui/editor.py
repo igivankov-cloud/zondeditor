@@ -4534,6 +4534,12 @@ class GeoCanvasEditor(tk.Tk):
             return int(ti)
 
     def _rebuild_sounding_cards(self):
+        if self.__dict__.get("_editing", None):
+            self._dev_interaction_guard("rebuild_cards_during_edit", detail=f"editing={self._editing[:3]}")
+        if self.__dict__.get("_layer_drag", None):
+            self._dev_interaction_guard("rebuild_cards_during_drag", detail=f"drag={dict(self._layer_drag)}")
+        if bool(self.__dict__.get("_scroll_in_progress", False)):
+            self._dev_interaction_guard("rebuild_cards_during_scroll")
         cards: dict[int, SoundingCard] = {}
         previous = dict(self.__dict__.get("_sounding_cards", {}) or {})
         preserved_y = {int(ti): tuple(card.body_yview()) for ti, card in previous.items() if hasattr(card, "body_yview")}
@@ -4596,6 +4602,7 @@ class GeoCanvasEditor(tk.Tk):
             self._active_test_idx = None
         self._sounding_cards = cards
         self._shared_body_yview_fraction = shared_start
+        self._cards_rebuild_seq = int(self.__dict__.get("_cards_rebuild_seq", 0) or 0) + 1
         return cards
 
     def _bind_card_targets(self, card: SoundingCard):
@@ -4748,6 +4755,19 @@ class GeoCanvasEditor(tk.Tk):
             if card is not None and widget in (getattr(card, "body_canvas", None), getattr(card, "header_canvas", None)):
                 return card
         return None
+
+    def _dev_interaction_guard(self, tag: str, *, detail: str = "", assert_only: bool = False):
+        enabled = bool(self.__dict__.get("_debug_redraw_guards", False))
+        strict = bool(self.__dict__.get("_debug_redraw_guards_assert", False))
+        if not enabled and not strict:
+            return
+        msg = f"[REDRAW_GUARD] {tag}"
+        if detail:
+            msg = f"{msg} {detail}"
+        if enabled:
+            print(msg, file=sys.stderr)
+        if strict or assert_only:
+            raise AssertionError(msg)
 
     def _is_card_target_widget(self, widget) -> bool:
         if widget is None:
@@ -5043,7 +5063,11 @@ class GeoCanvasEditor(tk.Tk):
         return sorted(range(len(self.tests)), key=_key)
 
     def _refresh_display_order(self):
-        self.display_cols = self._sorted_display_indices()
+        new_order = self._sorted_display_indices()
+        old_order = list(getattr(self, "display_cols", []) or [])
+        self.display_cols = new_order
+        if old_order == new_order and len((getattr(self, "_sounding_cards", {}) or {})) == len(new_order):
+            return
         try:
             self._rebuild_sounding_cards()
         except Exception:
@@ -5057,7 +5081,12 @@ class GeoCanvasEditor(tk.Tk):
                 self.after_cancel(prev)
             except Exception:
                 pass
-        if getattr(self, "_editing", None):
+        if self.__dict__.get("_editing", None):
+            self._dev_interaction_guard("schedule_graph_redraw_during_edit", detail=f"editing={self._editing[:3]}")
+            self._graph_redraw_after_id = None
+            return
+        if self.__dict__.get("_layer_drag", None):
+            self._dev_interaction_guard("schedule_graph_redraw_during_drag", detail=f"drag={dict(self._layer_drag)}")
             self._graph_redraw_after_id = None
             return
         if not self._is_graph_panel_visible():
@@ -6069,6 +6098,15 @@ class GeoCanvasEditor(tk.Tk):
 
     def _redraw_graphs_now(self):
         self._graph_redraw_after_id = None
+        if self.__dict__.get("_editing", None):
+            self._dev_interaction_guard("redraw_graphs_now_during_edit", detail=f"editing={self._editing[:3]}")
+            return
+        if self.__dict__.get("_layer_drag", None):
+            self._dev_interaction_guard("redraw_graphs_now_during_drag", detail=f"drag={dict(self._layer_drag)}")
+            return
+        if bool(self.__dict__.get("_scroll_in_progress", False)):
+            self._dev_interaction_guard("redraw_graphs_now_during_scroll")
+            return
         self._clear_graph_layers()
         if not self._is_graph_panel_visible():
             return
@@ -7125,6 +7163,7 @@ class GeoCanvasEditor(tk.Tk):
         drag = getattr(self, "_layer_drag", None)
         if not drag:
             return
+        self._cancel_pending_graph_redraw()
         ti = int(drag.get("ti", -1))
         if self._is_test_locked(ti):
             return
@@ -7152,7 +7191,8 @@ class GeoCanvasEditor(tk.Tk):
                 snapped_depth = float(t.experience_column.intervals[boundary].from_depth) if 0 <= boundary < len(t.experience_column.intervals) else float(depth)
                 tip = f"Граница: {snapped_depth:.2f} м"
             self._set_status(tip)
-            self._redraw_graphs_now()
+            self._calc_layer_params_for_test(int(ti))
+            self._refresh_card_graph_layers(int(ti))
         except Exception:
             pass
 
@@ -7835,6 +7875,8 @@ class GeoCanvasEditor(tk.Tk):
 
 
     def _redraw(self):
+        if self.__dict__.get("_editing", None):
+            self._dev_interaction_guard("global_redraw_during_edit", detail=f"editing={self._editing[:3]}")
         self._sync_view_ribbon_state()
         self._refresh_display_order()
         try:
@@ -8581,6 +8623,7 @@ class GeoCanvasEditor(tk.Tk):
         self._tail_debug_log("TAIL_ENTRY", f"begin_edit SOURCE ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} source_before_create={repr(current_raw)} source_norm={repr(current)} len_field={len(vals)}", ti=int(ti))
         parent_canvas = getattr(card, "body_canvas", None) or self.canvas
         e = tk.Entry(parent_canvas, validate="key", validatecommand=(self.register(self._validate_cell_int_key), "%P"))
+        rebuild_seq_before_open = int(self.__dict__.get("_cards_rebuild_seq", 0) or 0)
         self._tail_debug_log("TAIL_ENTRY", f"begin_edit CREATED ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} entry_text_after_create={repr(e.get())}", ti=int(ti))
         e.insert(0, current)
         self._tail_debug_log("TAIL_ENTRY", f"begin_edit INSERTED ti={int(ti)} field={field} disp_r={display_row} data_i={int(row)} entry_text_after_insert={repr(e.get())}", ti=int(ti))
@@ -8598,6 +8641,12 @@ class GeoCanvasEditor(tk.Tk):
             # На некоторых темах/платформах выделение теряется из-за клика,
             # поэтому закрепляем поведение «видно + выделено целиком» после фокуса.
             def _tail_select_after_idle():
+                rebuild_seq_after_open = int(self.__dict__.get("_cards_rebuild_seq", 0) or 0)
+                if rebuild_seq_after_open != rebuild_seq_before_open:
+                    self._dev_interaction_guard(
+                        "rebuild_cards_same_tick_as_begin_edit",
+                        detail=f"ti={int(ti)} field={field} before={rebuild_seq_before_open} after={rebuild_seq_after_open}",
+                    )
                 e.focus_set()
                 e.icursor(tk.END)
                 e.select_range(0, tk.END)
@@ -9114,10 +9163,14 @@ class GeoCanvasEditor(tk.Tk):
             return self._on_mousewheel_x(event)
         delta = int(-1 * (event.delta / 120)) if event.delta else 0
         if delta != 0:
-            frac = self._scroll_all_cards_body_yview(delta, "units")
-            if frac is None:
-                self.canvas.yview_scroll(delta, "units")
-            self._sync_header_body_after_scroll()
+            self.__dict__["_scroll_in_progress"] = True
+            try:
+                frac = self._scroll_all_cards_body_yview(delta, "units")
+                if frac is None:
+                    self.canvas.yview_scroll(delta, "units")
+                self._sync_header_body_after_scroll()
+            finally:
+                self.__dict__["_scroll_in_progress"] = False
         return "break"
 
     def _on_mousewheel_linux(self, direction):
@@ -9126,10 +9179,14 @@ class GeoCanvasEditor(tk.Tk):
         self._end_edit(commit=True)
         if bool(getattr(self, "_shift_pressed", False)):
             return self._on_mousewheel_linux_x(direction)
-        frac = self._scroll_all_cards_body_yview(direction, "units")
-        if frac is None:
-            self.canvas.yview_scroll(direction, "units")
-        self._sync_header_body_after_scroll()
+        self.__dict__["_scroll_in_progress"] = True
+        try:
+            frac = self._scroll_all_cards_body_yview(direction, "units")
+            if frac is None:
+                self.canvas.yview_scroll(direction, "units")
+            self._sync_header_body_after_scroll()
+        finally:
+            self.__dict__["_scroll_in_progress"] = False
         return "break"
 
     def _get_body_view_top_canvas_y(self) -> float:

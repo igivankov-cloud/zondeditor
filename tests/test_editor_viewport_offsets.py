@@ -1056,6 +1056,21 @@ def test_schedule_graph_redraw_is_suppressed_while_inline_editor_is_active():
     assert editor._graph_redraw_after_id is None
 
 
+def test_refresh_display_order_skips_rebuild_when_order_is_unchanged():
+    editor = _make_editor()
+    editor.tests = [SimpleNamespace(tid=2, dt=""), SimpleNamespace(tid=1, dt="")]
+    editor.display_sort_mode = "tid"
+    editor.display_cols = [1, 0]
+    editor._sounding_cards = {1: object(), 0: object()}
+    rebuild_calls = []
+    editor._rebuild_sounding_cards = lambda: rebuild_calls.append("rebuild")
+
+    editor._refresh_display_order()
+
+    assert editor.display_cols == [1, 0]
+    assert rebuild_calls == []
+
+
 def test_begin_edit_cancels_pending_graph_redraw_before_placing_editor(monkeypatch):
     editor = _make_editor()
     editor.display_cols = [0]
@@ -1112,6 +1127,54 @@ def test_begin_edit_cancels_pending_graph_redraw_before_placing_editor(monkeypat
 
     assert cancelled == ["after-id"]
     assert editor._graph_redraw_after_id is None
+
+
+def test_redraw_graphs_now_is_suppressed_while_inline_editor_is_active():
+    editor = _make_editor()
+    editor.show_graphs = True
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor._editing = (0, 0, "qc", object(), 0)
+    calls = []
+    editor._clear_graph_layers = lambda: calls.append("clear")
+    editor._calc_layer_params_for_all_tests = lambda: calls.append("calc")
+    editor._recompute_graph_scales = lambda: calls.append("scales")
+    editor._refresh_display_order = lambda: calls.append("refresh")
+    editor._render_card_graph_layers = lambda ti: calls.append(("render", ti))
+
+    editor._redraw_graphs_now()
+
+    assert calls == []
+
+
+def test_layer_drag_motion_refreshes_only_target_card():
+    editor = _make_editor()
+    editor.tests = [SimpleNamespace(tid=1, locked=False, experience_column=SimpleNamespace(intervals=[SimpleNamespace(from_depth=0.0)], column_depth_end=1.0))]
+    editor._layer_drag = {"ti": 0, "boundary": 0, "mode": "boundary"}
+    editor._is_test_locked = lambda ti: False
+    editor._card_for_widget = lambda widget: SimpleNamespace(body_canvas=widget, body_local_to_world=lambda x, y: (x, y))
+    editor._canvas_y_to_depth = lambda y: 1.25
+    editor._ensure_test_experience_column = lambda t: t.experience_column
+    editor._calc_layer_params_for_test = lambda ti: calls.append(("calc", ti))
+    editor._refresh_card_graph_layers = lambda ti: calls.append(("refresh", ti))
+    editor._cancel_pending_graph_redraw = lambda: calls.append("cancel")
+    editor._set_status = lambda text: calls.append(("status", text))
+    event = SimpleNamespace(widget=_DummyBodyCanvas(), x=10, y=20)
+    calls = []
+
+    import src.zondeditor.ui.editor as editor_module_local
+    original_move = editor_module_local.move_experience_column_boundary
+    try:
+        editor_module_local.move_experience_column_boundary = lambda column, boundary, depth: SimpleNamespace(
+            intervals=[SimpleNamespace(from_depth=depth)],
+            column_depth_end=depth + 1.0,
+        )
+        editor._on_layer_drag_motion(event)
+    finally:
+        editor_module_local.move_experience_column_boundary = original_move
+
+    assert "cancel" in calls
+    assert ("calc", 0) in calls
+    assert ("refresh", 0) in calls
 
 
 def test_center_toplevel_withdraws_before_showing_centered_window():
