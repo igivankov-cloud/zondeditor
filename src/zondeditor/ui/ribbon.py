@@ -414,6 +414,10 @@ class RibbonView(ttk.Frame):
     def _open_ige_notes(self, ige_id: str, current_text: str):
         root = self.winfo_toplevel()
         dlg = tk.Toplevel(root)
+        try:
+            dlg.withdraw()
+        except Exception:
+            pass
         dlg.title(f"Описание {ige_id}")
         dlg.transient(root)
         dlg.grab_set()
@@ -425,6 +429,7 @@ class RibbonView(ttk.Frame):
             dx = rx + max((rw - dw) // 2, 0)
             dy = ry + max((rh - dh) // 2, 0)
             dlg.geometry(f"{dw}x{dh}+{dx}+{dy}")
+            dlg.deiconify()
         except Exception:
             pass
         frm = ttk.Frame(dlg, padding=8)

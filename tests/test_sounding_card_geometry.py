@@ -39,6 +39,21 @@ class _DummyCanvas:
         return self._y0 + float(value)
 
 
+class _CountingCanvas(_DummyCanvas):
+    def __init__(self):
+        super().__init__()
+        self.configure_calls = 0
+        self.yview_calls = 0
+
+    def configure(self, **kwargs):
+        self.configure_calls += 1
+        super().configure(**kwargs)
+
+    def yview_moveto(self, frac):
+        self.yview_calls += 1
+        super().yview_moveto(frac)
+
+
 class _DummyFont:
     def __init__(self, size):
         self.size = size
@@ -340,6 +355,36 @@ def test_sounding_card_body_scroll_and_redraw_lifecycle_are_card_owned():
     assert calls[-2:] == ["graph", "layers"]
     assert snapshot["body_yview"] == card.body_yview()
     assert "card_redraw_lifecycle" in card.render_ownership_snapshot()["owned"]
+
+
+def test_sounding_card_scroll_moves_view_without_reconfiguring_canvas_each_step():
+    editor = SimpleNamespace(
+        _header_world_to_root=lambda x, y: (int(x), int(y)),
+        _body_world_to_root=lambda x, y, ti=None: (int(x), int(y)),
+    )
+    g = SoundingCardGeometry(
+        card_x0=50.0,
+        card_y0=0.0,
+        card_width=326.0,
+        header_height=72.0,
+        body_height=300.0,
+        footer_height=0.0,
+        table_width=176.0,
+        graph_width=150.0,
+        depth_width=64.0,
+        value_width=56.0,
+    )
+    card = SoundingCard(None, editor=editor, test_index=3, geometry=g)
+    canvas = _CountingCanvas()
+    card.body_canvas = canvas
+
+    card.set_body_scroll_context(view_height=100.0, content_height=400.0)
+    configure_after_context = canvas.configure_calls
+    card.body_yview_moveto(0.25)
+    card.body_yview_scroll(1, "units")
+
+    assert canvas.configure_calls == configure_after_context
+    assert canvas.yview_calls >= 3
 
 
 def test_sounding_card_body_canvas_is_render_target_for_graph_and_overlay_coords():

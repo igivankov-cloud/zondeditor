@@ -196,6 +196,28 @@ class SoundingCard:
     def update_geometry(self, geometry: SoundingCardGeometry):
         self.geometry = geometry
 
+    def dispose(self):
+        for host_attr, window_attr in (("_header_host", "_header_window_id"), ("_body_host", "_body_window_id")):
+            host = getattr(self, host_attr, None)
+            window_id = getattr(self, window_attr, None)
+            if host is not None and window_id is not None and hasattr(host, "delete"):
+                try:
+                    host.delete(window_id)
+                except Exception:
+                    pass
+                setattr(self, window_attr, None)
+        for attr_name in ("header_canvas", "body_canvas"):
+            widget = getattr(self, attr_name, None)
+            if widget is not None:
+                try:
+                    widget.destroy()
+                except Exception:
+                    pass
+                setattr(self, attr_name, None)
+        self._header_host = None
+        self._body_host = None
+
+
     def _widget_master(self, widget):
         if widget is None:
             return None
@@ -308,16 +330,23 @@ class SoundingCard:
                 pass
         return float(self._body_y0)
 
-    def _sync_body_canvas_view(self):
+    def _sync_body_canvas_view(self, *, reconfigure: bool = True):
         if self.body_canvas is None:
             return
-        try:
-            self.body_canvas.configure(
-                height=int(max(1.0, float(self._body_view_height or self.geometry.body_height))),
-                scrollregion=(0, 0, int(self.geometry.card_width), int(max(self.geometry.body_height, self._body_content_height))),
-            )
-        except Exception as exc:
-            self._log_mount_error("sync body_canvas", exc, host=self._body_host, widget=self.body_canvas)
+        needs_reconfigure = bool(reconfigure)
+        if not needs_reconfigure and hasattr(self.body_canvas, "cget"):
+            try:
+                needs_reconfigure = not bool(self.body_canvas.cget("scrollregion"))
+            except Exception:
+                needs_reconfigure = True
+        if needs_reconfigure:
+            try:
+                self.body_canvas.configure(
+                    height=int(max(1.0, float(self._body_view_height or self.geometry.body_height))),
+                    scrollregion=(0, 0, int(self.geometry.card_width), int(max(self.geometry.body_height, self._body_content_height))),
+                )
+            except Exception as exc:
+                self._log_mount_error("sync body_canvas", exc, host=self._body_host, widget=self.body_canvas)
         if hasattr(self.body_canvas, "yview_moveto"):
             total = max(1.0, float(self._body_content_height))
             frac = min(max(float(self._body_y0) / total, 0.0), 1.0)
@@ -337,13 +366,13 @@ class SoundingCard:
     def body_yview_moveto(self, fraction: float):
         total = max(1.0, float(self._body_content_height))
         self._body_y0 = min(max(float(fraction) * total, 0.0), self.max_body_y0())
-        self._sync_body_canvas_view()
+        self._sync_body_canvas_view(reconfigure=False)
         return self.body_yview()
 
     def body_yview_scroll(self, number: int, what: str = "units"):
         step = 24.0 if str(what) == "units" else max(1.0, float(self._body_view_height) * 0.9)
         self._body_y0 = min(max(float(self._body_y0) + (float(number) * step), 0.0), self.max_body_y0())
-        self._sync_body_canvas_view()
+        self._sync_body_canvas_view(reconfigure=False)
         return self.body_yview()
 
     def body_canvasy(self, value: float) -> float:
@@ -774,18 +803,27 @@ class SoundingCard:
         groundwater_level: float | None = None,
         groundwater_color: str = "#2f6fff",
         nodata_text: str = "нет данных",
+        draw_frame: bool = True,
+        draw_curves: bool = True,
     ):
         if not visible:
             return rect
         canvas = self.body_render_canvas(canvas)
         x0, y0, x1, y1 = self._map_body_rect(canvas, tuple(float(v) for v in rect))
-        canvas.create_rectangle(x0, y0, x1, y1, fill=frame_fill, outline=frame_outline)
+        graph_tags = ("graph_axes", f"graph_axes_{self.test_index}")
+        qc_tags = ("graph_qc", f"graph_qc_{self.test_index}")
+        fs_tags = ("graph_fs", f"graph_fs_{self.test_index}")
+        nodata_tags = ("graph_nodata", f"graph_nodata_{self.test_index}")
+        if draw_frame:
+            canvas.create_rectangle(x0, y0, x1, y1, fill=frame_fill, outline=frame_outline, tags=graph_tags)
         if groundwater_level is not None:
             _gx, groundwater_level = self._map_body_point(canvas, rect[0], float(groundwater_level))
-        if groundwater_level is not None and y0 <= float(groundwater_level) <= y1:
-            canvas.create_line(x0 + 2, float(groundwater_level), x1 - 2, float(groundwater_level), fill=groundwater_color, width=2, dash=(6, 3))
+        if draw_frame and groundwater_level is not None and y0 <= float(groundwater_level) <= y1:
+            canvas.create_line(x0 + 2, float(groundwater_level), x1 - 2, float(groundwater_level), fill=groundwater_color, width=2, dash=(6, 3), tags=graph_tags)
+        if not draw_curves:
+            return rect
         if not y_points:
-            canvas.create_text((x0 + x1) / 2.0, (y0 + y1) / 2.0, text=nodata_text, fill="#666", font=("Segoe UI", 8))
+            canvas.create_text((x0 + x1) / 2.0, (y0 + y1) / 2.0, text=nodata_text, fill="#666", font=("Segoe UI", 8), tags=nodata_tags)
             return rect
 
         qmax = max(float(qmax), 0.1)
@@ -807,9 +845,9 @@ class SoundingCard:
             fs_pts.extend([_sx(fv, fmax), float(pyy)])
 
         if len(qc_pts) >= 4:
-            canvas.create_line(*qc_pts, fill=qc_color, width=2, smooth=False)
+            canvas.create_line(*qc_pts, fill=qc_color, width=2, smooth=False, tags=qc_tags)
         if len(fs_pts) >= 4:
-            canvas.create_line(*fs_pts, fill=fs_color, width=2, smooth=False)
+            canvas.create_line(*fs_pts, fill=fs_color, width=2, smooth=False, tags=fs_tags)
         return rect
 
     def render_ige(
@@ -828,12 +866,14 @@ class SoundingCard:
         canvas = self.body_render_canvas(canvas)
         label_spans: list[dict] = []
         plot_hitboxes: list[dict] = []
+        layer_tags = ("layers_overlay", f"layers_overlay_{self.test_index}")
+        label_tags = ("layers_label_chip", f"layers_label_chip_{self.test_index}")
         for interval in intervals:
             world_rect = (float(interval["x0"]), float(interval["y0"]), float(interval["x1"]), float(interval["y1"]))
             x0, y0, x1, y1 = self._map_body_rect(canvas, world_rect)
             soil_type = str(interval.get("soil_type") or "")
             fill_color = str(fill_resolver(soil_type))
-            canvas.create_rectangle(x0, y0, x1, y1, fill=fill_color, outline="")
+            canvas.create_rectangle(x0, y0, x1, y1, fill=fill_color, outline="", tags=layer_tags)
             hatch_drawer(x0, y0, x1, y1, soil_type, canvas=canvas, logical_rect=world_rect)
             plot_hitboxes.append(self.make_hitbox(kind="interval", bbox=world_rect, extra={"interval_index": int(interval.get("interval_index", 0)), "ige_id": interval.get("ige_id"), "top": float(interval.get("top", 0.0)), "bot": float(interval.get("bot", 0.0))}))
             text = str(interval.get("ige_id") or "")
@@ -850,8 +890,8 @@ class SoundingCard:
                     chip_h = th + 4.0
                     if chip_w <= max_w and chip_h <= max_h:
                         bbox = (cx - chip_w * 0.5, cy - chip_h * 0.5, cx + chip_w * 0.5, cy + chip_h * 0.5)
-                        canvas.create_rectangle(*bbox, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"])
-                        canvas.create_text(cx, cy, text=text, fill=layer_ui_colors["text"], activefill=layer_ui_colors["text"], font=("Segoe UI", font_size, "bold"))
+                        canvas.create_rectangle(*bbox, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"], tags=layer_tags + label_tags)
+                        canvas.create_text(cx, cy, text=text, fill=layer_ui_colors["text"], activefill=layer_ui_colors["text"], font=("Segoe UI", font_size, "bold"), tags=layer_tags + label_tags)
                         label_spans.append(self.make_hitbox(kind="label", bbox=(world_rect[0], world_rect[1], world_rect[2], world_rect[3]), extra={"depth": float(interval.get("depth", 0.0))}))
                         break
         return plot_hitboxes, label_spans
@@ -869,30 +909,31 @@ class SoundingCard:
         canvas = self.body_render_canvas(canvas)
         handle_hits: list[dict] = []
         depth_hits: list[dict] = []
+        overlay_tags = ("layer_handles", f"layer_handles_{self.test_index}")
         for spec in overlay_specs:
             kind = str(spec.get("kind") or "")
             if kind == "line":
                 x0, y0 = self._map_body_point(canvas, spec["points"][0], spec["points"][1])
                 x1, y1 = self._map_body_point(canvas, spec["points"][2], spec["points"][3])
-                canvas.create_line(x0, y0, x1, y1, fill=spec.get("fill", layer_ui_colors["line"]), width=spec.get("width", 1), dash=spec.get("dash"))
+                canvas.create_line(x0, y0, x1, y1, fill=spec.get("fill", layer_ui_colors["line"]), width=spec.get("width", 1), dash=spec.get("dash"), tags=overlay_tags)
                 continue
             if kind == "handle":
                 world_bbox = tuple(float(v) for v in spec["bbox"])
                 x0, y0, x1, y1 = self._map_body_rect(canvas, world_bbox)
-                canvas.create_rectangle(x0, y0, x1, y1, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"], activewidth=2)
+                canvas.create_rectangle(x0, y0, x1, y1, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"], activewidth=2, tags=overlay_tags)
                 handle_hits.append(self.make_hitbox(kind=str(spec.get("hit_kind", "boundary")), bbox=(world_bbox[0] - 1, world_bbox[1] - 1, world_bbox[2] + 1, world_bbox[3] + 1), boundary=spec.get("boundary"), extra={"tag": spec.get("tag")}))
                 continue
             if kind == "depth_box":
                 world_bbox = tuple(float(v) for v in spec["bbox"])
                 x0, y0, x1, y1 = self._map_body_rect(canvas, world_bbox)
-                canvas.create_rectangle(x0, y0, x1, y1, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"])
-                canvas.create_text((x0 + x1) / 2.0, (y0 + y1) / 2.0, text=str(spec.get("text", "")), fill=layer_ui_colors["text"], activefill=layer_ui_colors["text"], font=("Segoe UI", 7))
+                canvas.create_rectangle(x0, y0, x1, y1, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"], tags=overlay_tags)
+                canvas.create_text((x0 + x1) / 2.0, (y0 + y1) / 2.0, text=str(spec.get("text", "")), fill=layer_ui_colors["text"], activefill=layer_ui_colors["text"], font=("Segoe UI", 7), tags=overlay_tags)
                 depth_hits.append(self.make_hitbox(kind=str(spec.get("hit_kind", "boundary_depth_edit")), bbox=(world_bbox[0], world_bbox[1] - 1.0, world_bbox[2], world_bbox[3] + 1.0), boundary=spec.get("boundary")))
                 continue
             if kind in {"plus", "minus"}:
                 world_bbox = tuple(float(v) for v in spec["bbox"])
                 x0, y0, x1, y1 = self._map_body_rect(canvas, world_bbox)
-                canvas.create_rectangle(x0, y0, x1, y1, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"])
-                canvas.create_text((x0 + x1) / 2.0, (y0 + y1) / 2.0, text=("+" if kind == "plus" else "−"), fill=layer_ui_colors["text"], activefill=layer_ui_colors["text"], font=("Segoe UI", 9, "bold"))
+                canvas.create_rectangle(x0, y0, x1, y1, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"], tags=overlay_tags)
+                canvas.create_text((x0 + x1) / 2.0, (y0 + y1) / 2.0, text=("+" if kind == "plus" else "−"), fill=layer_ui_colors["text"], activefill=layer_ui_colors["text"], font=("Segoe UI", 9, "bold"), tags=overlay_tags)
                 handle_hits.append(self.make_hitbox(kind=str(spec.get("hit_kind", kind)), bbox=(world_bbox[0] - 4.0, world_bbox[1] - 4.0, world_bbox[2] + 4.0, world_bbox[3] + 4.0), boundary=spec.get("boundary"), extra={"tag": spec.get("tag")}))
         return handle_hits, depth_hits

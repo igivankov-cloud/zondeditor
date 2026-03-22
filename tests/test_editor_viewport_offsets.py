@@ -49,6 +49,7 @@ class _DummyBodyCanvas:
         self._items = []
         self._next_item_id = 1
         self.bindings = {}
+        self.raised_tags = []
 
     def bbox(self, _tag):
         return self._bbox_all
@@ -119,6 +120,9 @@ class _DummyBodyCanvas:
 
     def bind(self, event, callback):
         self.bindings[event] = callback
+
+    def tag_raise(self, tag, above_this=None):
+        self.raised_tags.append((tag, above_this))
 
     def delete(self, *args, **kwargs):
         self.draw_calls.append(("delete", args, kwargs))
@@ -437,6 +441,132 @@ def test_redraw_graphs_now_uses_card_body_canvas_not_shared_editor_canvas():
     assert editor._layer_depth_box_hitbox
 
 
+def test_redraw_graphs_now_keeps_hatch_visible_under_graph_frame():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(qc=["10"], fs=["5"], depth=["0.00"], tid=1)]
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.show_graphs = True
+    editor.show_geology_column = True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 320), xview_fractions=lambda: (0.0, 1.0))
+    editor._grid_units = [("row", 0)]
+    editor._grid_row_maps = {0: {0: 0}}
+    editor._row_y_bounds = lambda row: (0.0, 120.0)
+    editor._calc_layer_params_for_all_tests = lambda: None
+    editor._recompute_graph_scales = lambda: setattr(editor, "graph_qc_max_mpa", 30.0) or setattr(editor, "graph_fs_max_kpa", 286.0) or setattr(editor, "graph_qc_max_source", "data") or setattr(editor, "graph_fs_max_source", "data") or setattr(editor, "graph_qc_max_display", 30.0) or setattr(editor, "graph_fs_max_display", 286.0)
+    editor._calc_qc_fs_from_del = lambda q, f: (float(q), float(f))
+    editor._depth_to_canvas_y = lambda d: float(d) * 100.0
+    editor._ensure_test_experience_column = lambda t: SimpleNamespace(column_depth_start=0.0, column_depth_end=1.0, intervals=[SimpleNamespace(from_depth=0.0, to_depth=1.0, ige_id="ИГЭ-1")])
+    editor._column_interval_ige_id = lambda lyr: "ИГЭ-1"
+    editor._ensure_ige_entry = lambda ige_id: {"soil_type": "суглинок"}
+    editor._geology_layer_fill_color = lambda soil: "#eee"
+    editor.cpt_calc_settings = {}
+    editor._refresh_display_order = lambda: None
+    editor._graph_rect_for_test = lambda ti: (226.0, 0.0, 376.0, 120.0)
+    editor.canvas = SimpleNamespace(
+        delete=lambda *args, **kwargs: None,
+        create_rectangle=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("shared canvas should not draw")),
+        create_line=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("shared canvas should not draw")),
+        create_text=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("shared canvas should not draw")),
+    )
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(support_items=True)
+    font_backup = editor_module.tkfont.Font
+    editor_module.tkfont.Font = lambda font=None: SimpleNamespace(measure=lambda text: len(text) * 4, metrics=lambda name: 8)
+    try:
+        editor._redraw_graphs_now()
+    finally:
+        editor_module.tkfont.Font = font_backup
+
+    hatch_lines = [call for call in card.body_canvas.draw_calls if call[0] == "line" and "layers_overlay" in call[2].get("tags", ())]
+    frame_rectangles = [call for call in card.body_canvas.draw_calls if call[0] == "rectangle" and call[2].get("tags") == ("graph_axes", "graph_axes_0")]
+
+    assert hatch_lines
+    assert frame_rectangles
+    assert frame_rectangles[0][2]["fill"] == ""
+
+
+def test_redraw_graphs_now_raises_ige_label_chip_above_graph_curves():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(qc=["10"], fs=["5"], depth=["0.00"], tid=1)]
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.show_graphs = True
+    editor.show_geology_column = True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 320), xview_fractions=lambda: (0.0, 1.0))
+    editor._grid_units = [("row", 0)]
+    editor._grid_row_maps = {0: {0: 0}}
+    editor._row_y_bounds = lambda row: (0.0, 120.0)
+    editor._calc_layer_params_for_all_tests = lambda: None
+    editor._recompute_graph_scales = lambda: setattr(editor, "graph_qc_max_mpa", 30.0) or setattr(editor, "graph_fs_max_kpa", 286.0) or setattr(editor, "graph_qc_max_source", "data") or setattr(editor, "graph_fs_max_source", "data") or setattr(editor, "graph_qc_max_display", 30.0) or setattr(editor, "graph_fs_max_display", 286.0)
+    editor._calc_qc_fs_from_del = lambda q, f: (float(q), float(f))
+    editor._depth_to_canvas_y = lambda d: float(d) * 100.0
+    editor._ensure_test_experience_column = lambda t: SimpleNamespace(column_depth_start=0.0, column_depth_end=1.0, intervals=[SimpleNamespace(from_depth=0.0, to_depth=1.0, ige_id="ИГЭ-1")])
+    editor._column_interval_ige_id = lambda lyr: "ИГЭ-1"
+    editor._ensure_ige_entry = lambda ige_id: {"soil_type": "суглинок"}
+    editor._geology_layer_fill_color = lambda soil: "#eee"
+    editor.cpt_calc_settings = {}
+    editor._refresh_display_order = lambda: None
+    editor._graph_rect_for_test = lambda ti: (226.0, 0.0, 376.0, 120.0)
+    editor.canvas = SimpleNamespace(delete=lambda *args, **kwargs: None)
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(support_items=True)
+    font_backup = editor_module.tkfont.Font
+    editor_module.tkfont.Font = lambda font=None: SimpleNamespace(measure=lambda text: len(text) * 4, metrics=lambda name: 8)
+    try:
+        editor._redraw_graphs_now()
+    finally:
+        editor_module.tkfont.Font = font_backup
+
+    assert ("layers_label_chip_0", None) in card.body_canvas.raised_tags
+
+
+def test_draw_layer_hatch_converts_world_logical_rect_to_card_local_canvas_coords():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None)
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(support_items=True, y0=400.0)
+    editor._sounding_cards = {0: card}
+
+    editor._draw_layer_hatch(
+        176.0,
+        220.0,
+        326.0,
+        360.0,
+        "суглинок",
+        tags=("layers_overlay", "layers_overlay_0"),
+        logical_rect=(card.geometry.card_x0 + 176.0, 620.0, card.geometry.card_x0 + 326.0, 760.0),
+        canvas=card.body_canvas,
+    )
+
+    hatch_lines = [call for call in card.body_canvas.draw_calls if call[0] == "line" and "layers_overlay" in call[2].get("tags", ())]
+
+    assert hatch_lines
+
+
 def test_redraw_uses_card_hosted_header_and_body_targets_not_shared_canvases():
     editor = _make_editor()
     editor.tests = [SimpleNamespace(tid=1, dt="01.01.2026 10:00", export_on=True, locked=False, qc=["10"], fs=["5"], depth=["0.00"])]
@@ -723,6 +853,194 @@ def test_body_alignment_stays_synced_after_shared_vertical_scroll():
     assert card1.body_world_to_local(card1.geometry.card_x0 + 20.0, 130.0)[1] == 30.0
     assert editor._body_world_to_root(card1.geometry.card_x0 + 20.0, 130.0, ti=1) == (1420, 2030)
 
+
+
+def test_card_body_canvas_binds_drag_motion_and_release_for_layer_handles():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.canvas = _DummyBodyCanvas(support_items=True)
+    editor.hcanvas = _DummyBodyCanvas(support_items=True)
+    editor.soundings_viewport = SimpleNamespace(strip=None)
+
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(support_items=True)
+    editor._bind_card_targets(card)
+
+    assert "<B1-Motion>" in card.body_canvas.bindings
+    assert "<ButtonRelease-1>" in card.body_canvas.bindings
+
+
+def test_layer_drag_motion_uses_card_body_canvas_coordinates():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(tid=1, experience_column=SimpleNamespace(column_depth_end=2.0, intervals=[SimpleNamespace(from_depth=0.0), SimpleNamespace(from_depth=1.0)]))]
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None)
+    editor.canvas = _DummyBodyCanvas(y0=0.0)
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(y0=400.0)
+    editor._sounding_cards = {0: card}
+    editor._layer_drag = {"ti": 0, "boundary": 1, "mode": "boundary"}
+    editor._is_test_locked = lambda ti: False
+    captured = []
+    editor._canvas_y_to_depth = lambda y: captured.append(float(y)) or 1.25
+    editor._ensure_test_experience_column = lambda t: t.experience_column
+    editor._set_status = lambda msg: None
+    editor._redraw_graphs_now = lambda: None
+
+    import src.zondeditor.ui.editor as editor_module
+    move_backup = editor_module.move_experience_column_boundary
+    editor_module.move_experience_column_boundary = lambda column, boundary, depth: column
+    try:
+        editor._on_layer_drag_motion(SimpleNamespace(widget=card.body_canvas, x=10, y=20))
+    finally:
+        editor_module.move_experience_column_boundary = move_backup
+
+    assert captured == [420.0]
+
+
+def test_layer_drag_release_refreshes_only_the_active_card():
+    editor = _make_editor()
+    editor.display_cols = [0, 1]
+    editor.tests = [SimpleNamespace(tid=1), SimpleNamespace(tid=2)]
+    editor._layer_drag = {"ti": 0, "boundary": 1, "mode": "boundary"}
+    editor._layer_handle_hitbox = [{"ti": 0, "kind": "boundary"}, {"ti": 1, "kind": "boundary"}]
+    editor._layer_depth_box_hitbox = [{"ti": 0, "kind": "boundary_depth_edit"}, {"ti": 1, "kind": "boundary_depth_edit"}]
+    editor._layer_plot_hitbox = [{"ti": 0, "kind": "interval"}, {"ti": 1, "kind": "interval"}]
+    editor._layer_label_hitbox = [{"ti": 0, "kind": "label"}, {"ti": 1, "kind": "label"}]
+    refreshed = []
+    calc_calls = []
+    redraw_calls = []
+    schedule_calls = []
+    editor._calc_layer_params_for_test = lambda ti: calc_calls.append(int(ti))
+    editor._refresh_card_graph_layers = lambda ti: refreshed.append(int(ti))
+    editor._redraw = lambda: redraw_calls.append("all")
+    editor.schedule_graph_redraw = lambda: schedule_calls.append("scheduled")
+
+    editor._on_layer_drag_release(SimpleNamespace(widget=None))
+
+    assert calc_calls == [0]
+    assert refreshed == [0]
+    assert redraw_calls == []
+    assert schedule_calls == []
+    assert editor._layer_drag is None
+
+
+def test_add_unassigned_ige_from_ribbon_does_not_schedule_global_graph_redraw():
+    editor = _make_editor()
+    editor.ige_registry = {"ИГЭ-1": {"label": "ИГЭ-1", "ordinal": 1}}
+    editor._push_undo = lambda: None
+    editor._next_free_ige_ordinal = lambda: 2
+    editor._next_free_ige_id = lambda: "ige-2-1"
+    editor._ensure_ige_cpt_fields = lambda payload: dict(payload)
+    synced = []
+    focused = []
+    scheduled = []
+    editor._sync_layers_panel = lambda: synced.append("layers")
+    editor.schedule_graph_redraw = lambda: scheduled.append("graphs")
+    editor.ribbon_view = SimpleNamespace(focus_ige_row=lambda ige_id: focused.append(ige_id))
+
+    editor._add_unassigned_ige_from_ribbon()
+
+    assert "ige-2-1" in editor.ige_registry
+    assert synced == ["layers"]
+    assert focused == ["ige-2-1"]
+    assert scheduled == []
+
+
+def test_refresh_card_graph_layers_replaces_hitboxes_only_for_target_card():
+    editor = _make_editor()
+    editor.display_cols = [0, 1]
+    editor.tests = [SimpleNamespace(tid=1), SimpleNamespace(tid=2)]
+    editor._layer_handle_hitbox = [{"ti": 0, "kind": "boundary", "marker": "old0"}, {"ti": 1, "kind": "boundary", "marker": "keep1"}]
+    editor._layer_depth_box_hitbox = [{"ti": 0, "kind": "boundary_depth_edit", "marker": "old0"}, {"ti": 1, "kind": "boundary_depth_edit", "marker": "keep1"}]
+    editor._layer_plot_hitbox = [{"ti": 0, "kind": "interval", "marker": "old0"}, {"ti": 1, "kind": "interval", "marker": "keep1"}]
+    editor._layer_label_hitbox = [{"ti": 0, "kind": "label", "marker": "old0"}, {"ti": 1, "kind": "label", "marker": "keep1"}]
+    editor._clear_card_graph_layers = lambda ti: None
+    editor._render_card_graph_layers = lambda ti: (
+        editor._layer_handle_hitbox.append({"ti": ti, "kind": "boundary", "marker": "new0"}),
+        editor._layer_depth_box_hitbox.append({"ti": ti, "kind": "boundary_depth_edit", "marker": "new0"}),
+        editor._layer_plot_hitbox.append({"ti": ti, "kind": "interval", "marker": "new0"}),
+        editor._layer_label_hitbox.append({"ti": ti, "kind": "label", "marker": "new0"}),
+    )
+
+    editor._refresh_card_graph_layers(0)
+
+    assert [hit["marker"] for hit in editor._layer_handle_hitbox] == ["keep1", "new0"]
+    assert [hit["marker"] for hit in editor._layer_depth_box_hitbox] == ["keep1", "new0"]
+    assert [hit["marker"] for hit in editor._layer_plot_hitbox] == ["keep1", "new0"]
+    assert [hit["marker"] for hit in editor._layer_label_hitbox] == ["keep1", "new0"]
+
+
+def test_center_toplevel_withdraws_before_showing_centered_window():
+    editor = _make_editor()
+    editor.winfo_rootx = lambda: 100
+    editor.winfo_rooty = lambda: 200
+    editor.winfo_width = lambda: 500
+    editor.winfo_height = lambda: 400
+    editor.update_idletasks = lambda: None
+    calls = []
+
+    class _DummyWin:
+        def withdraw(self):
+            calls.append("withdraw")
+        def update_idletasks(self):
+            calls.append("update")
+        def winfo_reqwidth(self):
+            return 120
+        def winfo_reqheight(self):
+            return 80
+        def geometry(self, value):
+            calls.append(("geometry", value))
+        def deiconify(self):
+            calls.append("deiconify")
+
+    editor._center_toplevel(_DummyWin(), parent=editor)
+
+    assert calls[0] == "withdraw"
+    assert calls[-1] == "deiconify"
+
+
+def test_center_child_withdraws_before_showing_centered_window():
+    editor = _make_editor()
+    editor.winfo_rootx = lambda: 100
+    editor.winfo_rooty = lambda: 200
+    editor.winfo_width = lambda: 500
+    editor.winfo_height = lambda: 400
+    calls = []
+
+    class _DummyWin:
+        def withdraw(self):
+            calls.append("withdraw")
+        def update_idletasks(self):
+            calls.append("update")
+        def winfo_reqwidth(self):
+            return 120
+        def winfo_reqheight(self):
+            return 80
+        def geometry(self, value):
+            calls.append(("geometry", value))
+        def deiconify(self):
+            calls.append("deiconify")
+
+    editor._center_child(_DummyWin())
+
+    assert calls[0] == "withdraw"
+    assert calls[-1] == "deiconify"
 
 
 def test_compact_toggle_redraw_clears_stale_body_rows_from_card_canvas():

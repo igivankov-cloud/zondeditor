@@ -603,7 +603,8 @@ class GeoCanvasEditor(tk.Tk):
                     if getattr(t, "experience_column", None) is not None
                     else None
                 ),
-                "export_on": bool(getattr(t, "export_on", True)),
+                "show_ige_column": bool(getattr(t, "show_ige_column", getattr(t, "export_on", True))),
+                "export_on": bool(getattr(t, "show_ige_column", getattr(t, "export_on", True))),
                 "locked": bool(getattr(t, "locked", False)),
                 "block": None if t.block is None else {
                     "order_index": t.block.order_index,
@@ -798,7 +799,7 @@ class GeoCanvasEditor(tk.Tk):
             )
             self.tests.append(t)
             try:
-                t.export_on = bool(d.get('export_on', True))
+                t.show_ige_column = bool(d.get('show_ige_column', d.get('export_on', True)))
             except Exception:
                 pass
             try:
@@ -1533,7 +1534,6 @@ class GeoCanvasEditor(tk.Tk):
         new_ige_id = self._next_free_ige_id()
         self.ige_registry[new_ige_id] = self._ensure_ige_cpt_fields({"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}, "label": self._ige_default_label(new_ord), "ordinal": int(new_ord)})
         self._sync_layers_panel()
-        self.schedule_graph_redraw()
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.focus_ige_row(new_ige_id)
 
@@ -4527,6 +4527,12 @@ class GeoCanvasEditor(tk.Tk):
             inclinometer_width=float(incl_w),
         )
 
+    def _card_cache_key(self, ti: int) -> int:
+        try:
+            return int(getattr(self.tests[int(ti)], "tid", ti) or ti)
+        except Exception:
+            return int(ti)
+
     def _rebuild_sounding_cards(self):
         cards: dict[int, SoundingCard] = {}
         previous = dict(self.__dict__.get("_sounding_cards", {}) or {})
@@ -4541,10 +4547,12 @@ class GeoCanvasEditor(tk.Tk):
         view_h = float(getattr(self, "_card_body_view_height", lambda: getattr(self.canvas, "winfo_height", lambda: self._total_body_height())())())
         body_h = float(self._total_body_height())
         for col, ti in enumerate(getattr(self, "display_cols", []) or []):
-            card = previous.get(int(ti))
+            cache_key = self._card_cache_key(int(ti))
+            card = previous.get(cache_key)
             if card is None:
                 card = SoundingCard(master, editor=self, test_index=int(ti), geometry=self._sounding_card_geometry(col))
             else:
+                card.test_index = int(ti)
                 card.update_geometry(self._sounding_card_geometry(col))
             start = shared_start
             card.set_body_scroll_context(view_height=view_h, content_height=body_h)
@@ -4559,7 +4567,33 @@ class GeoCanvasEditor(tk.Tk):
                 self._bind_card_targets(card)
             except Exception:
                 pass
-            cards[int(ti)] = card
+            cards[int(cache_key)] = card
+        previous_keys = set(previous.keys())
+        current_keys = set(cards.keys())
+        removed_keys = previous_keys - current_keys
+        added_keys = current_keys - previous_keys
+        structure_changed = bool(removed_keys or added_keys)
+        for cache_key in removed_keys:
+            stale_card = previous.get(cache_key)
+            if stale_card is None:
+                continue
+            try:
+                stale_card.dispose()
+            except Exception:
+                pass
+        hover = getattr(self, "_hover", None)
+        if structure_changed:
+            self._hover = None
+        elif isinstance(hover, tuple) and len(hover) >= 2:
+            try:
+                hover_ti = int(hover[1])
+            except Exception:
+                hover_ti = -1
+            if hover_ti < 0 or hover_ti >= len(getattr(self, "tests", []) or []):
+                self._hover = None
+        active_ti = self.__dict__.get("_active_test_idx", None)
+        if active_ti is not None and not (0 <= int(active_ti) < len(getattr(self, "tests", []) or [])):
+            self._active_test_idx = None
         self._sounding_cards = cards
         self._shared_body_yview_fraction = shared_start
         return cards
@@ -4575,6 +4609,8 @@ class GeoCanvasEditor(tk.Tk):
                 widget.bind("<Button-1>", self._on_left_click)
                 if widget is getattr(card, "body_canvas", None):
                     widget.bind("<Double-1>", self._on_double_click)
+                    widget.bind("<B1-Motion>", self._on_layer_drag_motion)
+                    widget.bind("<ButtonRelease-1>", self._on_layer_drag_release)
                 widget.bind("<Motion>", self._on_motion)
                 widget.bind("<Leave>", lambda _e: self._set_hover(None))
             except Exception:
@@ -4588,7 +4624,10 @@ class GeoCanvasEditor(tk.Tk):
 
     def _card_for_test(self, ti: int) -> SoundingCard | None:
         cards = self.__dict__.get("_sounding_cards", None) or {}
-        card = cards.get(int(ti))
+        cache_key = self._card_cache_key(int(ti))
+        card = cards.get(cache_key)
+        if card is None:
+            card = cards.get(int(ti))
         if card is not None:
             return card
         try:
@@ -4606,7 +4645,7 @@ class GeoCanvasEditor(tk.Tk):
             self._bind_card_targets(card)
         except Exception:
             pass
-        cards[int(ti)] = card
+        cards[cache_key] = card
         self._sounding_cards = cards
         return card
 
@@ -5105,6 +5144,53 @@ class GeoCanvasEditor(tk.Tk):
                 except Exception:
                     pass
 
+    def _clear_card_graph_layers(self, ti: int):
+        ti = int(ti)
+        card = self._card_for_test(ti)
+        if card is not None and hasattr(card, "clear_body_render_layers"):
+            card.clear_body_render_layers(
+                "graph_axes",
+                f"graph_axes_{ti}",
+                "graph_qc",
+                f"graph_qc_{ti}",
+                "graph_fs",
+                f"graph_fs_{ti}",
+                "graph_nodata",
+                f"graph_nodata_{ti}",
+                "layers_overlay",
+                f"layers_overlay_{ti}",
+                "layer_handles",
+                f"layer_handles_{ti}",
+            )
+        for cnv in (getattr(self, "canvas", None), getattr(self, "hcanvas", None)):
+            if cnv is None:
+                continue
+            for tag in (
+                f"graph_axes_{ti}",
+                f"graph_qc_{ti}",
+                f"graph_fs_{ti}",
+                f"graph_nodata_{ti}",
+                f"layers_overlay_{ti}",
+                f"layer_handles_{ti}",
+            ):
+                try:
+                    cnv.delete(tag)
+                except Exception:
+                    pass
+
+    def _drop_layer_hitboxes_for_test(self, ti: int):
+        ti = int(ti)
+        self._layer_handle_hitbox = [hit for hit in (getattr(self, "_layer_handle_hitbox", []) or []) if int(hit.get("ti", -1)) != ti]
+        self._layer_depth_box_hitbox = [hit for hit in (getattr(self, "_layer_depth_box_hitbox", []) or []) if int(hit.get("ti", -1)) != ti]
+        self._layer_plot_hitbox = [hit for hit in (getattr(self, "_layer_plot_hitbox", []) or []) if int(hit.get("ti", -1)) != ti]
+        self._layer_label_hitbox = [hit for hit in (getattr(self, "_layer_label_hitbox", []) or []) if int(hit.get("ti", -1)) != ti]
+
+    def _refresh_card_graph_layers(self, ti: int):
+        ti = int(ti)
+        self._clear_card_graph_layers(ti)
+        self._drop_layer_hitboxes_for_test(ti)
+        self._render_card_graph_layers(ti)
+
     def _test_last_data_index(self, t) -> int | None:
         qarr = getattr(t, "qc", []) or []
         farr = getattr(t, "fs", []) or []
@@ -5297,6 +5383,10 @@ class GeoCanvasEditor(tk.Tk):
     def _center_toplevel(self, win, *, parent=None):
         host = parent or self
         try:
+            win.withdraw()
+        except Exception:
+            pass
+        try:
             host.update_idletasks()
             win.update_idletasks()
             px = int(host.winfo_rootx())
@@ -5308,6 +5398,7 @@ class GeoCanvasEditor(tk.Tk):
             x = px + max(0, (pw - ww) // 2)
             y = py + max(0, (ph - wh) // 2)
             win.geometry(f"+{x}+{y}")
+            win.deiconify()
         except Exception:
             pass
 
@@ -5478,18 +5569,22 @@ class GeoCanvasEditor(tk.Tk):
         for ti in range(len(self.tests or [])):
             self._calc_layer_params_for_test(ti)
 
-    def _depth_to_canvas_y(self, depth_m: float) -> float | None:
-        d = float(depth_m)
-        units = getattr(self, "_grid_units", []) or []
-        base_grid = getattr(self, "_grid_base", []) or []
-
-        points: list[tuple[float, float]] = []
+    def _depth_y_segments(self) -> list[tuple[float, float, float, float]]:
+        units = self.__dict__.get("_grid_units", []) or []
+        base_grid = self.__dict__.get("_grid_base", []) or []
+        if not base_grid:
+            for test in getattr(self, "tests", []) or []:
+                candidate = [_parse_depth_float(raw) for raw in (getattr(test, "depth", []) or [])]
+                candidate = [float(v) for v in candidate if v is not None]
+                if candidate:
+                    base_grid = candidate
+                    break
+        segments: list[tuple[float, float, float, float]] = []
         for disp_r, unit in enumerate(units):
             y0r, y1r = self._row_y_bounds(disp_r)
             if unit[0] == "meter":
                 meter_n = float(unit[1])
-                points.append((meter_n, y0r))
-                points.append((meter_n + 1.0, y1r))
+                segments.append((meter_n, meter_n + 1.0, y0r, y1r))
                 continue
             if unit[0] != "row":
                 continue
@@ -5516,28 +5611,36 @@ class GeoCanvasEditor(tk.Tk):
                 bot_d = float(cur) + (float(cur) - float(prev)) * 0.5
             else:
                 bot_d = float(cur) + float(getattr(self, "step_m", 0.05) or 0.05) * 0.5
-            points.append((top_d, y0r))
-            points.append((bot_d, y1r))
+            segments.append((top_d, bot_d, y0r, y1r))
+        segments.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
+        return segments
 
-        if not points:
-            return None
-        points.sort(key=lambda x: x[0])
-        if d < points[0][0] or d > points[-1][0]:
-            return None
-        for dd, yy in points:
-            if abs(dd - d) <= 1e-6:
-                return yy
+    def _depth_to_canvas_y_local(self, depth_m: float, *, clamp: bool = False) -> float | None:
+        try:
+            return self._depth_to_canvas_y(float(depth_m), clamp=bool(clamp))
+        except TypeError:
+            return self._depth_to_canvas_y(float(depth_m))
 
-        depths = [p[0] for p in points]
-        i = bisect.bisect_left(depths, d)
-        if i <= 0 or i >= len(points):
+    def _depth_to_canvas_y(self, depth_m: float, *, clamp: bool = False) -> float | None:
+        d = float(depth_m)
+        segments = self._depth_y_segments()
+        if not segments:
             return None
-        d0, y0 = points[i - 1]
-        d1, y1 = points[i]
-        if abs(d1 - d0) <= 1e-9:
-            return y0
-        ratio = (d - d0) / (d1 - d0)
-        return y0 + (y1 - y0) * ratio
+        first_top, _first_bot, first_y0, _first_y1 = segments[0]
+        _last_top, last_bot, _last_y0, last_y1 = segments[-1]
+        if d < first_top:
+            return float(first_y0) if clamp else None
+        if d > last_bot:
+            return float(last_y1) if clamp else None
+        for top_d, bot_d, y0r, y1r in segments:
+            if top_d <= d <= bot_d:
+                if abs(bot_d - top_d) <= 1e-9:
+                    return float(y0r)
+                ratio = (d - top_d) / (bot_d - top_d)
+                return float(y0r) + (float(y1r) - float(y0r)) * ratio
+        if clamp:
+            return float(last_y1)
+        return None
 
 
     def _geology_layer_fill_color(self, soil_type: str | None) -> str:
@@ -5549,18 +5652,98 @@ class GeoCanvasEditor(tk.Tk):
             return "#ffffff"
         return str(SOIL_TYPE_TO_COLUMN_FILL.get(soil, "#ffffff"))
 
+    def _header_render_payload(self, ti: int) -> dict | None:
+        if ti < 0 or ti >= len(getattr(self, "tests", []) or []):
+            return None
+        card = self._card_for_test(int(ti))
+        if card is None:
+            return None
+        t = self.tests[int(ti)]
+        diagnostics = self._diagnostics_report()
+        ex_on = bool(getattr(t, "export_on", True))
+        fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
+        td = diagnostics.by_test.get(int(getattr(t, "tid", 0) or 0))
+        has_missing_values = bool(td and td.missing_rows)
+        hdr_fill = self._header_fill_for_test(
+            invalid=bool(td.invalid) if td is not None else bool(getattr(fl, "invalid", False)),
+            has_missing=bool(has_missing_values),
+            export_on=bool(ex_on),
+        )
+        hdr_text = "#111" if ex_on else "#8a8a8a"
+        hdr_icon = "#444" if ex_on else "#8a8a8a"
+        dt_val = getattr(t, "dt", "") or ""
+        if isinstance(dt_val, datetime.datetime):
+            dt_line = dt_val.strftime("%d.%m.%Y %H:%M:%S")
+        elif isinstance(dt_val, datetime.date):
+            dt_line = dt_val.strftime("%d.%m.%Y 00:00:00")
+        else:
+            dt_line = str(dt_val).strip()
+        dt_line = re.sub(r"(\d{2}:\d{2}):\d{2}\b", r"\1", dt_line)
+        return {
+            "card": card,
+            "title": f"Опыт {t.tid}",
+            "datetime_text": dt_line,
+            "header_fill": hdr_fill,
+            "header_text": hdr_text,
+            "header_icon": hdr_icon,
+            "export_on": bool(ex_on),
+            "lock_on": bool(getattr(t, "locked", False)),
+        }
+
+    def _refresh_card_header(self, ti: int):
+        payload = self._header_render_payload(int(ti))
+        if not payload:
+            return
+        card = payload.pop("card")
+        header_canvas = getattr(card, "header_canvas", None) or self.hcanvas
+        if header_canvas is None:
+            return
+        try:
+            header_canvas.delete("all")
+        except Exception:
+            pass
+        card.render_header(
+            header_canvas,
+            hover=getattr(self, "_hover", None),
+            icon_calendar=ICON_CALENDAR,
+            icon_copy=ICON_COPY,
+            icon_delete=ICON_DELETE,
+            icon_font=_pick_icon_font(12),
+            hdr_h=float(self.hdr_h),
+            show_inclinometer=str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True)),
+            show_graph_scale=bool(self._is_graph_panel_visible()),
+            qc_scale_max=float(self.__dict__.get("graph_qc_max_mpa", 0.0) or 0.0),
+            fs_scale_max=float(self.__dict__.get("graph_fs_max_kpa", 0.0) or 0.0),
+            qc_scale_source=str(self.__dict__.get("graph_qc_max_source", "unknown") or "unknown"),
+            fs_scale_source=str(self.__dict__.get("graph_fs_max_source", "unknown") or "unknown"),
+            qc_scale_display=float(self.__dict__.get("graph_qc_max_display", self.__dict__.get("graph_qc_max_mpa", 0.0)) or 0.0),
+            fs_scale_display=float(self.__dict__.get("graph_fs_max_display", self.__dict__.get("graph_fs_max_kpa", 0.0)) or 0.0),
+            qc_scale_unit="МПа",
+            fs_scale_unit="кПа",
+            **payload,
+        )
+
     def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, soil_type: str, tags, logical_rect=None, canvas=None):
         # Единая система: внешние JSON-штриховки через domain.hatching registry.
         pattern = load_registered_hatch(str(soil_type or ""))
         if pattern is None:
             # Временный fallback: без штриховки, если внешний JSON не зарегистрирован.
             return
+        rect = (float(x0), float(y0), float(x1), float(y1))
+        logical_rect_local = None
+        if logical_rect is not None:
+            logical_rect_local = tuple(float(v) for v in logical_rect)
+            target_card = self._card_for_widget(canvas) if canvas is not None else None
+            if target_card is not None and canvas is getattr(target_card, "body_canvas", None):
+                lx0, ly0 = target_card.body_world_to_local(float(logical_rect_local[0]), float(logical_rect_local[1]))
+                lx1, ly1 = target_card.body_world_to_local(float(logical_rect_local[2]), float(logical_rect_local[3]))
+                logical_rect_local = (float(lx0), float(ly0), float(lx1), float(ly1))
         render_hatch_pattern(
             canvas or self.canvas,
-            (float(x0), float(y0), float(x1), float(y1)),
+            rect,
             pattern,
             tags=tags,
-            scale_info={"usage": HATCH_USAGE_EDITOR_EXPANDED, "layer_height_px": float(y1 - y0), "logical_rect": tuple(logical_rect) if logical_rect is not None else (float(x0), float(y0), float(x1), float(y1))},
+            scale_info={"usage": HATCH_USAGE_EDITOR_EXPANDED, "layer_height_px": float(y1 - y0), "logical_rect": logical_rect_local if logical_rect_local is not None else rect},
         )
 
     def _log_active_card_body_debug(self, card: SoundingCard | None, *, table_span=None, graph_span=None, interval_spans=None, handle_positions=None):
@@ -5575,6 +5758,277 @@ class GeoCanvasEditor(tk.Tk):
             f"'show_inclinometer': {bool(getattr(self, 'show_inclinometer', True))}}}",
             file=sys.stderr,
         )
+
+    def _render_card_graph_layers(self, ti: int):
+        card = self._card_for_test(int(ti))
+        if card is None:
+            return
+        body_target = getattr(card, "body_canvas", None) or self.canvas  # legacy fallback only if a card target is unavailable
+        if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+            try:
+                print(
+                    f"[CARDTARGET] ti={int(ti)} body_target={body_target} "
+                    f"header_target={getattr(card, 'header_canvas', None)} invalid_before={sorted(getattr(card, '_invalid_parts', []))}"
+                )
+            except Exception:
+                pass
+        rect = self._graph_rect_for_test(ti)
+        if not rect:
+            return
+        x0, y0, x1, y1 = rect
+        if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+            try:
+                local_rect = (card.body_world_to_local(x0, y0) + card.body_world_to_local(x1, y1)) if getattr(card, "body_canvas", None) is not None else rect
+                print(
+                    f"[GRAPHX] ti={int(ti)} rect_world={(x0, y0, x1, y1)} rect_local={local_rect} "
+                    f"body_canvas_width={getattr(getattr(card, 'body_canvas', None), 'cget', lambda _k: None)('width') if getattr(card, 'body_canvas', None) is not None else None}",
+                    file=sys.stderr,
+                )
+            except Exception:
+                pass
+        t = self.tests[ti]
+        show_graphs = bool(getattr(self, "show_graphs", False))
+        show_geology = bool(getattr(self, "show_geology_column", True))
+        interval_specs = []
+        overlay_specs = []
+        layer_spans = []
+        handle_positions = []
+        y_points = []
+        qc_vals = []
+        fs_vals = []
+        qarr = getattr(t, "qc", []) or []
+        farr = getattr(t, "fs", []) or []
+        units = getattr(self, "_grid_units", []) or []
+        disp_map = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {}) or {}
+
+        for disp_r, unit in enumerate(units):
+            y0r, y1r = self._row_y_bounds(disp_r)
+            if unit[0] == "row":
+                di = disp_map.get(disp_r)
+                if di is None:
+                    continue
+                q_raw = _parse_cell_int(qarr[di]) if di < len(qarr) else None
+                f_raw = _parse_cell_int(farr[di]) if di < len(farr) else None
+                if q_raw is None and f_raw is None:
+                    continue
+                dv = self._depth_at_index(t, di)
+                yy = self._depth_to_canvas_y_local(float(dv), clamp=True) if dv is not None else None
+                if yy is None:
+                    continue
+                qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
+                y_points.append(float(yy))
+                qc_vals.append(float(qc_mpa))
+                fs_vals.append(float(fs_kpa))
+            elif unit[0] == "meter":
+                meter_n = int(unit[1])
+                for di in range(max(len(qarr), len(farr))):
+                    dv = self._depth_at_index(t, di)
+                    if dv is None or not (meter_n <= dv < (meter_n + 1)):
+                        continue
+                    q_raw = _parse_cell_int(qarr[di]) if di < len(qarr) else None
+                    f_raw = _parse_cell_int(farr[di]) if di < len(farr) else None
+                    if q_raw is None and f_raw is None:
+                        continue
+                    yy = self._depth_to_canvas_y_local(float(dv), clamp=True)
+                    if yy is None:
+                        continue
+                    qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
+                    y_points.append(float(yy))
+                    qc_vals.append(float(qc_mpa))
+                    fs_vals.append(float(fs_kpa))
+
+        plot_rect = (x0, y0, x1, y1)
+        gwl_canvas_y = None
+        try:
+            settings = dict(getattr(self, "cpt_calc_settings", {}) or {})
+            gwl = settings.get("groundwater_level")
+            if gwl not in (None, ""):
+                gwl_val = float(str(gwl).replace(",", "."))
+                gwl_canvas_y = self._depth_to_canvas_y(gwl_val)
+            if gwl_canvas_y is not None and not (y0 <= gwl_canvas_y <= y1):
+                gwl_canvas_y = None
+        except Exception:
+            gwl_canvas_y = None
+
+        if show_geology:
+            column = self._ensure_test_experience_column(t)
+            for interval_index, lyr in enumerate(column.intervals):
+                lt = max(float(column.column_depth_start), float(lyr.from_depth))
+                lb = min(float(column.column_depth_end), float(lyr.to_depth))
+                if lb - lt <= 1e-9:
+                    continue
+                ly0 = self._depth_to_canvas_y_local(lt, clamp=True)
+                ly1 = self._depth_to_canvas_y_local(lb, clamp=True)
+                if ly0 is None or ly1 is None:
+                    continue
+                ty0 = max(y0, min(ly0, ly1))
+                ty1 = min(y1, max(ly0, ly1))
+                if ty1 <= ty0:
+                    continue
+                ige_id = self._column_interval_ige_id(lyr)
+                ent = self._ensure_ige_entry(ige_id)
+                soil_type = str(ent.get("soil_type") or SoilType.SANDY_LOAM.value)
+                interval_specs.append({
+                    "interval_index": int(interval_index),
+                    "ige_id": ige_id,
+                    "soil_type": soil_type,
+                    "top": float(lt),
+                    "bot": float(lb),
+                    "depth": (float(lt) + float(lb)) * 0.5,
+                    "x0": float(x0),
+                    "x1": float(x1),
+                    "y0": float(ty0),
+                    "y1": float(ty1),
+                })
+
+        plot_hits = []
+        label_hits = []
+        if show_geology:
+            card.invalidate_layers()
+            plot_hits, label_hits = card.render_ige(
+                body_target,
+                intervals=interval_specs,
+                fill_resolver=self._geology_layer_fill_color,
+                hatch_drawer=lambda rx0, ry0, rx1, ry1, soil_type, canvas=None, logical_rect=None: self._draw_layer_hatch(rx0, ry0, rx1, ry1, soil_type=soil_type, tags=("layers_overlay", f"layers_overlay_{ti}"), logical_rect=logical_rect or (x0, y0, x1, y1), canvas=canvas),
+                label_font_factory=lambda size: tkfont.Font(font=("Segoe UI", size, "bold")),
+                layer_ui_colors=LAYER_UI_COLORS,
+                visible=show_geology,
+            )
+            card.redraw_if_needed("layers")
+            self._layer_plot_hitbox.extend(plot_hits)
+            self._layer_label_hitbox.extend(label_hits)
+
+        packed = sorted(zip(y_points, qc_vals, fs_vals), key=lambda x: x[0])
+        y_points = [x[0] for x in packed]
+        qc_vals = [x[1] for x in packed]
+        fs_vals = [x[2] for x in packed]
+
+        if show_graphs:
+            if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+                try:
+                    min_x_before = float(x0)
+                    max_x_before = float(x1)
+                    min_x_after = float(card.body_world_to_local(x0, y0)[0]) if getattr(card, "body_canvas", None) is not None else float(x0)
+                    max_x_after = float(card.body_world_to_local(x1, y1)[0]) if getattr(card, "body_canvas", None) is not None else float(x1)
+                    print(
+                        f"[GRAPHX] ti={int(ti)} x_before=({min_x_before},{max_x_before}) x_after=({min_x_after},{max_x_after}) points={len(y_points)}",
+                        file=sys.stderr,
+                    )
+                except Exception:
+                    pass
+            card.invalidate_graph()
+            graph_frame_fill = "" if show_geology else "#fbfdff"
+            card.render_graph(
+                body_target,
+                rect=plot_rect,
+                y_points=y_points,
+                qc_values=qc_vals,
+                fs_values=fs_vals,
+                qmax=self.graph_qc_max_mpa,
+                fmax=self.graph_fs_max_kpa,
+                qc_color=GRAPH_QC_GREEN,
+                fs_color=GRAPH_FS_BLUE,
+                frame_fill=graph_frame_fill,
+                frame_outline=GUI_GRID,
+                groundwater_level=gwl_canvas_y,
+                visible=show_graphs,
+                draw_frame=True,
+                draw_curves=False,
+            )
+            if show_geology:
+                card.redraw_if_needed("graph")
+            card.render_graph(
+                body_target,
+                rect=plot_rect,
+                y_points=y_points,
+                qc_values=qc_vals,
+                fs_values=fs_vals,
+                qmax=self.graph_qc_max_mpa,
+                fmax=self.graph_fs_max_kpa,
+                qc_color=GRAPH_QC_GREEN,
+                fs_color=GRAPH_FS_BLUE,
+                frame_fill="#fbfdff",
+                frame_outline=GUI_GRID,
+                groundwater_level=gwl_canvas_y,
+                visible=show_graphs,
+                draw_frame=False,
+                draw_curves=True,
+            )
+            if show_geology and hasattr(body_target, "tag_raise"):
+                try:
+                    body_target.tag_raise(f"layers_label_chip_{ti}")
+                except Exception:
+                    pass
+            card.redraw_if_needed("graph")
+            if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+                try:
+                    graph_items = len(card.body_canvas.find_all()) if getattr(card, "body_canvas", None) is not None and hasattr(card.body_canvas, "find_all") else None
+                    print(f"[GRAPHX] ti={int(ti)} graph_items={graph_items}", file=sys.stderr)
+                except Exception:
+                    pass
+        if show_geology:
+            column = self._ensure_test_experience_column(t)
+            handle_x = x1 - 2
+            plus_x = x0 + 10
+            if column.intervals:
+                top_y = self._depth_to_canvas_y_local(float(column.intervals[0].from_depth), clamp=True)
+                bot_y = self._depth_to_canvas_y_local(float(column.intervals[-1].to_depth), clamp=True)
+                if top_y is not None:
+                    overlay_specs.append({"kind": "plus", "bbox": (plus_x - 6, top_y, plus_x + 6, top_y + 12), "boundary": 0, "hit_kind": "plus_top", "tag": f"layer_plus_top_{ti}"})
+                if bot_y is not None:
+                    overlay_specs.extend([
+                        {"kind": "line", "points": (x0, bot_y, x1, bot_y), "fill": LAYER_UI_COLORS["line"], "dash": (3, 2)},
+                        {"kind": "handle", "bbox": (handle_x - 5, bot_y - 5, handle_x + 5, bot_y + 5), "boundary": int(len(column.intervals)), "hit_kind": "column_end", "tag": f"layer_end_handle_{ti}"},
+                        {"kind": "depth_box", "bbox": (handle_x - 52, bot_y - 8, handle_x - 12, bot_y + 8), "boundary": int(len(column.intervals)), "hit_kind": "column_end_depth_edit", "text": f"{float(column.column_depth_end):.2f}"},
+                        {"kind": "plus", "bbox": (plus_x - 6, bot_y - 6, plus_x + 6, bot_y + 6), "boundary": int(len(column.intervals)), "hit_kind": "plus_bottom", "tag": f"layer_plus_bottom_{ti}"},
+                        {"kind": "minus", "bbox": (plus_x + 8, bot_y - 6, plus_x + 20, bot_y + 6), "boundary": int(len(column.intervals) - 1), "hit_kind": "minus_bottom", "tag": f"layer_minus_bottom_{ti}"},
+                    ])
+            for bi in range(1, len(column.intervals)):
+                boundary = column.intervals[bi].from_depth
+                yy = self._depth_to_canvas_y_local(boundary, clamp=True)
+                if yy is None:
+                    continue
+                overlay_specs.extend([
+                    {"kind": "line", "points": (x0, yy, x1, yy), "fill": LAYER_UI_COLORS["line"], "dash": (3, 2)},
+                    {"kind": "handle", "bbox": (handle_x - 5, yy - 5, handle_x + 5, yy + 5), "boundary": bi, "hit_kind": "boundary", "tag": f"layer_handle_{ti}_{bi}"},
+                    {"kind": "depth_box", "bbox": (handle_x - 52, yy - 8, handle_x - 12, yy + 8), "boundary": bi, "hit_kind": "boundary_depth_edit", "text": f"{float(boundary):.2f}"},
+                    {"kind": "plus", "bbox": (plus_x - 6, yy - 6, plus_x + 6, yy + 6), "boundary": bi, "hit_kind": "plus", "tag": f"layer_plus_{ti}_{bi}"},
+                    {"kind": "minus", "bbox": (plus_x - 6, yy + 8, plus_x + 6, yy + 20), "boundary": bi, "hit_kind": "minus", "tag": f"layer_minus_{ti}_{bi}"},
+                ])
+            card.invalidate_overlays()
+            handle_hits, depth_hits = card.render_overlays(body_target, overlay_specs=overlay_specs, layer_ui_colors=LAYER_UI_COLORS, visible=show_geology)
+            card.redraw_if_needed("overlays")
+            self._layer_handle_hitbox.extend(handle_hits)
+            self._layer_depth_box_hitbox.extend(depth_hits)
+        if bool(getattr(self, "_debug_layers_overlay", False)) and bool(getattr(self, "compact_1m", False)) and bool(getattr(self, "expanded_meters", set())):
+            t_layers = self._ensure_test_layers(t)
+            dbg = f"LAYERS:{len(t_layers)} EDIT:True TEST:{getattr(t, 'tid', ti)}"
+            dx0, dy0 = (card.body_world_to_local(x0, y0) if body_target is getattr(card, "body_canvas", None) else (x0, y0))
+            body_target.create_text(dx0 + 4, dy0 + 4, anchor="nw", text=dbg, fill="#8a3d00", font=("Segoe UI", 8, "bold"), tags=("layers_overlay", f"layers_overlay_{ti}"))
+        layer_spans = [(float(spec["y0"]), float(spec["y1"])) for spec in interval_specs]
+        handle_positions = [float(spec["bbox"][1] + spec["bbox"][3]) * 0.5 for spec in overlay_specs if spec.get("kind") in {"handle", "depth_box", "plus", "minus"}]
+        if card is self._active_body_card():
+            self._log_active_card_body_debug(
+                card,
+                table_span=(0.0, float(self._total_body_height())),
+                graph_span=(float(y0), float(y1)),
+                interval_spans=layer_spans,
+                handle_positions=handle_positions,
+            )
+        if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+            try:
+                print(
+                    f"[CARDGEO] ti={int(ti)} flags={{'show_graphs': {show_graphs}, 'show_geology': {show_geology}, "
+                    f"'show_layer_colors': {bool(getattr(self, 'show_layer_colors', False))}}} "
+                    f"qc_max={float(self.graph_qc_max_mpa):g}({getattr(self, 'graph_qc_max_source', 'unknown')}) "
+                    f"fs_max={float(self.graph_fs_max_kpa):g}({getattr(self, 'graph_fs_max_source', 'unknown')}) "
+                    f"units=(МПа,кПа) interval_specs={len(interval_specs)} hatch_items={len(plot_hits)} "
+                    f"ige_labels={len(label_hits)} overlay_specs={len(overlay_specs)} handles={len(handle_hits) if show_geology else 0} "
+                    f"depth_boxes={len(depth_hits) if show_geology else 0} graph_bbox={(x0, y0, x1, y1)}",
+                    file=sys.stderr,
+                )
+            except Exception:
+                pass
 
     def _redraw_graphs_now(self):
         self._graph_redraw_after_id = None
@@ -5593,244 +6047,7 @@ class GeoCanvasEditor(tk.Tk):
 
         self._refresh_display_order()
         for ti in self.display_cols:
-            card = self._card_for_test(int(ti))
-            if card is None:
-                continue
-            body_target = getattr(card, "body_canvas", None) or self.canvas  # legacy fallback only if a card target is unavailable
-            if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
-                try:
-                    print(
-                        f"[CARDTARGET] ti={int(ti)} body_target={body_target} "
-                        f"header_target={getattr(card, 'header_canvas', None)} invalid_before={sorted(getattr(card, '_invalid_parts', []))}"
-                    )
-                except Exception:
-                    pass
-            rect = self._graph_rect_for_test(ti)
-            if not rect:
-                continue
-            x0, y0, x1, y1 = rect
-            if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
-                try:
-                    local_rect = (card.body_world_to_local(x0, y0) + card.body_world_to_local(x1, y1)) if getattr(card, "body_canvas", None) is not None else rect
-                    print(
-                        f"[GRAPHX] ti={int(ti)} rect_world={(x0, y0, x1, y1)} rect_local={local_rect} "
-                        f"body_canvas_width={getattr(getattr(card, 'body_canvas', None), 'cget', lambda _k: None)('width') if getattr(card, 'body_canvas', None) is not None else None}",
-                        file=sys.stderr,
-                    )
-                except Exception:
-                    pass
-            t = self.tests[ti]
-            show_graphs = bool(getattr(self, "show_graphs", False))
-            show_geology = bool(getattr(self, "show_geology_column", True))
-
-            interval_specs = []
-            overlay_specs = []
-            layer_spans = []
-            handle_positions = []
-            y_points = []
-            qc_vals = []
-            fs_vals = []
-            qarr = getattr(t, "qc", []) or []
-            farr = getattr(t, "fs", []) or []
-            units = getattr(self, "_grid_units", []) or []
-            disp_map = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {}) or {}
-
-            for disp_r, unit in enumerate(units):
-                y0r, y1r = self._row_y_bounds(disp_r)
-                row_h_cur = max(1.0, float(y1r - y0r))
-                if unit[0] == "row":
-                    di = disp_map.get(disp_r)
-                    if di is None:
-                        continue
-                    q_raw = _parse_cell_int(qarr[di]) if di < len(qarr) else None
-                    f_raw = _parse_cell_int(farr[di]) if di < len(farr) else None
-                    if q_raw is None and f_raw is None:
-                        continue
-                    qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
-                    y_points.append(y0r + (row_h_cur * 0.5))
-                    qc_vals.append(float(qc_mpa))
-                    fs_vals.append(float(fs_kpa))
-                elif unit[0] == "meter":
-                    meter_n = int(unit[1])
-                    for di in range(max(len(qarr), len(farr))):
-                        dv = self._depth_at_index(t, di)
-                        if dv is None or not (meter_n <= dv < (meter_n + 1)):
-                            continue
-                        q_raw = _parse_cell_int(qarr[di]) if di < len(qarr) else None
-                        f_raw = _parse_cell_int(farr[di]) if di < len(farr) else None
-                        if q_raw is None and f_raw is None:
-                            continue
-                        qc_mpa, fs_kpa = self._calc_qc_fs_from_del(int(q_raw or 0), int(f_raw or 0))
-                        frac = max(0.0, min(0.999, float(dv) - float(meter_n)))
-                        y_points.append(y0r + (frac * row_h_cur))
-                        qc_vals.append(float(qc_mpa))
-                        fs_vals.append(float(fs_kpa))
-
-            plot_rect = (x0, y0, x1, y1)
-            gwl_canvas_y = None
-            try:
-                settings = dict(getattr(self, "cpt_calc_settings", {}) or {})
-                gwl = settings.get("groundwater_level")
-                if gwl not in (None, ""):
-                    gwl_val = float(str(gwl).replace(",", "."))
-                    gwl_canvas_y = self._depth_to_canvas_y(gwl_val)
-                if gwl_canvas_y is not None and not (y0 <= gwl_canvas_y <= y1):
-                    gwl_canvas_y = None
-            except Exception:
-                gwl_canvas_y = None
-
-            if show_geology:
-                column = self._ensure_test_experience_column(t)
-                for interval_index, lyr in enumerate(column.intervals):
-                    lt = max(float(column.column_depth_start), float(lyr.from_depth))
-                    lb = min(float(column.column_depth_end), float(lyr.to_depth))
-                    if lb - lt <= 1e-9:
-                        continue
-                    ly0 = self._depth_to_canvas_y(lt)
-                    ly1 = self._depth_to_canvas_y(lb)
-                    if ly0 is None or ly1 is None:
-                        continue
-                    ty0 = max(y0, min(ly0, ly1))
-                    ty1 = min(y1, max(ly0, ly1))
-                    if ty1 <= ty0:
-                        continue
-                    ige_id = self._column_interval_ige_id(lyr)
-                    ent = self._ensure_ige_entry(ige_id)
-                    soil_type = str(ent.get("soil_type") or SoilType.SANDY_LOAM.value)
-                    interval_specs.append({
-                        "interval_index": int(interval_index),
-                        "ige_id": ige_id,
-                        "soil_type": soil_type,
-                        "top": float(lt),
-                        "bot": float(lb),
-                        "depth": (float(lt) + float(lb)) * 0.5,
-                        "x0": float(x0),
-                        "x1": float(x1),
-                        "y0": float(ty0),
-                        "y1": float(ty1),
-                    })
-
-            plot_hits = []
-            label_hits = []
-            if show_geology:
-                card.invalidate_layers()
-                plot_hits, label_hits = card.render_ige(
-                    body_target,
-                    intervals=interval_specs,
-                    fill_resolver=self._geology_layer_fill_color,
-                    hatch_drawer=lambda rx0, ry0, rx1, ry1, soil_type, canvas=None, logical_rect=None: self._draw_layer_hatch(rx0, ry0, rx1, ry1, soil_type=soil_type, tags=("layers_overlay", f"layers_overlay_{ti}"), logical_rect=logical_rect or (x0, y0, x1, y1), canvas=canvas),
-                    label_font_factory=lambda size: tkfont.Font(font=("Segoe UI", size, "bold")),
-                    layer_ui_colors=LAYER_UI_COLORS,
-                    visible=show_geology,
-                )
-                card.redraw_if_needed("layers")
-                self._layer_plot_hitbox.extend(plot_hits)
-                self._layer_label_hitbox.extend(label_hits)
-
-            packed = sorted(zip(y_points, qc_vals, fs_vals), key=lambda x: x[0])
-            y_points = [x[0] for x in packed]
-            qc_vals = [x[1] for x in packed]
-            fs_vals = [x[2] for x in packed]
-
-            if show_graphs:
-                if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
-                    try:
-                        min_x_before = float(x0)
-                        max_x_before = float(x1)
-                        min_x_after = float(card.body_world_to_local(x0, y0)[0]) if getattr(card, "body_canvas", None) is not None else float(x0)
-                        max_x_after = float(card.body_world_to_local(x1, y1)[0]) if getattr(card, "body_canvas", None) is not None else float(x1)
-                        print(
-                            f"[GRAPHX] ti={int(ti)} x_before=({min_x_before},{max_x_before}) x_after=({min_x_after},{max_x_after}) points={len(y_points)}",
-                            file=sys.stderr,
-                        )
-                    except Exception:
-                        pass
-                card.invalidate_graph()
-                card.render_graph(
-                    body_target,
-                    rect=plot_rect,
-                    y_points=y_points,
-                    qc_values=qc_vals,
-                    fs_values=fs_vals,
-                    qmax=self.graph_qc_max_mpa,
-                    fmax=self.graph_fs_max_kpa,
-                    qc_color=GRAPH_QC_GREEN,
-                    fs_color=GRAPH_FS_BLUE,
-                    frame_fill="#fbfdff",
-                    frame_outline=GUI_GRID,
-                    groundwater_level=gwl_canvas_y,
-                    visible=show_graphs,
-                )
-                card.redraw_if_needed("graph")
-                if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
-                    try:
-                        graph_items = len(card.body_canvas.find_all()) if getattr(card, "body_canvas", None) is not None and hasattr(card.body_canvas, "find_all") else None
-                        print(f"[GRAPHX] ti={int(ti)} graph_items={graph_items}", file=sys.stderr)
-                    except Exception:
-                        pass
-            if show_geology:
-                column = self._ensure_test_experience_column(t)
-                handle_x = x1 - 2
-                plus_x = x0 + 10
-                if column.intervals:
-                    top_y = self._depth_to_canvas_y(float(column.intervals[0].from_depth))
-                    bot_y = self._depth_to_canvas_y(float(column.intervals[-1].to_depth))
-                    if top_y is not None:
-                        overlay_specs.append({"kind": "plus", "bbox": (plus_x - 6, top_y, plus_x + 6, top_y + 12), "boundary": 0, "hit_kind": "plus_top", "tag": f"layer_plus_top_{ti}"})
-                    if bot_y is not None:
-                        overlay_specs.extend([
-                            {"kind": "line", "points": (x0, bot_y, x1, bot_y), "fill": LAYER_UI_COLORS["line"], "dash": (3, 2)},
-                            {"kind": "handle", "bbox": (handle_x - 5, bot_y - 5, handle_x + 5, bot_y + 5), "boundary": int(len(column.intervals)), "hit_kind": "column_end", "tag": f"layer_end_handle_{ti}"},
-                            {"kind": "depth_box", "bbox": (handle_x - 52, bot_y - 8, handle_x - 12, bot_y + 8), "boundary": int(len(column.intervals)), "hit_kind": "column_end_depth_edit", "text": f"{float(column.column_depth_end):.2f}"},
-                            {"kind": "plus", "bbox": (plus_x - 6, bot_y - 6, plus_x + 6, bot_y + 6), "boundary": int(len(column.intervals)), "hit_kind": "plus_bottom", "tag": f"layer_plus_bottom_{ti}"},
-                            {"kind": "minus", "bbox": (plus_x + 8, bot_y - 6, plus_x + 20, bot_y + 6), "boundary": int(len(column.intervals) - 1), "hit_kind": "minus_bottom", "tag": f"layer_minus_bottom_{ti}"},
-                        ])
-                for bi in range(1, len(column.intervals)):
-                    boundary = column.intervals[bi].from_depth
-                    yy = self._depth_to_canvas_y(boundary)
-                    if yy is None:
-                        continue
-                    overlay_specs.extend([
-                        {"kind": "line", "points": (x0, yy, x1, yy), "fill": LAYER_UI_COLORS["line"], "dash": (3, 2)},
-                        {"kind": "handle", "bbox": (handle_x - 5, yy - 5, handle_x + 5, yy + 5), "boundary": bi, "hit_kind": "boundary", "tag": f"layer_handle_{ti}_{bi}"},
-                        {"kind": "depth_box", "bbox": (handle_x - 52, yy - 8, handle_x - 12, yy + 8), "boundary": bi, "hit_kind": "boundary_depth_edit", "text": f"{float(boundary):.2f}"},
-                        {"kind": "plus", "bbox": (plus_x - 6, yy - 6, plus_x + 6, yy + 6), "boundary": bi, "hit_kind": "plus", "tag": f"layer_plus_{ti}_{bi}"},
-                        {"kind": "minus", "bbox": (plus_x - 6, yy + 8, plus_x + 6, yy + 20), "boundary": bi, "hit_kind": "minus", "tag": f"layer_minus_{ti}_{bi}"},
-                    ])
-                card.invalidate_overlays()
-                handle_hits, depth_hits = card.render_overlays(body_target, overlay_specs=overlay_specs, layer_ui_colors=LAYER_UI_COLORS, visible=show_geology)
-                card.redraw_if_needed("overlays")
-                self._layer_handle_hitbox.extend(handle_hits)
-                self._layer_depth_box_hitbox.extend(depth_hits)
-            if bool(getattr(self, "_debug_layers_overlay", False)) and bool(getattr(self, "compact_1m", False)) and bool(getattr(self, "expanded_meters", set())):
-                t_layers = self._ensure_test_layers(t)
-                dbg = f"LAYERS:{len(t_layers)} EDIT:True TEST:{getattr(t, 'tid', ti)}"
-                dx0, dy0 = (card.body_world_to_local(x0, y0) if body_target is getattr(card, "body_canvas", None) else (x0, y0))
-                body_target.create_text(dx0 + 4, dy0 + 4, anchor="nw", text=dbg, fill="#8a3d00", font=("Segoe UI", 8, "bold"), tags=("layers_overlay", f"layers_overlay_{ti}"))
-            layer_spans = [(float(spec["y0"]), float(spec["y1"])) for spec in interval_specs]
-            handle_positions = [float(spec["bbox"][1] + spec["bbox"][3]) * 0.5 for spec in overlay_specs if spec.get("kind") in {"handle", "depth_box", "plus", "minus"}]
-            if card is self._active_body_card():
-                self._log_active_card_body_debug(
-                    card,
-                    table_span=(0.0, float(self._total_body_height())),
-                    graph_span=(float(y0), float(y1)),
-                    interval_spans=layer_spans,
-                    handle_positions=handle_positions,
-                )
-            if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
-                try:
-                    print(
-                        f"[CARDGEO] ti={int(ti)} flags={{'show_graphs': {show_graphs}, 'show_geology': {show_geology}, "
-                        f"'show_layer_colors': {bool(getattr(self, 'show_layer_colors', False))}}} "
-                        f"qc_max={float(self.graph_qc_max_mpa):g}({getattr(self, 'graph_qc_max_source', 'unknown')}) "
-                        f"fs_max={float(self.graph_fs_max_kpa):g}({getattr(self, 'graph_fs_max_source', 'unknown')}) "
-                        f"units=(МПа,кПа) interval_specs={len(interval_specs)} hatch_items={len(plot_hits)} "
-                        f"ige_labels={len(label_hits)} overlay_specs={len(overlay_specs)} handles={len(handle_hits) if show_geology else 0} "
-                        f"depth_boxes={len(depth_hits) if show_geology else 0} graph_bbox={(x0, y0, x1, y1)}",
-                        file=sys.stderr,
-                    )
-                except Exception:
-                    pass
+            self._render_card_graph_layers(int(ti))
 
     def _draw_graph_layers(self):
         self._redraw_graphs_now()
@@ -5912,10 +6129,11 @@ class GeoCanvasEditor(tk.Tk):
                 self._push_undo()
                 t = self.tests[ti]
                 t.export_on = not bool(getattr(t, "export_on", True))
-            except Exception:
-                pass
-            try:
-                self._recompute_statuses_after_data_load(preview_mode=False)
+                self._scan_by_algorithm(preview_mode=False)
+                self._recompute_graph_scales()
+                self._refresh_card_header(int(ti))
+                self._render_card_graph_layers(int(ti))
+                self._update_footer_realtime()
             except Exception:
                 self._update_footer_realtime()
                 self._redraw()
@@ -6117,13 +6335,22 @@ class GeoCanvasEditor(tk.Tk):
     def _set_hover(self, hover):
         if bool(getattr(self, "_inline_edit_active", False)):
             return
-        # hover: ("dup"/"trash", test_index) or None
-        if getattr(self, "_hover", None) == hover:
+        prev_hover = getattr(self, "_hover", None)
+        if prev_hover == hover:
             return
         self._hover = hover
         self._hide_canvas_tip()
-        # redraw only when state changed
-        self._redraw()
+        affected = set()
+        for state in (prev_hover, hover):
+            if isinstance(state, tuple) and len(state) >= 2 and state[0] in {"lock", "edit", "dup", "trash"}:
+                try:
+                    affected.add(int(state[1]))
+                except Exception:
+                    pass
+        if not affected:
+            return
+        for ti in affected:
+            self._refresh_card_header(int(ti))
 
     def _hide_canvas_tip(self):
         if getattr(self, "_hover_after", None):
@@ -6857,6 +7084,7 @@ class GeoCanvasEditor(tk.Tk):
             lyr.params = p
 
     def _on_layer_drag_motion(self, event):
+        self._evt_widget = event.widget
         drag = getattr(self, "_layer_drag", None)
         if not drag:
             return
@@ -6867,7 +7095,12 @@ class GeoCanvasEditor(tk.Tk):
         mode = str(drag.get("mode") or "boundary")
         if ti < 0 or ti >= len(self.tests):
             return
-        depth = self._canvas_y_to_depth(self.canvas.canvasy(event.y))
+        card = self._card_for_widget(event.widget)
+        if card is not None and event.widget is getattr(card, "body_canvas", None):
+            _wx, wy = card.body_local_to_world(float(event.x), float(event.y))
+            depth = self._canvas_y_to_depth(float(wy))
+        else:
+            depth = self._canvas_y_to_depth(self.canvas.canvasy(event.y))
         if depth is None:
             return
         t = self.tests[ti]
@@ -6887,6 +7120,7 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
     def _on_layer_drag_release(self, _event):
+        self._evt_widget = getattr(_event, "widget", None)
         drag = getattr(self, "_layer_drag", None)
         if drag:
             ti = int(drag.get("ti", -1))
@@ -6894,48 +7128,16 @@ class GeoCanvasEditor(tk.Tk):
             try:
                 if 0 <= ti < len(self.tests):
                     self._calc_layer_params_for_test(int(ti))
+                    self._refresh_card_graph_layers(int(ti))
             except Exception:
                 pass
-            self._redraw()
-            self.schedule_graph_redraw()
 
     def _canvas_y_to_depth(self, y: float) -> float | None:
-        units = getattr(self, "_grid_units", []) or []
-        base_grid = getattr(self, "_grid_base", []) or []
-        for disp_r, unit in enumerate(units):
-            y0r, y1r = self._row_y_bounds(disp_r)
+        for top_d, bot_d, y0r, y1r in self._depth_y_segments():
             if not (y0r <= y <= y1r):
                 continue
-            frac = (y - y0r) / max(1.0, (y1r - y0r))
-            if unit[0] == "meter":
-                meter_n = float(unit[1])
-                return meter_n + frac
-            if unit[0] != "row":
-                continue
-            try:
-                gi = int(unit[1])
-            except Exception:
-                continue
-            if not (0 <= gi < len(base_grid)):
-                continue
-            cur = _parse_depth_float(base_grid[gi])
-            if cur is None:
-                continue
-            prev = _parse_depth_float(base_grid[gi - 1]) if gi > 0 else None
-            nxt = _parse_depth_float(base_grid[gi + 1]) if gi + 1 < len(base_grid) else None
-            if prev is not None:
-                top_d = (float(prev) + float(cur)) * 0.5
-            elif nxt is not None:
-                top_d = float(cur) - (float(nxt) - float(cur)) * 0.5
-            else:
-                top_d = float(cur) - float(getattr(self, "step_m", 0.05) or 0.05) * 0.5
-            if nxt is not None:
-                bot_d = (float(cur) + float(nxt)) * 0.5
-            elif prev is not None:
-                bot_d = float(cur) + (float(cur) - float(prev)) * 0.5
-            else:
-                bot_d = float(cur) + float(getattr(self, "step_m", 0.05) or 0.05) * 0.5
-            return top_d + (bot_d - top_d) * frac
+            frac = (float(y) - float(y0r)) / max(1.0, float(y1r - y0r))
+            return float(top_d) + (float(bot_d) - float(top_d)) * frac
         return None
 
 
@@ -7077,8 +7279,17 @@ class GeoCanvasEditor(tk.Tk):
         qc = list(getattr(src, "qc", []) or [])
         fs = list(getattr(src, "fs", []) or [])
 
-        new_test = TestData(tid=new_id, dt=new_dt, depth=depth, qc=qc, fs=fs, orig_id=None, block=None,
-                            layers=[layer_from_dict(layer_to_dict(x)) for x in (getattr(src, "layers", []) or [])])
+        new_test = TestData(
+            tid=new_id,
+            dt=new_dt,
+            depth=depth,
+            qc=qc,
+            fs=fs,
+            orig_id=None,
+            block=None,
+            layers=[layer_from_dict(layer_to_dict(x)) for x in (getattr(src, "layers", []) or [])],
+            show_ige_column=bool(getattr(src, "show_ige_column", getattr(src, "export_on", True))),
+        )
 
         # insert right after source
         insert_at = min(len(self.tests), ti + 1)
@@ -9601,6 +9812,10 @@ class GeoCanvasEditor(tk.Tk):
 
     def _center_child(self, win: tk.Toplevel):
         try:
+            win.withdraw()
+        except Exception:
+            pass
+        try:
             win.update_idletasks()
             w = win.winfo_reqwidth()
             h = win.winfo_reqheight()
@@ -9611,6 +9826,7 @@ class GeoCanvasEditor(tk.Tk):
             x = px + max(0, (pw - w) // 2)
             y = py + max(0, (ph - h) // 2)
             win.geometry(f"{w}x{h}+{x}+{y}")
+            win.deiconify()
         except Exception:
             pass
     def _place_calendar_near_header(self, dlg: tk.Toplevel, ti: int):
