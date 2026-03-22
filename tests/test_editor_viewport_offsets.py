@@ -489,6 +489,38 @@ def test_redraw_graphs_now_keeps_hatch_visible_under_graph_frame():
     assert frame_rectangles[0][2]["fill"] == ""
 
 
+def test_draw_layer_hatch_converts_world_logical_rect_to_card_local_canvas_coords():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None)
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(support_items=True, y0=400.0)
+    editor._sounding_cards = {0: card}
+
+    editor._draw_layer_hatch(
+        176.0,
+        220.0,
+        326.0,
+        360.0,
+        "суглинок",
+        tags=("layers_overlay", "layers_overlay_0"),
+        logical_rect=(card.geometry.card_x0 + 176.0, 620.0, card.geometry.card_x0 + 326.0, 760.0),
+        canvas=card.body_canvas,
+    )
+
+    hatch_lines = [call for call in card.body_canvas.draw_calls if call[0] == "line" and "layers_overlay" in call[2].get("tags", ())]
+
+    assert hatch_lines
+
+
 def test_redraw_uses_card_hosted_header_and_body_targets_not_shared_canvases():
     editor = _make_editor()
     editor.tests = [SimpleNamespace(tid=1, dt="01.01.2026 10:00", export_on=True, locked=False, qc=["10"], fs=["5"], depth=["0.00"])]
@@ -775,6 +807,64 @@ def test_body_alignment_stays_synced_after_shared_vertical_scroll():
     assert card1.body_world_to_local(card1.geometry.card_x0 + 20.0, 130.0)[1] == 30.0
     assert editor._body_world_to_root(card1.geometry.card_x0 + 20.0, 130.0, ti=1) == (1420, 2030)
 
+
+
+def test_card_body_canvas_binds_drag_motion_and_release_for_layer_handles():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.canvas = _DummyBodyCanvas(support_items=True)
+    editor.hcanvas = _DummyBodyCanvas(support_items=True)
+    editor.soundings_viewport = SimpleNamespace(strip=None)
+
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(support_items=True)
+    editor._bind_card_targets(card)
+
+    assert "<B1-Motion>" in card.body_canvas.bindings
+    assert "<ButtonRelease-1>" in card.body_canvas.bindings
+
+
+def test_layer_drag_motion_uses_card_body_canvas_coordinates():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(tid=1, experience_column=SimpleNamespace(column_depth_end=2.0, intervals=[SimpleNamespace(from_depth=0.0), SimpleNamespace(from_depth=1.0)]))]
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None)
+    editor.canvas = _DummyBodyCanvas(y0=0.0)
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(y0=400.0)
+    editor._sounding_cards = {0: card}
+    editor._layer_drag = {"ti": 0, "boundary": 1, "mode": "boundary"}
+    editor._is_test_locked = lambda ti: False
+    captured = []
+    editor._canvas_y_to_depth = lambda y: captured.append(float(y)) or 1.25
+    editor._ensure_test_experience_column = lambda t: t.experience_column
+    editor._set_status = lambda msg: None
+    editor._redraw_graphs_now = lambda: None
+
+    import src.zondeditor.ui.editor as editor_module
+    move_backup = editor_module.move_experience_column_boundary
+    editor_module.move_experience_column_boundary = lambda column, boundary, depth: column
+    try:
+        editor._on_layer_drag_motion(SimpleNamespace(widget=card.body_canvas, x=10, y=20))
+    finally:
+        editor_module.move_experience_column_boundary = move_backup
+
+    assert captured == [420.0]
 
 
 def test_compact_toggle_redraw_clears_stale_body_rows_from_card_canvas():

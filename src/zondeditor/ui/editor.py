@@ -4610,6 +4610,8 @@ class GeoCanvasEditor(tk.Tk):
                 widget.bind("<Button-1>", self._on_left_click)
                 if widget is getattr(card, "body_canvas", None):
                     widget.bind("<Double-1>", self._on_double_click)
+                    widget.bind("<B1-Motion>", self._on_layer_drag_motion)
+                    widget.bind("<ButtonRelease-1>", self._on_layer_drag_release)
                 widget.bind("<Motion>", self._on_motion)
                 widget.bind("<Leave>", lambda _e: self._set_hover(None))
             except Exception:
@@ -5676,12 +5678,21 @@ class GeoCanvasEditor(tk.Tk):
         if pattern is None:
             # Временный fallback: без штриховки, если внешний JSON не зарегистрирован.
             return
+        rect = (float(x0), float(y0), float(x1), float(y1))
+        logical_rect_local = None
+        if logical_rect is not None:
+            logical_rect_local = tuple(float(v) for v in logical_rect)
+            target_card = self._card_for_widget(canvas) if canvas is not None else None
+            if target_card is not None and canvas is getattr(target_card, "body_canvas", None):
+                lx0, ly0 = target_card.body_world_to_local(float(logical_rect_local[0]), float(logical_rect_local[1]))
+                lx1, ly1 = target_card.body_world_to_local(float(logical_rect_local[2]), float(logical_rect_local[3]))
+                logical_rect_local = (float(lx0), float(ly0), float(lx1), float(ly1))
         render_hatch_pattern(
             canvas or self.canvas,
-            (float(x0), float(y0), float(x1), float(y1)),
+            rect,
             pattern,
             tags=tags,
-            scale_info={"usage": HATCH_USAGE_EDITOR_EXPANDED, "layer_height_px": float(y1 - y0), "logical_rect": tuple(logical_rect) if logical_rect is not None else (float(x0), float(y0), float(x1), float(y1))},
+            scale_info={"usage": HATCH_USAGE_EDITOR_EXPANDED, "layer_height_px": float(y1 - y0), "logical_rect": logical_rect_local if logical_rect_local is not None else rect},
         )
 
     def _log_active_card_body_debug(self, card: SoundingCard | None, *, table_span=None, graph_span=None, interval_spans=None, handle_positions=None):
@@ -7017,6 +7028,7 @@ class GeoCanvasEditor(tk.Tk):
             lyr.params = p
 
     def _on_layer_drag_motion(self, event):
+        self._evt_widget = event.widget
         drag = getattr(self, "_layer_drag", None)
         if not drag:
             return
@@ -7027,7 +7039,12 @@ class GeoCanvasEditor(tk.Tk):
         mode = str(drag.get("mode") or "boundary")
         if ti < 0 or ti >= len(self.tests):
             return
-        depth = self._canvas_y_to_depth(self.canvas.canvasy(event.y))
+        card = self._card_for_widget(event.widget)
+        if card is not None and event.widget is getattr(card, "body_canvas", None):
+            _wx, wy = card.body_local_to_world(float(event.x), float(event.y))
+            depth = self._canvas_y_to_depth(float(wy))
+        else:
+            depth = self._canvas_y_to_depth(self.canvas.canvasy(event.y))
         if depth is None:
             return
         t = self.tests[ti]
@@ -7047,6 +7064,7 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
     def _on_layer_drag_release(self, _event):
+        self._evt_widget = getattr(_event, "widget", None)
         drag = getattr(self, "_layer_drag", None)
         if drag:
             ti = int(drag.get("ti", -1))
