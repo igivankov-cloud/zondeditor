@@ -764,6 +764,61 @@ def test_card_body_scrollregion_tracks_content_height_after_rebuild():
     assert card.dev_selfcheck_snapshot()["body_yview"] == (0.0, 0.3)
 
 
+def test_update_scrollregion_resyncs_existing_card_viewports_when_height_changes_without_rebuild():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.canvas = _DummyBodyCanvas(height=120)
+    editor.hcanvas = SimpleNamespace()
+    editor.soundings_viewport = _DummyViewport(width=320, x0=0.0, fractions=(0.0, 1.0))
+    editor._total_body_height = lambda: 400
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(height=120)
+    card.set_body_scroll_context(view_height=120.0, content_height=400.0)
+
+    assert int(card.body_canvas.cget("height")) == 120
+
+    editor.canvas._height = 240
+    editor._update_scrollregion()
+
+    assert int(card.body_canvas.cget("height")) == 240
+
+
+def test_sync_card_viewports_clamps_shared_scroll_to_zero_when_content_fits_after_local_refresh():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(tid=1)]
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.canvas = _DummyBodyCanvas(height=120)
+    editor.hcanvas = SimpleNamespace()
+    editor.soundings_viewport = _DummyViewport(width=320, x0=0.0, fractions=(0.0, 1.0))
+    editor._row_tops = [0.0, 400.0]
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(height=120)
+    card.set_body_scroll_context(view_height=120.0, content_height=400.0)
+    editor._apply_shared_body_yview_fraction(0.5)
+
+    editor.canvas._height = 500
+    editor._row_tops = [0.0, 100.0]
+    editor._sync_card_viewports()
+
+    card = editor._card_for_test(0)
+    assert round(editor_module.GeoCanvasEditor._shared_body_yview_fraction(editor), 2) == 0.0
+    assert round(card.body_yview()[0], 2) == 0.0
+
 
 def test_redraw_graphs_now_does_not_crash_when_graphs_and_layers_are_disabled():
     editor = _make_editor()

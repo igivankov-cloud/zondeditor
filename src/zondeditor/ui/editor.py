@@ -4706,6 +4706,22 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             return float(self._total_body_height())
 
+    def _sync_card_viewports(self):
+        cards = list((self.__dict__.get("_sounding_cards", {}) or {}).values())
+        if not cards:
+            return
+        view_h = float(self._card_body_view_height())
+        body_h = float(self._total_body_height())
+        shared_frac = float(self.__dict__.get("_shared_body_yview_fraction", 0.0) or 0.0)
+        for card in cards:
+            try:
+                card.set_body_scroll_context(view_height=view_h, content_height=body_h)
+            except Exception:
+                pass
+        if body_h <= max(1.0, view_h):
+            shared_frac = 0.0
+        self._apply_shared_body_yview_fraction(shared_frac)
+
     def _card_yview_snapshot(self) -> dict[int, tuple[float, float]]:
         return {int(ti): tuple(card.body_yview()) for ti, card in (self.__dict__.get("_sounding_cards", {}) or {}).items() if hasattr(card, "body_yview")}
 
@@ -4971,6 +4987,7 @@ class GeoCanvasEditor(tk.Tk):
             view_h = int(self.canvas.winfo_height() or 1)
         except Exception:
             view_h = 1
+        self._sync_card_viewports()
         need_v = body_h > max(1, view_h)
         if not need_v:
             try:
@@ -6113,6 +6130,7 @@ class GeoCanvasEditor(tk.Tk):
         if not getattr(self, "tests", None):
             return
 
+        self._sync_card_viewports()
         self._calc_layer_params_for_all_tests()
         self._recompute_graph_scales()
         self._layer_handle_hitbox = []
