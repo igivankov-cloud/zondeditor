@@ -860,6 +860,7 @@ class SoundingCard:
         label_spans: list[dict] = []
         plot_hitboxes: list[dict] = []
         layer_tags = ("layers_overlay", f"layers_overlay_{self.test_index}")
+        label_tags = ("layers_label_chip", f"layers_label_chip_{self.test_index}")
         for interval in intervals:
             world_rect = (float(interval["x0"]), float(interval["y0"]), float(interval["x1"]), float(interval["y1"]))
             x0, y0, x1, y1 = self._map_body_rect(canvas, world_rect)
@@ -882,8 +883,8 @@ class SoundingCard:
                     chip_h = th + 4.0
                     if chip_w <= max_w and chip_h <= max_h:
                         bbox = (cx - chip_w * 0.5, cy - chip_h * 0.5, cx + chip_w * 0.5, cy + chip_h * 0.5)
-                        canvas.create_rectangle(*bbox, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"], tags=layer_tags)
-                        canvas.create_text(cx, cy, text=text, fill=layer_ui_colors["text"], activefill=layer_ui_colors["text"], font=("Segoe UI", font_size, "bold"), tags=layer_tags)
+                        canvas.create_rectangle(*bbox, fill=layer_ui_colors["fill"], outline=layer_ui_colors["outline"], width=1, activefill=layer_ui_colors["fill_active"], activeoutline=layer_ui_colors["outline_active"], tags=layer_tags + label_tags)
+                        canvas.create_text(cx, cy, text=text, fill=layer_ui_colors["text"], activefill=layer_ui_colors["text"], font=("Segoe UI", font_size, "bold"), tags=layer_tags + label_tags)
                         label_spans.append(self.make_hitbox(kind="label", bbox=(world_rect[0], world_rect[1], world_rect[2], world_rect[3]), extra={"depth": float(interval.get("depth", 0.0))}))
                         break
         return plot_hitboxes, label_spans

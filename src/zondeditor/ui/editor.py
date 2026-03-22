@@ -1534,7 +1534,6 @@ class GeoCanvasEditor(tk.Tk):
         new_ige_id = self._next_free_ige_id()
         self.ige_registry[new_ige_id] = self._ensure_ige_cpt_fields({"soil_type": None, "calc_mode": CalcMode.LIMITED.value, "style": {}, "label": self._ige_default_label(new_ord), "ordinal": int(new_ord)})
         self._sync_layers_panel()
-        self.schedule_graph_redraw()
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.focus_ige_row(new_ige_id)
 
@@ -5384,6 +5383,10 @@ class GeoCanvasEditor(tk.Tk):
     def _center_toplevel(self, win, *, parent=None):
         host = parent or self
         try:
+            win.withdraw()
+        except Exception:
+            pass
+        try:
             host.update_idletasks()
             win.update_idletasks()
             px = int(host.winfo_rootx())
@@ -5395,6 +5398,7 @@ class GeoCanvasEditor(tk.Tk):
             x = px + max(0, (pw - ww) // 2)
             y = py + max(0, (ph - wh) // 2)
             win.geometry(f"+{x}+{y}")
+            win.deiconify()
         except Exception:
             pass
 
@@ -5950,6 +5954,11 @@ class GeoCanvasEditor(tk.Tk):
                 draw_frame=False,
                 draw_curves=True,
             )
+            if show_geology and hasattr(body_target, "tag_raise"):
+                try:
+                    body_target.tag_raise(f"layers_label_chip_{ti}")
+                except Exception:
+                    pass
             card.redraw_if_needed("graph")
             if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
                 try:
@@ -9803,6 +9812,10 @@ class GeoCanvasEditor(tk.Tk):
 
     def _center_child(self, win: tk.Toplevel):
         try:
+            win.withdraw()
+        except Exception:
+            pass
+        try:
             win.update_idletasks()
             w = win.winfo_reqwidth()
             h = win.winfo_reqheight()
@@ -9813,6 +9826,7 @@ class GeoCanvasEditor(tk.Tk):
             x = px + max(0, (pw - w) // 2)
             y = py + max(0, (ph - h) // 2)
             win.geometry(f"{w}x{h}+{x}+{y}")
+            win.deiconify()
         except Exception:
             pass
     def _place_calendar_near_header(self, dlg: tk.Toplevel, ti: int):

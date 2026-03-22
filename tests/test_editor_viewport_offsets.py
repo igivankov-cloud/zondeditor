@@ -49,6 +49,7 @@ class _DummyBodyCanvas:
         self._items = []
         self._next_item_id = 1
         self.bindings = {}
+        self.raised_tags = []
 
     def bbox(self, _tag):
         return self._bbox_all
@@ -119,6 +120,9 @@ class _DummyBodyCanvas:
 
     def bind(self, event, callback):
         self.bindings[event] = callback
+
+    def tag_raise(self, tag, above_this=None):
+        self.raised_tags.append((tag, above_this))
 
     def delete(self, *args, **kwargs):
         self.draw_calls.append(("delete", args, kwargs))
@@ -487,6 +491,48 @@ def test_redraw_graphs_now_keeps_hatch_visible_under_graph_frame():
     assert hatch_lines
     assert frame_rectangles
     assert frame_rectangles[0][2]["fill"] == ""
+
+
+def test_redraw_graphs_now_raises_ige_label_chip_above_graph_curves():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(qc=["10"], fs=["5"], depth=["0.00"], tid=1)]
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.show_graphs = True
+    editor.show_geology_column = True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 320), xview_fractions=lambda: (0.0, 1.0))
+    editor._grid_units = [("row", 0)]
+    editor._grid_row_maps = {0: {0: 0}}
+    editor._row_y_bounds = lambda row: (0.0, 120.0)
+    editor._calc_layer_params_for_all_tests = lambda: None
+    editor._recompute_graph_scales = lambda: setattr(editor, "graph_qc_max_mpa", 30.0) or setattr(editor, "graph_fs_max_kpa", 286.0) or setattr(editor, "graph_qc_max_source", "data") or setattr(editor, "graph_fs_max_source", "data") or setattr(editor, "graph_qc_max_display", 30.0) or setattr(editor, "graph_fs_max_display", 286.0)
+    editor._calc_qc_fs_from_del = lambda q, f: (float(q), float(f))
+    editor._depth_to_canvas_y = lambda d: float(d) * 100.0
+    editor._ensure_test_experience_column = lambda t: SimpleNamespace(column_depth_start=0.0, column_depth_end=1.0, intervals=[SimpleNamespace(from_depth=0.0, to_depth=1.0, ige_id="ИГЭ-1")])
+    editor._column_interval_ige_id = lambda lyr: "ИГЭ-1"
+    editor._ensure_ige_entry = lambda ige_id: {"soil_type": "суглинок"}
+    editor._geology_layer_fill_color = lambda soil: "#eee"
+    editor.cpt_calc_settings = {}
+    editor._refresh_display_order = lambda: None
+    editor._graph_rect_for_test = lambda ti: (226.0, 0.0, 376.0, 120.0)
+    editor.canvas = SimpleNamespace(delete=lambda *args, **kwargs: None)
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(support_items=True)
+    font_backup = editor_module.tkfont.Font
+    editor_module.tkfont.Font = lambda font=None: SimpleNamespace(measure=lambda text: len(text) * 4, metrics=lambda name: 8)
+    try:
+        editor._redraw_graphs_now()
+    finally:
+        editor_module.tkfont.Font = font_backup
+
+    assert ("layers_label_chip_0", None) in card.body_canvas.raised_tags
 
 
 def test_draw_layer_hatch_converts_world_logical_rect_to_card_local_canvas_coords():
@@ -894,6 +940,28 @@ def test_layer_drag_release_refreshes_only_the_active_card():
     assert editor._layer_drag is None
 
 
+def test_add_unassigned_ige_from_ribbon_does_not_schedule_global_graph_redraw():
+    editor = _make_editor()
+    editor.ige_registry = {"ИГЭ-1": {"label": "ИГЭ-1", "ordinal": 1}}
+    editor._push_undo = lambda: None
+    editor._next_free_ige_ordinal = lambda: 2
+    editor._next_free_ige_id = lambda: "ige-2-1"
+    editor._ensure_ige_cpt_fields = lambda payload: dict(payload)
+    synced = []
+    focused = []
+    scheduled = []
+    editor._sync_layers_panel = lambda: synced.append("layers")
+    editor.schedule_graph_redraw = lambda: scheduled.append("graphs")
+    editor.ribbon_view = SimpleNamespace(focus_ige_row=lambda ige_id: focused.append(ige_id))
+
+    editor._add_unassigned_ige_from_ribbon()
+
+    assert "ige-2-1" in editor.ige_registry
+    assert synced == ["layers"]
+    assert focused == ["ige-2-1"]
+    assert scheduled == []
+
+
 def test_refresh_card_graph_layers_replaces_hitboxes_only_for_target_card():
     editor = _make_editor()
     editor.display_cols = [0, 1]
@@ -916,6 +984,63 @@ def test_refresh_card_graph_layers_replaces_hitboxes_only_for_target_card():
     assert [hit["marker"] for hit in editor._layer_depth_box_hitbox] == ["keep1", "new0"]
     assert [hit["marker"] for hit in editor._layer_plot_hitbox] == ["keep1", "new0"]
     assert [hit["marker"] for hit in editor._layer_label_hitbox] == ["keep1", "new0"]
+
+
+def test_center_toplevel_withdraws_before_showing_centered_window():
+    editor = _make_editor()
+    editor.winfo_rootx = lambda: 100
+    editor.winfo_rooty = lambda: 200
+    editor.winfo_width = lambda: 500
+    editor.winfo_height = lambda: 400
+    editor.update_idletasks = lambda: None
+    calls = []
+
+    class _DummyWin:
+        def withdraw(self):
+            calls.append("withdraw")
+        def update_idletasks(self):
+            calls.append("update")
+        def winfo_reqwidth(self):
+            return 120
+        def winfo_reqheight(self):
+            return 80
+        def geometry(self, value):
+            calls.append(("geometry", value))
+        def deiconify(self):
+            calls.append("deiconify")
+
+    editor._center_toplevel(_DummyWin(), parent=editor)
+
+    assert calls[0] == "withdraw"
+    assert calls[-1] == "deiconify"
+
+
+def test_center_child_withdraws_before_showing_centered_window():
+    editor = _make_editor()
+    editor.winfo_rootx = lambda: 100
+    editor.winfo_rooty = lambda: 200
+    editor.winfo_width = lambda: 500
+    editor.winfo_height = lambda: 400
+    calls = []
+
+    class _DummyWin:
+        def withdraw(self):
+            calls.append("withdraw")
+        def update_idletasks(self):
+            calls.append("update")
+        def winfo_reqwidth(self):
+            return 120
+        def winfo_reqheight(self):
+            return 80
+        def geometry(self, value):
+            calls.append(("geometry", value))
+        def deiconify(self):
+            calls.append("deiconify")
+
+    editor._center_child(_DummyWin())
+
+    assert calls[0] == "withdraw"
+    assert calls[-1] == "deiconify"
 
 
 def test_compact_toggle_redraw_clears_stale_body_rows_from_card_canvas():
