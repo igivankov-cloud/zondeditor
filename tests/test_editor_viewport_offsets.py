@@ -109,6 +109,11 @@ class _DummyBodyCanvas:
     def create_window(self, *args, **kwargs):
         return self._add_item("window", *args, **kwargs)
 
+    def create_image(self, *args, **kwargs):
+        if self._support_items:
+            return self._add_item("image", *args, **kwargs)
+        self.draw_calls.append(("image", args, kwargs))
+
     def find_all(self):
         return tuple(item["id"] for item in self._items)
 
@@ -1057,13 +1062,13 @@ def test_refresh_after_cell_edit_redraws_only_target_card_when_shared_scale_is_u
     graph_calls = []
     redraw_calls = []
     editor._recompute_graph_scales = lambda: None
-    editor._refresh_single_card = lambda ti, **kwargs: local_calls.append(int(ti))
-    editor._refresh_card_graph_layers = lambda ti: graph_calls.append(int(ti))
+    editor._refresh_single_card = lambda ti, **kwargs: local_calls.append((int(ti), bool(kwargs.get("preserve_geology", False))))
+    editor._refresh_card_graph_curves = lambda ti: graph_calls.append(int(ti))
     editor._redraw = lambda: redraw_calls.append("all")
 
     editor._refresh_after_cell_edit(1)
 
-    assert local_calls == [1]
+    assert local_calls == [(1, True)]
     assert graph_calls == [1]
     assert redraw_calls == []
 
@@ -1908,21 +1913,39 @@ def test_begin_edit_depth0_uses_explicit_debug_field_without_name_error(monkeypa
     assert editor._editing[:3] == (0, 0, "depth")
 
 
-def test_draw_layer_hatch_uses_interactive_hatch_usage(monkeypatch):
+def test_draw_layer_hatch_uses_cached_image_layer_before_vector_renderer(monkeypatch):
     editor = _make_editor()
-    calls = []
-
-    monkeypatch.setattr(editor_module, "load_registered_hatch", lambda soil: object())
+    canvas = _DummyBodyCanvas(support_items=True)
+    editor._interactive_hatch_image = lambda soil, width, height: object()
+    called = []
     monkeypatch.setattr(
         editor_module,
         "render_hatch_pattern",
-        lambda canvas, rect, pattern, *, tags, scale_info=None: calls.append(scale_info or {}),
+        lambda *args, **kwargs: called.append("vector"),
     )
 
-    editor._draw_layer_hatch(0.0, 0.0, 20.0, 40.0, "песок", tags=("x",), canvas=_DummyBodyCanvas())
+    editor._draw_layer_hatch(0.0, 0.0, 20.0, 40.0, "песок", tags=("x",), canvas=canvas)
 
-    assert calls
-    assert calls[0]["usage"] == "editor_interactive"
+    assert called == []
+    assert [item["type"] for item in canvas._items] == ["image"]
+
+
+def test_refresh_card_graph_curves_does_not_drop_geology_hitboxes():
+    editor = _make_editor()
+    editor.display_cols = [0, 1]
+    editor.tests = [SimpleNamespace(tid=1), SimpleNamespace(tid=2)]
+    editor._layer_handle_hitbox = [{"ti": 0, "marker": "keep0"}, {"ti": 1, "marker": "keep1"}]
+    editor._layer_depth_box_hitbox = [{"ti": 0, "marker": "keep0"}, {"ti": 1, "marker": "keep1"}]
+    editor._layer_plot_hitbox = [{"ti": 0, "marker": "keep0"}, {"ti": 1, "marker": "keep1"}]
+    editor._layer_label_hitbox = [{"ti": 0, "marker": "keep0"}, {"ti": 1, "marker": "keep1"}]
+    calls = []
+    editor._card_for_test = lambda ti: SimpleNamespace(clear_body_render_layers=lambda *tags: calls.append((int(ti), tags)))
+    editor._render_card_graph_layers = lambda ti, **kwargs: calls.append(("render", int(ti), kwargs))
+
+    editor._refresh_card_graph_curves(0)
+
+    assert ("render", 0, {"include_geology": False}) in calls
+    assert [hit["marker"] for hit in editor._layer_plot_hitbox] == ["keep0", "keep1"]
 
 
 def test_bind_card_targets_rebinds_double_click_for_body_canvas():

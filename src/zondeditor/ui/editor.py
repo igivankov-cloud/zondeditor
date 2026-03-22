@@ -5259,6 +5259,22 @@ class GeoCanvasEditor(tk.Tk):
         self._drop_layer_hitboxes_for_test(ti)
         self._render_card_graph_layers(ti)
 
+    def _refresh_card_graph_curves(self, ti: int):
+        ti = int(ti)
+        card = self._card_for_test(ti)
+        if card is not None and hasattr(card, "clear_body_render_layers"):
+            card.clear_body_render_layers(
+                "graph_axes",
+                f"graph_axes_{ti}",
+                "graph_qc",
+                f"graph_qc_{ti}",
+                "graph_fs",
+                f"graph_fs_{ti}",
+                "graph_nodata",
+                f"graph_nodata_{ti}",
+            )
+        self._render_card_graph_layers(ti, include_geology=False)
+
     def _graph_scale_snapshot(self) -> tuple[float, float, str, str, float | None, float | None]:
         return (
             float(self.__dict__.get("graph_qc_max_mpa", 0.0) or 0.0),
@@ -5280,8 +5296,8 @@ class GeoCanvasEditor(tk.Tk):
         if scales_changed:
             self._redraw()
             return
-        self._refresh_single_card(ti)
-        self._refresh_card_graph_layers(ti)
+        self._refresh_single_card(ti, preserve_geology=True)
+        self._refresh_card_graph_curves(ti)
 
     def _test_last_data_index(self, t) -> int | None:
         qarr = getattr(t, "qc", []) or []
@@ -5815,27 +5831,83 @@ class GeoCanvasEditor(tk.Tk):
             **payload,
         )
 
+    def _interactive_hatch_cache(self) -> dict[tuple[str, int, int], object]:
+        cache = self.__dict__.get("_interactive_hatch_image_cache", None)
+        if cache is None:
+            cache = {}
+            self.__dict__["_interactive_hatch_image_cache"] = cache
+        return cache
+
+    def _interactive_hatch_image(self, soil_type: str, width: int, height: int):
+        soil = str(soil_type or "").strip().lower().replace("ё", "е")
+        w = max(1, int(width))
+        h = max(1, int(height))
+        key = (soil, w, h)
+        cache = self._interactive_hatch_cache()
+        if key in cache:
+            return cache[key]
+        image = tk.PhotoImage(width=w, height=h)
+
+        def _put(color: str, x0: int, y0: int, x1: int | None = None, y1: int | None = None):
+            xx0 = max(0, min(w, int(x0)))
+            yy0 = max(0, min(h, int(y0)))
+            xx1 = max(xx0 + 1, min(w, int(x1 if x1 is not None else (x0 + 1))))
+            yy1 = max(yy0 + 1, min(h, int(y1 if y1 is not None else (y0 + 1))))
+            image.put(color, to=(xx0, yy0, xx1, yy1))
+
+        if "грав" in soil and "пес" in soil:
+            for y in range(2, h, 12):
+                for x in range((y // 6) % 8, w, 12):
+                    _put("#7a5e3a", x, y, x + 4, y + 2)
+                    if x + 6 < w and y + 6 < h:
+                        _put("#7a5e3a", x + 4, y + 2, x + 6, y + 6)
+            for y in range(6, h, 12):
+                for x in range(6, w, 12):
+                    _put("#8b6b43", x, y)
+                    _put("#8b6b43", x + 1, y + 1)
+        elif "грав" in soil:
+            for y in range(2, h, 12):
+                for x in range((y // 6) % 10, w, 14):
+                    _put("#7a5e3a", x, y, x + 5, y + 2)
+                    if x + 7 < w and y + 7 < h:
+                        _put("#7a5e3a", x + 4, y + 2, x + 7, y + 7)
+        elif "пес" in soil:
+            for y in range(4, h, 10):
+                for x in range((y // 5) % 6, w, 10):
+                    _put("#8b6b43", x, y)
+                    if x + 2 < w and y + 2 < h:
+                        _put("#8b6b43", x + 2, y + 2)
+        elif "глин" in soil:
+            for y in range(4, h, 10):
+                _put("#7a5e3a", 0, y, w, y + 1)
+        else:
+            for y in range(4, h, 12):
+                for x in range(0, w, 12):
+                    _put("#7a5e3a", x, y, min(w, x + 6), min(h, y + 1))
+
+        cache[key] = image
+        return image
+
     def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, soil_type: str, tags, logical_rect=None, canvas=None):
-        # Единая система: внешние JSON-штриховки через domain.hatching registry.
+        target = canvas or self.canvas
+        width = max(1, int(round(float(x1) - float(x0))))
+        height = max(1, int(round(float(y1) - float(y0))))
+        try:
+            image = self._interactive_hatch_image(str(soil_type or ""), width, height)
+            if hasattr(target, "create_image"):
+                target.create_image(float(x0), float(y0), image=image, anchor="nw", tags=tags)
+                return
+        except Exception:
+            pass
         pattern = load_registered_hatch(str(soil_type or ""))
         if pattern is None:
-            # Временный fallback: без штриховки, если внешний JSON не зарегистрирован.
             return
-        rect = (float(x0), float(y0), float(x1), float(y1))
-        logical_rect_local = None
-        if logical_rect is not None:
-            logical_rect_local = tuple(float(v) for v in logical_rect)
-            target_card = self._card_for_widget(canvas) if canvas is not None else None
-            if target_card is not None and canvas is getattr(target_card, "body_canvas", None):
-                lx0, ly0 = target_card.body_world_to_local(float(logical_rect_local[0]), float(logical_rect_local[1]))
-                lx1, ly1 = target_card.body_world_to_local(float(logical_rect_local[2]), float(logical_rect_local[3]))
-                logical_rect_local = (float(lx0), float(ly0), float(lx1), float(ly1))
         render_hatch_pattern(
-            canvas or self.canvas,
-            rect,
+            target,
+            (float(x0), float(y0), float(x1), float(y1)),
             pattern,
             tags=tags,
-            scale_info={"usage": HATCH_USAGE_EDITOR_INTERACTIVE, "layer_height_px": float(y1 - y0), "logical_rect": logical_rect_local if logical_rect_local is not None else rect},
+            scale_info={"usage": HATCH_USAGE_EDITOR_INTERACTIVE, "layer_height_px": float(y1 - y0), "logical_rect": (float(x0), float(y0), float(x1), float(y1))},
         )
 
     def _log_active_card_body_debug(self, card: SoundingCard | None, *, table_span=None, graph_span=None, interval_spans=None, handle_positions=None):
@@ -5851,7 +5923,7 @@ class GeoCanvasEditor(tk.Tk):
             file=sys.stderr,
         )
 
-    def _render_card_graph_layers(self, ti: int):
+    def _render_card_graph_layers(self, ti: int, *, include_geology: bool = True):
         card = self._card_for_test(int(ti))
         if card is None:
             return
@@ -5880,7 +5952,7 @@ class GeoCanvasEditor(tk.Tk):
                 pass
         t = self.tests[ti]
         show_graphs = bool(getattr(self, "show_graphs", False))
-        show_geology = bool(getattr(self, "show_geology_column", True))
+        show_geology = bool(getattr(self, "show_geology_column", True)) and bool(include_geology)
         interval_specs = []
         overlay_specs = []
         layer_spans = []
@@ -7704,7 +7776,7 @@ class GeoCanvasEditor(tk.Tk):
         x0, y0, x1, y1 = card.geometry.header_bounds_world
         return (x0, y0 + float(self.pad_y), x1, y0 + float(self.pad_y + self.hdr_h))
 
-    def _refresh_single_card(self, ti: int, *, diagnostics=None, show_graphs: bool | None = None):
+    def _refresh_single_card(self, ti: int, *, diagnostics=None, show_graphs: bool | None = None, preserve_geology: bool = False):
         ti = int(ti)
         self._refresh_display_order()
         if ti not in (getattr(self, "display_cols", []) or []):
@@ -7725,14 +7797,26 @@ class GeoCanvasEditor(tk.Tk):
         grid = getattr(self, "_grid_base", []) or []
         t = self.tests[ti]
         self._log_card_canvas_clip_debug(card, phase="before_body_redraw")
-        for widget, label in ((getattr(card, "header_canvas", None), "header"), (getattr(card, "body_canvas", None), "body")):
-            if widget is None or not hasattr(widget, "delete"):
-                continue
+        header_canvas = getattr(card, "header_canvas", None)
+        if header_canvas is not None and hasattr(header_canvas, "delete"):
             try:
-                widget.delete("all")
+                header_canvas.delete("all")
             except Exception:
                 if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
-                    print(f"[CARDCLIP] phase=clear_failed ti={card.test_index} target={label}", file=sys.stderr)
+                    print(f"[CARDCLIP] phase=clear_failed ti={card.test_index} target=header", file=sys.stderr)
+        body_canvas = getattr(card, "body_canvas", None)
+        if preserve_geology and body_canvas is not None and hasattr(card, "clear_body_render_layers"):
+            try:
+                card.clear_body_render_layers("body_table_cells", f"body_table_cells_{ti}")
+            except Exception:
+                if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+                    print(f"[CARDCLIP] phase=clear_failed ti={card.test_index} target=body_table_cells", file=sys.stderr)
+        elif body_canvas is not None and hasattr(body_canvas, "delete"):
+            try:
+                body_canvas.delete("all")
+            except Exception:
+                if bool(self.__dict__.get("_viewport_selfcheck_debug", False)):
+                    print(f"[CARDCLIP] phase=clear_failed ti={card.test_index} target=body", file=sys.stderr)
 
         x0, y0, x1, y1 = self._header_bbox(col)
         ex_on = bool(getattr(t, "export_on", True))
