@@ -1623,6 +1623,9 @@ def test_click_on_body_cell_triggers_begin_edit_and_survives_global_click_guard(
     editor._layer_plot_hitbox = []
     editor._layer_ige_picker = None
     editor._layer_ige_picker_meta = None
+    editor._row_tops = [0.0, 22.0, 44.0]
+    editor._is_real_interval_cell = lambda ti, row, field: True
+    editor._grid_row_maps = {0: {0: 0, 1: 1}}
     editor._rebuild_sounding_cards()
     card = editor._card_for_test(0)
     card.body_canvas = _DummyBodyCanvas()
@@ -1702,6 +1705,58 @@ def test_begin_edit_editor_rect_stays_inside_card_body_after_shared_scroll(monke
     assert 0 <= placed['x'] <= card.geometry.card_width
     assert 0 <= placed['y'] <= 22.0
 
+
+def test_left_click_switch_between_cells_marks_next_editor_to_skip_ensure_visible():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(qc=["10", "11"], fs=["5", "6"], depth=["0.00", "0.10"], tid=1, locked=False)]
+    editor.flags = {1: SimpleNamespace(invalid=False, force_cells=set(), interp_cells=set(), user_cells=set(), algo_cells=set())}
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor._sync_layers_panel = lambda: None
+    editor.schedule_graph_redraw = lambda: None
+    editor._layer_depth_box_hitbox = []
+    editor._layer_handle_hitbox = []
+    editor._layer_label_hitbox = []
+    editor._layer_plot_hitbox = []
+    editor._layer_ige_picker = None
+    editor._layer_ige_picker_meta = None
+    editor._row_tops = [0.0, 22.0, 44.0]
+    editor._is_real_interval_cell = lambda ti, row, field: True
+    editor._grid_row_maps = {0: {0: 0, 1: 1}}
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas()
+    editor._sounding_cards = {0: card}
+    editor._editing = (0, 0, "qc", object(), 0)
+    editor._editing_meta = {"row": 0, "field": "qc", "ti": 0}
+    calls = []
+    editor._end_edit = lambda commit=True: (calls.append(("end", commit)), setattr(editor, "_editing", None), setattr(editor, "_editing_meta", None))
+    editor._begin_edit = lambda ti, data_row, field, display_row=None, new_tail=False: calls.append(("begin", ti, data_row, field, display_row, editor.__dict__.get("_pending_edit_ensure_visible")))
+
+    editor._on_left_click(SimpleNamespace(widget=card.body_canvas, x=80, y=32))
+
+    assert calls == [("end", True), ("begin", 0, 1, "qc", 1, False)]
+
+
+def test_end_edit_if_widget_ignores_stale_focusout_for_old_editor():
+    editor = _make_editor()
+    old_entry = object()
+    new_entry = object()
+    editor._editing = (0, 1, "qc", new_entry, 1)
+    editor._editing_meta = {"row": 1, "field": "qc", "ti": 0}
+    calls = []
+    editor._end_edit = lambda commit=True: calls.append(commit)
+
+    editor._end_edit_if_widget(old_entry, commit=True, reason="focusout")
+
+    assert calls == []
+    assert editor._editing[3] is new_entry
 
 
 def test_bind_card_targets_rebinds_double_click_for_body_canvas():

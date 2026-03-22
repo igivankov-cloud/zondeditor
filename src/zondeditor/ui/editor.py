@@ -6198,11 +6198,13 @@ class GeoCanvasEditor(tk.Tk):
 
         # Любой клик по UI (иконки/пустые/глубина) сначала закрывает активную ячейку
         # (кроме случая, когда мы тут же откроем новое редактирование).
+        switching_cell_edit = False
         try:
             if getattr(self, '_editing', None):
                 # не закрываем, если клик по текущему Entry
                 ed = self._editing[3] if len(self._editing) >= 4 else None
                 if ed is None or event.widget is not ed:
+                    switching_cell_edit = bool(hit and hit[0] == "cell")
                     self._end_edit(commit=True)
         except Exception:
             pass
@@ -6372,6 +6374,7 @@ class GeoCanvasEditor(tk.Tk):
             if field == "depth":
                 data_row0 = mp.get(row, None)
                 if data_row0 == 0:
+                    self._pending_edit_ensure_visible = not bool(switching_cell_edit)
                     self._begin_edit_depth0(ti, display_row=row)
                     return
                 meter_n = self._expanded_meter_for_depth_cell(ti, row)
@@ -6393,6 +6396,7 @@ class GeoCanvasEditor(tk.Tk):
                 if self._is_test_locked(int(ti)):
                     self._set_status("Опыт заблокирован")
                     return
+                self._pending_edit_ensure_visible = not bool(switching_cell_edit)
                 self._begin_edit(ti, data_row, field, display_row=row)
                 self.schedule_graph_redraw()
             return
@@ -8633,8 +8637,12 @@ class GeoCanvasEditor(tk.Tk):
         self._refresh_display_order()
         col = self.display_cols.index(ti)
 
-        # Автопрокрутка (стрелки/Enter): держим ячейку в видимой зоне
-        self._ensure_cell_visible(col, display_row, field)
+        # Автопрокрутка (стрелки/Enter): держим ячейку в видимой зоне.
+        # Для switch-by-click по уже видимой ячейке пропускаем viewport move,
+        # чтобы commit предыдущего editor не мог сдвинуть таблицу прямо перед новым open.
+        ensure_visible = bool(self.__dict__.pop("_pending_edit_ensure_visible", True))
+        if ensure_visible:
+            self._ensure_cell_visible(col, display_row, field)
 
         card = self._card_for_test(int(ti))
         y0, y1 = self._row_y_bounds(display_row)
@@ -8714,7 +8722,7 @@ class GeoCanvasEditor(tk.Tk):
         for _k in ("<Up>","<Down>","<Left>","<Right>"):
             e.bind(_k, self._on_arrow_key)
         e.bind("<Escape>", lambda _ev: (setattr(self, "_edit_end_reason", "escape"), self._end_edit(commit=False)))
-        e.bind("<FocusOut>", lambda _ev: (setattr(self, "_edit_end_reason", "focusout"), self._end_edit(commit=True)))
+        e.bind("<FocusOut>", lambda _ev, _e=e: self._end_edit_if_widget(_e, commit=True, reason="focusout"))
 
         self._editing = (ti, row, field, e, display_row)
         self._editing_meta = {"new_tail": bool(new_tail), "row": int(row), "field": str(field), "ti": int(ti)}
@@ -8733,8 +8741,11 @@ class GeoCanvasEditor(tk.Tk):
         self._refresh_display_order()
         col = self.display_cols.index(ti)
 
-        # Автопрокрутка (стрелки/Enter)
-        self._ensure_cell_visible(col, display_row, "depth")
+        # Автопрокрутка (стрелки/Enter). Для switch-by-click по видимой ячейке
+        # не двигаем viewport между commit старого editor и open нового.
+        ensure_visible = bool(self.__dict__.pop("_pending_edit_ensure_visible", True))
+        if ensure_visible:
+            self._ensure_cell_visible(col, display_row, "depth")
 
         card = self._card_for_test(int(ti))
         y0, y1 = self._row_y_bounds(display_row)
@@ -8759,7 +8770,7 @@ class GeoCanvasEditor(tk.Tk):
 
         e.bind("<Return>", lambda _ev: commit())
         e.bind("<Escape>", lambda _ev: self._end_edit_depth0(ti, e, commit=False))
-        e.bind("<FocusOut>", lambda _ev: self._end_edit_depth0(ti, e, commit=True))
+        e.bind("<FocusOut>", lambda _ev, _e=e: self._end_edit_depth0_if_widget(ti, _e, commit=True))
 
         self._editing = (ti, 0, "depth", e, display_row)
         self._editing_meta = {"new_tail": False, "row": 0, "field": "depth", "ti": int(ti)}
@@ -8848,6 +8859,25 @@ class GeoCanvasEditor(tk.Tk):
         self._redraw()
         self._redraw_graphs_now()
         self.schedule_graph_redraw()
+
+    def _editing_widget(self):
+        editing = self.__dict__.get("_editing", None)
+        if not editing or len(editing) < 4:
+            return None
+        return editing[3]
+
+    def _end_edit_if_widget(self, widget, commit: bool, *, reason: str = "focusout"):
+        current = self._editing_widget()
+        if current is None or current is not widget:
+            return
+        self._edit_end_reason = str(reason or "focusout")
+        self._end_edit(commit=commit)
+
+    def _end_edit_depth0_if_widget(self, ti: int, widget, commit: bool):
+        current = self._editing_widget()
+        if current is None or current is not widget:
+            return
+        self._end_edit_depth0(int(ti), widget, commit=commit)
 
     def _cleanup_new_tail_row_if_empty(self, ti: int, row: int, *, reason: str = "") -> bool:
         if ti is None or ti < 0 or ti >= len(getattr(self, "tests", []) or []):
