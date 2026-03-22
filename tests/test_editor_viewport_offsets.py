@@ -437,6 +437,58 @@ def test_redraw_graphs_now_uses_card_body_canvas_not_shared_editor_canvas():
     assert editor._layer_depth_box_hitbox
 
 
+def test_redraw_graphs_now_keeps_hatch_visible_under_graph_frame():
+    editor = _make_editor()
+    editor.display_cols = [0]
+    editor.tests = [SimpleNamespace(qc=["10"], fs=["5"], depth=["0.00"], tid=1)]
+    editor._active_test_idx = 0
+    editor._table_col_width = lambda: 176
+    editor._column_block_width = lambda: 326
+    editor._is_graph_panel_visible = lambda: True
+    editor.show_graphs = True
+    editor.show_geology_column = True
+    editor.graph_w = 150
+    editor.w_depth = 64
+    editor.w_val = 56
+    editor.soundings_viewport = SimpleNamespace(strip=None, canvas=SimpleNamespace(canvasx=lambda v: float(v), winfo_width=lambda: 320), xview_fractions=lambda: (0.0, 1.0))
+    editor._grid_units = [("row", 0)]
+    editor._grid_row_maps = {0: {0: 0}}
+    editor._row_y_bounds = lambda row: (0.0, 120.0)
+    editor._calc_layer_params_for_all_tests = lambda: None
+    editor._recompute_graph_scales = lambda: setattr(editor, "graph_qc_max_mpa", 30.0) or setattr(editor, "graph_fs_max_kpa", 286.0) or setattr(editor, "graph_qc_max_source", "data") or setattr(editor, "graph_fs_max_source", "data") or setattr(editor, "graph_qc_max_display", 30.0) or setattr(editor, "graph_fs_max_display", 286.0)
+    editor._calc_qc_fs_from_del = lambda q, f: (float(q), float(f))
+    editor._depth_to_canvas_y = lambda d: float(d) * 100.0
+    editor._ensure_test_experience_column = lambda t: SimpleNamespace(column_depth_start=0.0, column_depth_end=1.0, intervals=[SimpleNamespace(from_depth=0.0, to_depth=1.0, ige_id="ИГЭ-1")])
+    editor._column_interval_ige_id = lambda lyr: "ИГЭ-1"
+    editor._ensure_ige_entry = lambda ige_id: {"soil_type": "суглинок"}
+    editor._geology_layer_fill_color = lambda soil: "#eee"
+    editor.cpt_calc_settings = {}
+    editor._refresh_display_order = lambda: None
+    editor._graph_rect_for_test = lambda ti: (226.0, 0.0, 376.0, 120.0)
+    editor.canvas = SimpleNamespace(
+        delete=lambda *args, **kwargs: None,
+        create_rectangle=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("shared canvas should not draw")),
+        create_line=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("shared canvas should not draw")),
+        create_text=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("shared canvas should not draw")),
+    )
+    editor._rebuild_sounding_cards()
+    card = editor._card_for_test(0)
+    card.body_canvas = _DummyBodyCanvas(support_items=True)
+    font_backup = editor_module.tkfont.Font
+    editor_module.tkfont.Font = lambda font=None: SimpleNamespace(measure=lambda text: len(text) * 4, metrics=lambda name: 8)
+    try:
+        editor._redraw_graphs_now()
+    finally:
+        editor_module.tkfont.Font = font_backup
+
+    hatch_lines = [call for call in card.body_canvas.draw_calls if call[0] == "line" and "layers_overlay" in call[2].get("tags", ())]
+    frame_rectangles = [call for call in card.body_canvas.draw_calls if call[0] == "rectangle" and call[2].get("tags") == ("graph_axes", "graph_axes_0")]
+
+    assert hatch_lines
+    assert frame_rectangles
+    assert frame_rectangles[0][2]["fill"] == ""
+
+
 def test_redraw_uses_card_hosted_header_and_body_targets_not_shared_canvases():
     editor = _make_editor()
     editor.tests = [SimpleNamespace(tid=1, dt="01.01.2026 10:00", export_on=True, locked=False, qc=["10"], fs=["5"], depth=["0.00"])]

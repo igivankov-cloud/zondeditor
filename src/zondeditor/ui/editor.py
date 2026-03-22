@@ -5855,6 +5855,7 @@ class GeoCanvasEditor(tk.Tk):
                 except Exception:
                     pass
             card.invalidate_graph()
+            graph_frame_fill = "" if show_geology else "#fbfdff"
             card.render_graph(
                 body_target,
                 rect=plot_rect,
@@ -5865,7 +5866,7 @@ class GeoCanvasEditor(tk.Tk):
                 fmax=self.graph_fs_max_kpa,
                 qc_color=GRAPH_QC_GREEN,
                 fs_color=GRAPH_FS_BLUE,
-                frame_fill="#fbfdff",
+                frame_fill=graph_frame_fill,
                 frame_outline=GUI_GRID,
                 groundwater_level=gwl_canvas_y,
                 visible=show_graphs,
