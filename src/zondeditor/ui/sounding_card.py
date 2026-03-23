@@ -858,15 +858,17 @@ class SoundingCard:
         intervals: list[dict],
         visible: bool = True,
         fill_resolver,
-        hatch_drawer,
-        label_font_factory,
-        layer_ui_colors: dict[str, str],
+        hatch_drawer=None,
+        label_font_factory=None,
+        layer_ui_colors: dict[str, str] | None = None,
     ) -> tuple[list[dict], list[dict]]:
         if not visible:
             return [], []
         canvas = self.body_render_canvas(canvas)
         label_spans: list[dict] = []
         plot_hitboxes: list[dict] = []
+        layer_ui_colors = dict(layer_ui_colors or {})
+        layer_outline = str(layer_ui_colors.get("line") or "#aab3bd")
         layer_tags = ("layers_overlay", f"layers_overlay_{self.test_index}")
         label_tags = ("layers_label_chip", f"layers_label_chip_{self.test_index}")
         for interval in intervals:
@@ -874,8 +876,9 @@ class SoundingCard:
             x0, y0, x1, y1 = self._map_body_rect(canvas, world_rect)
             soil_type = str(interval.get("soil_type") or "")
             fill_color = str(fill_resolver(soil_type))
-            canvas.create_rectangle(x0, y0, x1, y1, fill=fill_color, outline="", tags=layer_tags)
-            hatch_drawer(x0, y0, x1, y1, soil_type, canvas=canvas, logical_rect=world_rect)
+            canvas.create_rectangle(x0, y0, x1, y1, fill=fill_color, outline=layer_outline, width=1, tags=layer_tags)
+            if callable(hatch_drawer):
+                hatch_drawer(x0, y0, x1, y1, soil_type, canvas=canvas, logical_rect=world_rect)
             plot_hitboxes.append(self.make_hitbox(kind="interval", bbox=world_rect, extra={"interval_index": int(interval.get("interval_index", 0)), "ige_id": interval.get("ige_id"), "top": float(interval.get("top", 0.0)), "bot": float(interval.get("bot", 0.0))}))
             text = str(interval.get("ige_id") or "")
             if text and (y1 - y0) >= 8.0:
@@ -884,6 +887,8 @@ class SoundingCard:
                 max_w = max(8.0, (x1 - x0) - 8.0)
                 max_h = max(8.0, (y1 - y0) - 2.0)
                 for font_size in (8, 7, 6):
+                    if label_font_factory is None:
+                        break
                     font = label_font_factory(font_size)
                     tw = float(font.measure(text))
                     th = float(font.metrics("linespace"))

@@ -448,7 +448,7 @@ def test_redraw_graphs_now_uses_card_body_canvas_not_shared_editor_canvas():
     assert editor._layer_depth_box_hitbox
 
 
-def test_redraw_graphs_now_keeps_hatch_visible_under_graph_frame():
+def test_redraw_graphs_now_keeps_geology_fill_visible_under_graph_frame():
     editor = _make_editor()
     editor.display_cols = [0]
     editor.tests = [SimpleNamespace(qc=["10"], fs=["5"], depth=["0.00"], tid=1)]
@@ -492,10 +492,10 @@ def test_redraw_graphs_now_keeps_hatch_visible_under_graph_frame():
     finally:
         editor_module.tkfont.Font = font_backup
 
-    hatch_lines = [call for call in card.body_canvas.draw_calls if call[0] == "line" and "layers_overlay" in call[2].get("tags", ())]
+    geology_rectangles = [call for call in card.body_canvas.draw_calls if call[0] == "rectangle" and "layers_overlay" in call[2].get("tags", ())]
     frame_rectangles = [call for call in card.body_canvas.draw_calls if call[0] == "rectangle" and call[2].get("tags") == ("graph_axes", "graph_axes_0")]
 
-    assert hatch_lines
+    assert geology_rectangles
     assert frame_rectangles
     assert frame_rectangles[0][2]["fill"] == ""
 
@@ -542,7 +542,7 @@ def test_redraw_graphs_now_raises_ige_label_chip_above_graph_curves():
     assert ("layers_label_chip_0", None) in card.body_canvas.raised_tags
 
 
-def test_draw_layer_hatch_converts_world_logical_rect_to_card_local_canvas_coords():
+def test_draw_layer_hatch_is_a_noop_in_stage1_editor_mode_even_with_logical_rect():
     editor = _make_editor()
     editor.display_cols = [0]
     editor.tests = [SimpleNamespace(tid=1)]
@@ -569,9 +569,7 @@ def test_draw_layer_hatch_converts_world_logical_rect_to_card_local_canvas_coord
         canvas=card.body_canvas,
     )
 
-    hatch_lines = [call for call in card.body_canvas.draw_calls if call[0] == "line" and "layers_overlay" in call[2].get("tags", ())]
-
-    assert hatch_lines
+    assert card.body_canvas.draw_calls == []
 
 
 def test_redraw_uses_card_hosted_header_and_body_targets_not_shared_canvases():
@@ -1913,21 +1911,23 @@ def test_begin_edit_depth0_uses_explicit_debug_field_without_name_error(monkeypa
     assert editor._editing[:3] == (0, 0, "depth")
 
 
-def test_draw_layer_hatch_uses_cached_image_layer_before_vector_renderer(monkeypatch):
+def test_draw_layer_hatch_is_disabled_for_stage1_editor_mode(monkeypatch):
     editor = _make_editor()
     canvas = _DummyBodyCanvas(support_items=True)
-    editor._interactive_hatch_image = lambda soil, width, height, logical_rect=None: object()
-    called = []
+    cached_calls = []
+    vector_calls = []
+    editor._interactive_hatch_image = lambda soil, width, height, logical_rect=None: cached_calls.append((soil, width, height, logical_rect))
     monkeypatch.setattr(
         editor_module,
         "render_hatch_pattern",
-        lambda *args, **kwargs: called.append("vector"),
+        lambda *args, **kwargs: vector_calls.append((args, kwargs)),
     )
 
     editor._draw_layer_hatch(0.0, 0.0, 20.0, 40.0, "песок", tags=("x",), canvas=canvas)
 
-    assert called == []
-    assert [item["type"] for item in canvas._items] == ["image"]
+    assert cached_calls == []
+    assert vector_calls == []
+    assert canvas._items == []
 
 
 def test_refresh_card_graph_curves_does_not_drop_geology_hitboxes():
@@ -1995,6 +1995,62 @@ def test_redraw_graphs_now_refreshes_geology_only_for_dirty_cards():
     assert geology_clears == [1]
     assert dropped == [1]
     assert render_calls == [(0, False), (1, True)]
+
+
+def test_render_card_graph_layers_keeps_stage1_geology_hatch_free(monkeypatch):
+    editor = _make_editor()
+    editor.show_graphs = False
+    editor.tests = [SimpleNamespace(tid=1, qc=[], fs=[])]
+    editor.display_cols = [0]
+    editor._graph_rect_for_test = lambda ti: (10.0, 20.0, 50.0, 80.0)
+    editor._depth_to_canvas_y_local = lambda depth, clamp=True: 20.0 + float(depth) * 30.0
+    editor._ensure_test_experience_column = lambda t: SimpleNamespace(
+        column_depth_start=0.0,
+        column_depth_end=2.0,
+        intervals=[SimpleNamespace(from_depth=0.0, to_depth=2.0, ige_id="ИГЭ-1")],
+    )
+    editor._column_interval_ige_id = lambda lyr: lyr.ige_id
+    editor._ensure_ige_entry = lambda ige_id: {"soil_type": "песок"}
+    editor._geology_layer_fill_color = lambda soil: "#eee"
+    editor._layer_plot_hitbox = []
+    editor._layer_label_hitbox = []
+    editor._layer_handle_hitbox = []
+    editor._layer_depth_box_hitbox = []
+    editor._clear_geology_dirty = lambda ti: None
+    editor._grid_units = []
+    editor._grid_row_maps = {}
+    editor.cpt_calc_settings = {}
+
+    class _FakeFont:
+        def __init__(self, *_args, **_kwargs):
+            pass
+        def measure(self, text):
+            return len(text) * 6
+        def metrics(self, key):
+            return 10
+
+    monkeypatch.setattr(editor_module.tkfont, "Font", lambda *args, **kwargs: _FakeFont())
+
+    render_calls = []
+    overlay_calls = []
+    card = SimpleNamespace(
+        body_canvas=_DummyBodyCanvas(support_items=True),
+        invalidate_layers=lambda: render_calls.append("invalidate_layers"),
+        redraw_if_needed=lambda part: render_calls.append(("redraw", part)),
+        invalidate_overlays=lambda: overlay_calls.append("invalidate_overlays"),
+        render_overlays=lambda canvas, overlay_specs, layer_ui_colors, visible=True: ([], []),
+        body_world_to_local=lambda x, y: (x, y),
+        render_ige=lambda canvas, **kwargs: render_calls.append(kwargs) or ([{"ti": 0}], [{"ti": 0}]),
+    )
+    editor._card_for_test = lambda ti: card
+
+    editor._render_card_graph_layers(0, include_geology=True)
+
+    render_kwargs = next(call for call in render_calls if isinstance(call, dict))
+    assert render_kwargs["hatch_drawer"] is None
+    assert len(editor._layer_plot_hitbox) == 1
+    assert len(editor._layer_label_hitbox) == 1
+    assert overlay_calls == ["invalidate_overlays"]
 
 
 def test_bind_card_targets_rebinds_double_click_for_body_canvas():
