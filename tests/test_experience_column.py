@@ -310,3 +310,37 @@ def test_geology_layer_fill_color_uses_palette_only_when_enabled():
     assert editor._geology_layer_fill_color("песок") == "#EED8A8"
     assert editor._geology_layer_fill_color("торф") == "#6E4F3A"
     assert editor._geology_layer_fill_color("неизвестный") == "#ffffff"
+
+
+
+def test_sounding_card_render_ige_without_hatch_keeps_fill_border_and_label():
+    from src.zondeditor.ui.sounding_card import SoundingCard
+
+    class _FakeFont:
+        def measure(self, text):
+            return len(text) * 6
+        def metrics(self, key):
+            return 10
+
+    card = SoundingCard.__new__(SoundingCard)
+    card.test_index = 0
+    card.body_render_canvas = lambda canvas=None: canvas
+    card._map_body_rect = lambda canvas, rect: rect
+    card.make_hitbox = lambda kind, bbox, extra=None: {"kind": kind, "bbox": bbox, **(extra or {})}
+    canvas = type("Canvas", (), {"draw_calls": [], "create_rectangle": lambda self, *a, **k: self.draw_calls.append(("rectangle", a, k)), "create_text": lambda self, *a, **k: self.draw_calls.append(("text", a, k))})()
+
+    plot_hits, label_hits = card.render_ige(
+        canvas,
+        intervals=[{"x0": 0.0, "y0": 0.0, "x1": 60.0, "y1": 40.0, "interval_index": 0, "ige_id": "ИГЭ-1", "top": 0.0, "bot": 1.0, "depth": 0.5, "soil_type": "песок"}],
+        fill_resolver=lambda soil: "#abc",
+        hatch_drawer=None,
+        label_font_factory=lambda size: _FakeFont(),
+        layer_ui_colors={"line": "#123", "fill": "#fff", "outline": "#000", "fill_active": "#fff", "outline_active": "#000", "text": "#111"},
+        visible=True,
+    )
+
+    assert plot_hits and label_hits
+    rect_call = next(call for call in canvas.draw_calls if call[0] == "rectangle")
+    assert rect_call[2]["fill"] == "#abc"
+    assert rect_call[2]["outline"] == "#123"
+    assert any(call[0] == "text" for call in canvas.draw_calls)

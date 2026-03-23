@@ -5902,6 +5902,15 @@ class GeoCanvasEditor(tk.Tk):
             **payload,
         )
 
+    def _editor_interactive_hatching_enabled(self) -> bool:
+        """Stage 1 baseline: keep editor geology interval-based and hatch-free.
+
+        Export/document rendering may still use the hatch registry separately.
+        This hook stays in place so Stage 2 can re-enable interactive hatching
+        incrementally without rewiring the geology interval pipeline again.
+        """
+        return False
+
     def _interactive_hatch_cache(self) -> dict[tuple[str, int, int], object]:
         cache = self.__dict__.get("_interactive_hatch_image_cache", None)
         if cache is None:
@@ -5975,6 +5984,8 @@ class GeoCanvasEditor(tk.Tk):
         return image
 
     def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, soil_type: str, tags, logical_rect=None, canvas=None):
+        if not self._editor_interactive_hatching_enabled():
+            return
         target = canvas or self.canvas
         width = max(1, int(round(float(x1) - float(x0))))
         height = max(1, int(round(float(y1) - float(y0))))
@@ -6144,11 +6155,23 @@ class GeoCanvasEditor(tk.Tk):
         label_hits = []
         if show_geology:
             card.invalidate_layers()
+            hatch_drawer = None
+            if self._editor_interactive_hatching_enabled():
+                hatch_drawer = lambda rx0, ry0, rx1, ry1, soil_type, canvas=None, logical_rect=None: self._draw_layer_hatch(
+                    rx0,
+                    ry0,
+                    rx1,
+                    ry1,
+                    soil_type=soil_type,
+                    tags=("layers_overlay", f"layers_overlay_{ti}"),
+                    logical_rect=logical_rect or (x0, y0, x1, y1),
+                    canvas=canvas,
+                )
             plot_hits, label_hits = card.render_ige(
                 body_target,
                 intervals=interval_specs,
                 fill_resolver=self._geology_layer_fill_color,
-                hatch_drawer=lambda rx0, ry0, rx1, ry1, soil_type, canvas=None, logical_rect=None: self._draw_layer_hatch(rx0, ry0, rx1, ry1, soil_type=soil_type, tags=("layers_overlay", f"layers_overlay_{ti}"), logical_rect=logical_rect or (x0, y0, x1, y1), canvas=canvas),
+                hatch_drawer=hatch_drawer,
                 label_font_factory=lambda size: tkfont.Font(font=("Segoe UI", size, "bold")),
                 layer_ui_colors=LAYER_UI_COLORS,
                 visible=show_geology,
