@@ -4601,6 +4601,21 @@ class GeoCanvasEditor(tk.Tk):
                 frac = 0.0
             return max(0.0, frac) * max(0.0, w_total)
 
+    def _canvas_scroll_width(self, cnv, fallback: float = 0.0) -> float:
+        try:
+            bbox = cnv.bbox("all")
+        except Exception:
+            bbox = None
+        if bbox and len(bbox) == 4:
+            try:
+                return max(0.0, float(bbox[2]) - float(bbox[0]))
+            except Exception:
+                pass
+        try:
+            return max(0.0, float(fallback))
+        except Exception:
+            return 0.0
+
     def _apply_shared_xview(self, *args, close_editor: bool = False):
         """Единая точка записи X для body/header canvas в старой архитектуре."""
         if close_editor:
@@ -4621,12 +4636,17 @@ class GeoCanvasEditor(tk.Tk):
                 first, last = 0.0, 1.0
             first = 0.0 if first < 0.0 else (1.0 if first > 1.0 else first)
             self._shared_x_frac = first
+            body_left_px = self._shared_x_offset_px()
+            body_scroll_w = self._canvas_scroll_width(getattr(self, "canvas", None), fallback=getattr(self, "_scroll_w", 0.0))
             try:
                 self.hcanvas.configure(width=self.canvas.winfo_width())
             except Exception:
                 pass
+            header_scroll_w = self._canvas_scroll_width(getattr(self, "hcanvas", None), fallback=body_scroll_w)
+            header_frac = 0.0 if header_scroll_w <= 1.0 else (body_left_px / header_scroll_w)
+            header_frac = 0.0 if header_frac < 0.0 else (1.0 if header_frac > 1.0 else header_frac)
             try:
-                self.hcanvas.xview_moveto(first)
+                self.hcanvas.xview_moveto(header_frac)
             except Exception:
                 pass
             try:
@@ -4635,10 +4655,33 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
             try:
-                self._header_offset_px = float(self.canvas.canvasx(0))
+                self._header_offset_px = float(self.hcanvas.canvasx(0))
             except Exception:
-                self._header_offset_px = self._shared_x_offset_px()
-            self._debug_header_sync("apply_shared_xview")
+                self._header_offset_px = body_left_px
+            try:
+                header_left_px = float(self.hcanvas.canvasx(0))
+            except Exception:
+                header_left_px = float(self._header_offset_px or 0.0)
+            delta_px = float(header_left_px - body_left_px)
+            clamp_applied = False
+            if args:
+                try:
+                    if str(args[0]) == "moveto" and len(args) > 1:
+                        clamp_applied = abs(float(args[1]) - first) > 1e-9
+                except Exception:
+                    clamp_applied = False
+            self._debug_header_sync(
+                "apply_shared_xview",
+                request=args,
+                body_scroll_w=f"{body_scroll_w:.3f}",
+                header_scroll_w=f"{header_scroll_w:.3f}",
+                header_frac=f"{header_frac:.9f}",
+                body_px=f"{body_left_px:.3f}",
+                header_px=f"{header_left_px:.3f}",
+                delta_px=f"{delta_px:.3f}",
+                clamp=int(bool(clamp_applied)),
+                right_edge=int(bool(last >= (1.0 - 1e-9))),
+            )
         finally:
             self._shared_x_lock = False
 
@@ -8725,9 +8768,12 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             body_left = 0.0
         try:
-            header_left = float(getattr(self, "_header_offset_px", 0.0) or 0.0)
+            header_left = float(self.hcanvas.canvasx(0))
         except Exception:
-            header_left = 0.0
+            try:
+                header_left = float(getattr(self, "_header_offset_px", 0.0) or 0.0)
+            except Exception:
+                header_left = 0.0
         state = str(self.state()) if hasattr(self, "state") else ""
         incl = bool(getattr(self, "show_inclinometer", True))
         mode = str(getattr(self, "_header_sync_mode", "legacy") or "legacy")

@@ -85,10 +85,10 @@ class _FakeFrame:
         self.hidden = True
 
 
-def _make_editor() -> GeoCanvasEditor:
+def _make_editor(*, header_content_width: float = 600) -> GeoCanvasEditor:
     editor = GeoCanvasEditor.__new__(GeoCanvasEditor)
     editor.canvas = _FakeCanvas()
-    editor.hcanvas = _FakeCanvas()
+    editor.hcanvas = _FakeCanvas(content_width=header_content_width)
     editor.hscroll = _FakeScrollbar()
     editor.vbar = _FakeScrollbar()
     editor.hscroll_frame = _FakeFrame()
@@ -165,3 +165,50 @@ def test_repeated_scrollregion_refresh_does_not_accumulate_x_drift():
 
     assert editor.canvas.xview()[0] == editor.hcanvas.xview()[0]
     assert round(editor.canvas.xview()[0], 4) == 0.35
+
+
+def test_repeated_wheel_scrolling_to_far_right_keeps_zero_pixel_drift():
+    editor = _make_editor(header_content_width=601)
+
+    for _ in range(10):
+        GeoCanvasEditor._scroll_x_by_one_column(editor, 1)
+
+    assert round(editor.canvas.canvasx(0) - editor.hcanvas.canvasx(0), 6) == 0.0
+    assert round(editor.canvas.xview()[0] - editor._shared_x_frac, 12) == 0.0
+
+
+def test_final_clamped_right_edge_has_zero_pixel_drift():
+    editor = _make_editor(header_content_width=601)
+
+    editor._apply_shared_xview("moveto", 1.0)
+
+    assert round(editor.canvas.canvasx(0) - editor.hcanvas.canvasx(0), 6) == 0.0
+    assert editor.canvas.xview()[1] <= 1.0
+
+
+def test_scroll_back_left_does_not_hide_right_edge_drift_fix():
+    editor = _make_editor(header_content_width=601)
+
+    for _ in range(10):
+        GeoCanvasEditor._scroll_x_by_one_column(editor, 1)
+    right_edge_delta = round(editor.canvas.canvasx(0) - editor.hcanvas.canvasx(0), 6)
+    GeoCanvasEditor._scroll_x_by_one_column(editor, -1)
+
+    assert right_edge_delta == 0.0
+    assert round(editor.canvas.canvasx(0) - editor.hcanvas.canvasx(0), 6) == 0.0
+
+
+def test_scrollbar_far_right_matches_zero_drift_alignment():
+    editor = _make_editor(header_content_width=601)
+
+    editor._xview_proxy("moveto", 1.0)
+
+    assert round(editor.canvas.canvasx(0) - editor.hcanvas.canvasx(0), 6) == 0.0
+
+
+def test_mid_range_positions_keep_existing_alignment_behavior():
+    editor = _make_editor(header_content_width=601)
+
+    editor._apply_shared_xview("moveto", 0.4)
+
+    assert round(editor.canvas.canvasx(0) - editor.hcanvas.canvasx(0), 6) == 0.0
