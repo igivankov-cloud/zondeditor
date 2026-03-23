@@ -274,6 +274,7 @@ class GeoCanvasEditor(tk.Tk):
         self._header_sync_debug = str(os.getenv("ZOND_DEBUG_HEADER_SYNC", "") or "").strip().lower() in {"1", "true", "yes", "on"}
         self._header_sync_wheel_seq = 0
         self._header_sync_source_counts: dict[str, int] = {}
+        self._debug_hatch = str(os.getenv("ZOND_DEBUG_HATCH", "") or "").strip().lower() in {"1", "true", "yes", "on"}
         self._active_test_idx: int | None = None
         self.graph_qc_max_mpa: float = 30.0
         self.graph_fs_max_kpa: float = 500.0
@@ -835,6 +836,15 @@ class GeoCanvasEditor(tk.Tk):
                 print(f"[DEBUG] {msg}", file=sys.stderr)
             except Exception:
                 pass
+
+    def _hatch_debug_log(self, event: str, **payload):
+        if not bool(getattr(self, "_debug_hatch", False)):
+            return
+        try:
+            extras = " ".join(f"{k}={payload[k]!r}" for k in sorted(payload))
+            print(f"[HATCH] {event} {extras}".rstrip(), file=sys.stderr)
+        except Exception:
+            pass
 
     def _tail_debug_log(self, prefix: str, msg: str, *, ti: int | None = None):
         if not bool(getattr(self, "_debug_tail_edit", False)):
@@ -5283,18 +5293,52 @@ class GeoCanvasEditor(tk.Tk):
             return "#ffffff"
         return str(SOIL_TYPE_TO_COLUMN_FILL.get(soil, "#ffffff"))
 
-    def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, soil_type: str, tags, logical_rect=None):
+    def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, soil_type: str, tags, logical_rect=None, debug_ctx: dict | None = None):
         # Единая система: внешние JSON-штриховки через domain.hatching registry.
+        ctx = dict(debug_ctx or {})
+        self._hatch_debug_log(
+            "hatch_layer_begin",
+            soil_type=str(soil_type or ""),
+            bbox=(float(x0), float(y0), float(x1), float(y1)),
+            logical_rect=(tuple(logical_rect) if logical_rect is not None else None),
+            tags=tuple(tags) if isinstance(tags, (tuple, list)) else tags,
+            **ctx,
+        )
         pattern = load_registered_hatch(str(soil_type or ""))
         if pattern is None:
-            # Временный fallback: без штриховки, если внешний JSON не зарегистрирован.
+            self._hatch_debug_log("hatch_layer_skip", reason="pattern_not_found", soil_type=str(soil_type or ""), **ctx)
             return
+        trace_state = {"primitives_total": 0, "events": []}
+
+        def _debug_hook(event: str, **payload):
+            event_payload = dict(payload)
+            trace_state["events"].append((event, event_payload))
+            if event == "hatch_line_drawn":
+                trace_state["primitives_total"] += int(event_payload.get("primitives_count", 0) or 0)
+            self._hatch_debug_log(event, soil_type=str(soil_type or ""), **ctx, **event_payload)
+
         render_hatch_pattern(
             self.canvas,
             (float(x0), float(y0), float(x1), float(y1)),
             pattern,
             tags=tags,
-            scale_info={"usage": HATCH_USAGE_EDITOR_EXPANDED, "layer_height_px": float(y1 - y0), "logical_rect": tuple(logical_rect) if logical_rect is not None else (float(x0), float(y0), float(x1), float(y1))},
+            scale_info={
+                "usage": HATCH_USAGE_EDITOR_EXPANDED,
+                "layer_height_px": float(y1 - y0),
+                "logical_rect": tuple(logical_rect) if logical_rect is not None else (float(x0), float(y0), float(x1), float(y1)),
+                "debug_hook": _debug_hook if bool(getattr(self, "_debug_hatch", False)) else None,
+            },
+        )
+        self._hatch_debug_log(
+            "hatch_layer_drawn",
+            soil_type=str(soil_type or ""),
+            hatch_requested=True,
+            hatch_built=bool(trace_state["primitives_total"] > 0),
+            hatch_skipped=bool(trace_state["primitives_total"] <= 0),
+            skip_reason=("no_primitives_created" if trace_state["primitives_total"] <= 0 else ""),
+            primitives_count=int(trace_state["primitives_total"]),
+            events_count=len(trace_state["events"]),
+            **ctx,
         )
 
     def _draw_layers_overlay_for_test(self, ti: int, plot_rect, depth_to_y, tags):
@@ -5330,7 +5374,23 @@ class GeoCanvasEditor(tk.Tk):
             soil_type = str(ent.get("soil_type") or SoilType.SANDY_LOAM.value)
             fill_color = self._geology_layer_fill_color(soil_type)
             self.canvas.create_rectangle(x0, ty0, x1, ty1, fill=fill_color, outline="", tags=tags)
-            self._draw_layer_hatch(x0, ty0, x1, ty1, soil_type=soil_type, tags=tags, logical_rect=(x0, y0, x1, y1))
+            self._draw_layer_hatch(
+                x0,
+                ty0,
+                x1,
+                ty1,
+                soil_type=soil_type,
+                tags=tags,
+                logical_rect=(x0, y0, x1, y1),
+                debug_ctx={
+                    "ti": int(ti),
+                    "test_id": int(getattr(t, "tid", ti) or ti),
+                    "card_index": int((getattr(self, "display_cols", []) or []).index(ti)) if ti in (getattr(self, "display_cols", []) or []) else int(ti),
+                    "layer_index": int(interval_index),
+                    "x_range": (float(x0), float(x1)),
+                    "y_range": (float(ty0), float(ty1)),
+                },
+            )
             self._layer_plot_hitbox.append({"kind": "interval", "ti": ti, "interval_index": int(interval_index), "ige_id": ige_id, "top": float(lt), "bot": float(lb), "bbox": (x0, ty0, x1, ty1)})
             label_spans.append({
                 "x0": x0,
