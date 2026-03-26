@@ -17,6 +17,18 @@ from src.zondeditor.domain.hatching import (
 HATCH_UNIT_PX = 80.0
 
 
+def _emit_hatch_debug(scale_info: dict[str, Any] | None, event: str, **payload: Any) -> None:
+    if not isinstance(scale_info, dict):
+        return
+    hook = scale_info.get("debug_hook")
+    if not callable(hook):
+        return
+    try:
+        hook(event, **payload)
+    except Exception:
+        pass
+
+
 def _draw_point(canvas: Any, x: float, y: float, color: str, thickness_mm: float, scale: float, tags: Any) -> int:
     dot_r_px = max(1, int(round(max(0.15, thickness_mm if thickness_mm > 0 else 0.15) * scale * 0.35)))
     canvas.create_oval(x - dot_r_px, y - dot_r_px, x + dot_r_px, y + dot_r_px, fill=color, outline=color, tags=tags)
@@ -114,12 +126,15 @@ def render_hatch_line(
     unit_px: float,
     tags: Any,
     logical_rect: tuple[float, float, float, float] | None = None,
+    scale_info: dict[str, Any] | None = None,
 ) -> None:
     if not line.enabled:
+        _emit_hatch_debug(scale_info, "hatch_line_skip", reason="line_disabled")
         return
     x0, y0, x1, y1 = rect
     scale = float(unit_px)
     if x1 <= x0 or y1 <= y0:
+        _emit_hatch_debug(scale_info, "hatch_line_skip", reason="empty_rect")
         return
 
     angle = float(line.angle_deg)
@@ -138,14 +153,32 @@ def render_hatch_line(
     generation_rect_world = _expand_world_rect(logical_rect_world, max(2.0, logical_diag * 0.5))
 
     k_values = _stable_k_range(base_x, base_y, step_x, step_y, nx, ny, generation_rect_world)
-    half_len = max(
-        math.hypot(generation_rect_world[2] - generation_rect_world[0], generation_rect_world[3] - generation_rect_world[1]),
-        math.hypot(draw_rect_world[2] - draw_rect_world[0], draw_rect_world[3] - draw_rect_world[1]),
-    ) * 2.5
+    rect_corners = (
+        (generation_rect_world[0], generation_rect_world[1]),
+        (generation_rect_world[0], generation_rect_world[3]),
+        (generation_rect_world[2], generation_rect_world[1]),
+        (generation_rect_world[2], generation_rect_world[3]),
+        (draw_rect_world[0], draw_rect_world[1]),
+        (draw_rect_world[0], draw_rect_world[3]),
+        (draw_rect_world[2], draw_rect_world[1]),
+        (draw_rect_world[2], draw_rect_world[3]),
+    )
+    candidate_count = 0
+    culled_count = 0
+    primitive_count = 0
+    max_half_len = 0.0
 
     for k in k_values:
+        candidate_count += 1
         px = base_x + k * step_x
         py = base_y + k * step_y
+
+        # Важно: anchor линии задаётся стабильным JSON-origin и может находиться далеко
+        # от текущей карточки по касательной линии. Полудлина должна покрывать расстояние
+        # от anchor до rect, а не только размер rect, иначе дальние карточки «исчезают».
+        half_len = max(math.hypot(cx - px, cy - py) for cx, cy in rect_corners) + 1.0
+        if half_len > max_half_len:
+            max_half_len = half_len
 
         # Бесконечная линия строится от стабильного anchor семейства, потом только клиппируется draw rect'ом.
         x_start = px - ux * half_len
@@ -154,13 +187,26 @@ def render_hatch_line(
         y_end = py + uy * half_len
         clipped = clip_segment_to_rect(x_start, y_start, x_end, y_end, *draw_rect_world)
         if not clipped:
+            culled_count += 1
             continue
         cx1, cy1, cx2, cy2 = clipped
         t1 = (cx1 - px) * ux + (cy1 - py) * uy
         t2 = (cx2 - px) * ux + (cy2 - py) * uy
         if t2 < t1:
             t1, t2 = t2, t1
-        _draw_pattern_sequence(canvas, px * scale, -py * scale, ux, uy, t1, t2, line, scale, tags)
+        primitive_count += _draw_pattern_sequence(canvas, px * scale, -py * scale, ux, uy, t1, t2, line, scale, tags)
+
+    _emit_hatch_debug(
+        scale_info,
+        "hatch_line_drawn",
+        angle_deg=float(line.angle_deg),
+        candidate_lines=int(candidate_count),
+        culled_lines=int(culled_count),
+        primitives_count=int(primitive_count),
+        max_half_len=float(max_half_len),
+        draw_rect_world=tuple(float(v) for v in draw_rect_world),
+        generation_rect_world=tuple(float(v) for v in generation_rect_world),
+    )
 
 
 def render_hatch_pattern(canvas: Any, rect: tuple[float, float, float, float], pattern: HatchPattern, *, tags: Any, scale_info: dict[str, float | str | tuple[float, float, float, float]] | None = None) -> None:
@@ -172,5 +218,23 @@ def render_hatch_pattern(canvas: Any, rect: tuple[float, float, float, float], p
     logical_rect_raw = info.get('logical_rect')
     logical_rect = tuple(float(v) for v in logical_rect_raw) if isinstance(logical_rect_raw, (tuple, list)) and len(logical_rect_raw) == 4 else None
     render_scale = resolve_hatch_render_scale(pattern, usage=usage, base_unit_px=HATCH_UNIT_PX)
+    _emit_hatch_debug(
+        info,
+        "hatch_pattern_begin",
+        rect=(x0, y0, x1, y1),
+        logical_rect=logical_rect,
+        usage=usage,
+        pattern_name=str(getattr(pattern, "name", "") or ""),
+        lines_count=len(pattern.lines),
+        effective_unit_px=float(render_scale.effective_unit_px),
+    )
     for line in pattern.lines:
-        render_hatch_line(canvas, (x0, y0, x1, y1), line, unit_px=render_scale.effective_unit_px, tags=tags, logical_rect=logical_rect)
+        render_hatch_line(
+            canvas,
+            (x0, y0, x1, y1),
+            line,
+            unit_px=render_scale.effective_unit_px,
+            tags=tags,
+            logical_rect=logical_rect,
+            scale_info=info,
+        )

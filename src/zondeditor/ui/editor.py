@@ -264,6 +264,8 @@ class GeoCanvasEditor(tk.Tk):
         self.expanded_meters: set[int] = set()
         self._graph_redraw_after_id = None
         self._header_offset_px = 0.0
+        self._shared_x_frac = 0.0
+        self._shared_x_lock = False
         self._xsync_after_id = None
         self._rebuild_redraw_after_id = None
         self._header_stabilize_after_id = None
@@ -272,6 +274,7 @@ class GeoCanvasEditor(tk.Tk):
         self._header_sync_debug = str(os.getenv("ZOND_DEBUG_HEADER_SYNC", "") or "").strip().lower() in {"1", "true", "yes", "on"}
         self._header_sync_wheel_seq = 0
         self._header_sync_source_counts: dict[str, int] = {}
+        self._debug_hatch = str(os.getenv("ZOND_DEBUG_HATCH", "") or "").strip().lower() in {"1", "true", "yes", "on"}
         self._active_test_idx: int | None = None
         self.graph_qc_max_mpa: float = 30.0
         self.graph_fs_max_kpa: float = 500.0
@@ -833,6 +836,15 @@ class GeoCanvasEditor(tk.Tk):
                 print(f"[DEBUG] {msg}", file=sys.stderr)
             except Exception:
                 pass
+
+    def _hatch_debug_log(self, event: str, **payload):
+        if not bool(getattr(self, "_debug_hatch", False)):
+            return
+        try:
+            extras = " ".join(f"{k}={payload[k]!r}" for k in sorted(payload))
+            print(f"[HATCH] {event} {extras}".rstrip(), file=sys.stderr)
+        except Exception:
+            pass
 
     def _tail_debug_log(self, prefix: str, msg: str, *, ti: int | None = None):
         if not bool(getattr(self, "_debug_tail_edit", False)):
@@ -2143,8 +2155,12 @@ class GeoCanvasEditor(tk.Tk):
         self.calc_workspace.pack_forget()
 
         # Верхняя фиксированная шапка
-        self.hcanvas = tk.Canvas(mid, background="white", highlightthickness=0, height=120)
-        self.hcanvas.pack(side="top", fill="x")
+        self.header_row = ttk.Frame(mid)
+        self.header_row.pack(side="top", fill="x")
+        self.hcanvas = tk.Canvas(self.header_row, background="white", highlightthickness=0, height=120)
+        self.hcanvas.pack(side="left", fill="x", expand=True)
+        self.hcanvas_vbar_spacer = ttk.Frame(self.header_row, width=0)
+        self.hcanvas_vbar_spacer.pack(side="right", fill="y")
 
         # Нижняя область с данными (скролл)
         body = ttk.Frame(mid)
@@ -2158,99 +2174,31 @@ class GeoCanvasEditor(tk.Tk):
             yscrollcommand=self.vbar.set
         )
         self.canvas.pack(side="left", fill="both", expand=True)
-
-        def _apply_header_offset_from_body():
-            """Синхронизирует X шапки с body из одного источника истины (body canvas)."""
-            try:
-                body_left = float(self.canvas.canvasx(0))
-            except Exception:
-                body_left = 0.0
-
-            mode = str(getattr(self, "_header_sync_mode", "legacy") or "legacy").strip().lower()
-            if mode == "xview":
-                try:
-                    w_total = float(getattr(self, "_scroll_w", 0.0) or 0.0)
-                except Exception:
-                    w_total = 0.0
-                if w_total <= 1.0:
-                    try:
-                        w_total = float(self._content_size()[0])
-                    except Exception:
-                        w_total = 1.0
-                frac = 0.0 if w_total <= 1.0 else (body_left / w_total)
-                frac = 0.0 if frac < 0.0 else (1.0 if frac > 1.0 else frac)
-                try:
-                    self.hcanvas.xview_moveto(frac)
-                except Exception:
-                    pass
-            else:
-                prev = float(getattr(self, "_header_offset_px", 0.0) or 0.0)
-                dx = body_left - prev
-                if abs(dx) > 1e-6:
-                    try:
-                        self.hcanvas.move("all", -dx, 0)
-                    except Exception:
-                        pass
-
-            self._header_offset_px = body_left
-            self._debug_header_sync("apply_header_offset", mode=mode)
-
-        self._apply_header_offset_from_body = _apply_header_offset_from_body
-
-        def _sync_header_x_from_body(*, defer: bool = False):
-            def _run_sync():
-                self._xsync_after_id = None
-                if getattr(self, "_xsync_lock", False):
-                    return
-                self._xsync_lock = True
-                try:
-                    try:
-                        self.hcanvas.configure(width=self.canvas.winfo_width())
-                    except Exception:
-                        pass
-                    self._apply_header_offset_from_body()
-                finally:
-                    self._xsync_lock = False
-
-            if defer:
-                prev = getattr(self, "_xsync_after_id", None)
-                if prev is not None:
-                    try:
-                        self.after_cancel(prev)
-                    except Exception:
-                        pass
-                try:
-                    self._xsync_after_id = self.after_idle(_run_sync)
-                except Exception:
-                    _run_sync()
-            else:
-                _run_sync()
-
-        self._sync_header_x_from_body = _sync_header_x_from_body
+        try:
+            self.vbar.bind("<Configure>", lambda _e: self._sync_header_vbar_gutter())
+        except Exception:
+            pass
+        try:
+            self.after_idle(self._sync_header_vbar_gutter)
+        except Exception:
+            pass
 
         def _xview_proxy(*args):
-            # ЕДИНЫЙ ИСТОЧНИК X — только body canvas.
-            self._end_edit(commit=True)
-            try:
-                self.canvas.xview(*args)
-            except Exception:
-                return
-            self._debug_header_sync("xview_proxy")
-            self._sync_header_x_from_body(defer=False)
-            self._sync_header_x_from_body(defer=True)
-            self._schedule_header_stabilize(source="xview_proxy")
+            # ЕДИНАЯ ТОЧКА ЗАПИСИ X — shared helper для body + header.
+            self._apply_shared_xview(*args, close_editor=True)
 
         def _on_xscroll_command(first, last):
-            # first/last: доли [0..1] видимой области
+            # first/last: доли [0..1] видимой области body canvas.
+            try:
+                self._shared_x_frac = float(first)
+            except Exception:
+                pass
             try:
                 if hasattr(self, "hscroll"):
                     self.hscroll.set(first, last)
             except Exception:
                 pass
             self._debug_header_sync("xscroll_command")
-            self._sync_header_x_from_body(defer=False)
-            self._sync_header_x_from_body(defer=True)
-            self._schedule_header_stabilize(source="xscroll_command")
 
         # назначаем xscrollcommand сразу, а сам hscroll свяжем позже, когда создадим в footer
         self.canvas.configure(xscrollcommand=_on_xscroll_command)
@@ -2270,7 +2218,7 @@ class GeoCanvasEditor(tk.Tk):
         self.vbar.config(command=_yview_proxy)
         # configure/redraw
         self.canvas.bind("<Configure>", lambda _e: self._update_scrollregion())
-        self.hcanvas.bind("<Configure>", lambda _e: (self.hcanvas.configure(width=self.canvas.winfo_width()), self._update_scrollregion()))
+        self.hcanvas.bind("<Configure>", lambda _e: (self._sync_header_vbar_gutter(), self.hcanvas.configure(width=self.canvas.winfo_width()), self._update_scrollregion()))
 
         # scrolling and events: таблица
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)
@@ -4651,6 +4599,140 @@ class GeoCanvasEditor(tk.Tk):
         header_h = int(self.pad_y + self.hdr_h)  # фиксированная область
         return total_w, body_h, header_h
 
+    def _shared_x_offset_px(self) -> float:
+        try:
+            return float(self.canvas.canvasx(0))
+        except Exception:
+            try:
+                w_total = float(getattr(self, "_scroll_w", 0.0) or 0.0)
+            except Exception:
+                w_total = 0.0
+            try:
+                frac = float(getattr(self, "_shared_x_frac", 0.0) or 0.0)
+            except Exception:
+                frac = 0.0
+            return max(0.0, frac) * max(0.0, w_total)
+
+    def _sync_header_vbar_gutter(self) -> int:
+        spacer = getattr(self, "hcanvas_vbar_spacer", None)
+        if spacer is None:
+            return 0
+        vbar = getattr(self, "vbar", None)
+        width = 0
+        try:
+            width = int(vbar.winfo_width() or 0) if vbar is not None else 0
+        except Exception:
+            width = 0
+        if width <= 0:
+            try:
+                width = int(vbar.winfo_reqwidth() or 0) if vbar is not None else 0
+            except Exception:
+                width = 0
+        width = max(0, int(width))
+        try:
+            spacer.configure(width=width)
+        except Exception:
+            pass
+        return width
+
+    def _apply_shared_xview(self, *args, close_editor: bool = False):
+        """Единая точка записи X для body/header canvas в старой архитектуре."""
+        if close_editor:
+            self._end_edit(commit=True)
+        if getattr(self, "_shared_x_lock", False):
+            return
+        self._shared_x_lock = True
+        try:
+            try:
+                self.canvas.xview(*args)
+            except Exception:
+                return
+            try:
+                first, last = self.canvas.xview()
+                first = float(first)
+                last = float(last)
+            except Exception:
+                first, last = 0.0, 1.0
+            first = 0.0 if first < 0.0 else (1.0 if first > 1.0 else first)
+            self._shared_x_frac = first
+            body_left_px = self._shared_x_offset_px()
+            requested_first = first
+            if args:
+                try:
+                    if str(args[0]) == "moveto" and len(args) > 1:
+                        requested_first = float(args[1])
+                except Exception:
+                    requested_first = first
+            try:
+                self.hcanvas.configure(width=self.canvas.winfo_width())
+            except Exception:
+                pass
+            vbar_w = self._sync_header_vbar_gutter()
+            try:
+                self.hcanvas.xview_moveto(first)
+            except Exception:
+                pass
+            try:
+                body_region_w = float((self.canvas.bbox("all") or (0, 0, float(getattr(self, "_scroll_w", 0.0) or 0.0), 0))[2])
+            except Exception:
+                body_region_w = float(getattr(self, "_scroll_w", 0.0) or 0.0)
+            try:
+                header_region_w = float((self.hcanvas.bbox("all") or (0, 0, body_region_w, 0))[2])
+            except Exception:
+                header_region_w = body_region_w
+            try:
+                body_vw = float(self.canvas.winfo_width() or 1.0)
+            except Exception:
+                body_vw = 1.0
+            try:
+                header_vw = float(self.hcanvas.winfo_width() or body_vw)
+            except Exception:
+                header_vw = body_vw
+            body_max_px = max(0.0, body_region_w - max(1.0, body_vw))
+            right_edge = bool((last >= (1.0 - 1e-9)) or (body_left_px >= (body_max_px - 1e-6)))
+            if right_edge and header_region_w > 1.0:
+                header_snap_frac = body_left_px / header_region_w
+                header_snap_frac = 0.0 if header_snap_frac < 0.0 else (1.0 if header_snap_frac > 1.0 else header_snap_frac)
+                try:
+                    self.hcanvas.xview_moveto(header_snap_frac)
+                except Exception:
+                    pass
+            try:
+                if hasattr(self, "hscroll"):
+                    self.hscroll.set(first, last)
+            except Exception:
+                pass
+            try:
+                self._header_offset_px = float(self.hcanvas.canvasx(0))
+            except Exception:
+                self._header_offset_px = body_left_px
+            try:
+                header_left_px = float(self.hcanvas.canvasx(0))
+            except Exception:
+                header_left_px = float(self._header_offset_px or 0.0)
+            delta_px = float(header_left_px - body_left_px)
+            clamp_applied = abs(requested_first - first) > 1e-9
+            self._debug_header_sync(
+                "apply_shared_xview",
+                request=args,
+                requested=f"{requested_first:.9f}",
+                clamped=f"{first:.9f}",
+                body_px=f"{body_left_px:.3f}",
+                header_px=f"{header_left_px:.3f}",
+                delta_px=f"{delta_px:.3f}",
+                body_sr_w=f"{body_region_w:.3f}",
+                header_sr_w=f"{header_region_w:.3f}",
+                body_vw=f"{body_vw:.3f}",
+                header_vw=f"{header_vw:.3f}",
+                body_max_left=f"{body_max_px:.3f}",
+                header_max_left=f"{max(0.0, header_region_w - max(1.0, header_vw)):.3f}",
+                vbar_w=f"{float(vbar_w):.3f}",
+                clamp=int(bool(clamp_applied)),
+                right_edge=int(bool(right_edge)),
+            )
+        finally:
+            self._shared_x_lock = False
+
     def _update_scrollregion(self):
         # сохраняем пиксельный сдвиг по X, чтобы после изменения ширины scrollregion
         # (например, после добавления зондирования) шапка и тело не расходились.
@@ -4696,6 +4778,10 @@ class GeoCanvasEditor(tk.Tk):
                 self.vbar.state(["!disabled"])
             except Exception:
                 pass
+        try:
+            self._sync_header_vbar_gutter()
+        except Exception:
+            pass
         # Шапка: отдельный canvas, X синхронизируем с body через xview_moveto.
         try:
             self.hcanvas.configure(scrollregion=(0, 0, w_total, header_h))
@@ -4716,20 +4802,14 @@ class GeoCanvasEditor(tk.Tk):
                 new_frac = 0.0
             if new_frac > 1.0:
                 new_frac = 1.0
-            # двигаем body, затем синхронизируем шапку от фактического xview body
-            self.canvas.xview_moveto(new_frac)
-            try:
-                self._sync_header_x_from_body(defer=False)
-            except Exception:
-                pass
+            self._apply_shared_xview("moveto", new_frac)
         except Exception:
             pass
 
         # Горизонтальная прокрутка: показываем только если колонки не помещаются в видимую область
         if not need_h:
             try:
-                self.canvas.xview_moveto(0)
-                self._sync_header_x_from_body(defer=False)
+                self._apply_shared_xview("moveto", 0.0)
             except Exception:
                 pass
             # скрыть скроллбар
@@ -5308,18 +5388,52 @@ class GeoCanvasEditor(tk.Tk):
             return "#ffffff"
         return str(SOIL_TYPE_TO_COLUMN_FILL.get(soil, "#ffffff"))
 
-    def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, soil_type: str, tags, logical_rect=None):
+    def _draw_layer_hatch(self, x0: float, y0: float, x1: float, y1: float, soil_type: str, tags, logical_rect=None, debug_ctx: dict | None = None):
         # Единая система: внешние JSON-штриховки через domain.hatching registry.
+        ctx = dict(debug_ctx or {})
+        self._hatch_debug_log(
+            "hatch_layer_begin",
+            soil_type=str(soil_type or ""),
+            bbox=(float(x0), float(y0), float(x1), float(y1)),
+            logical_rect=(tuple(logical_rect) if logical_rect is not None else None),
+            tags=tuple(tags) if isinstance(tags, (tuple, list)) else tags,
+            **ctx,
+        )
         pattern = load_registered_hatch(str(soil_type or ""))
         if pattern is None:
-            # Временный fallback: без штриховки, если внешний JSON не зарегистрирован.
+            self._hatch_debug_log("hatch_layer_skip", reason="pattern_not_found", soil_type=str(soil_type or ""), **ctx)
             return
+        trace_state = {"primitives_total": 0, "events": []}
+
+        def _debug_hook(event: str, **payload):
+            event_payload = dict(payload)
+            trace_state["events"].append((event, event_payload))
+            if event == "hatch_line_drawn":
+                trace_state["primitives_total"] += int(event_payload.get("primitives_count", 0) or 0)
+            self._hatch_debug_log(event, soil_type=str(soil_type or ""), **ctx, **event_payload)
+
         render_hatch_pattern(
             self.canvas,
             (float(x0), float(y0), float(x1), float(y1)),
             pattern,
             tags=tags,
-            scale_info={"usage": HATCH_USAGE_EDITOR_EXPANDED, "layer_height_px": float(y1 - y0), "logical_rect": tuple(logical_rect) if logical_rect is not None else (float(x0), float(y0), float(x1), float(y1))},
+            scale_info={
+                "usage": HATCH_USAGE_EDITOR_EXPANDED,
+                "layer_height_px": float(y1 - y0),
+                "logical_rect": tuple(logical_rect) if logical_rect is not None else (float(x0), float(y0), float(x1), float(y1)),
+                "debug_hook": _debug_hook if bool(getattr(self, "_debug_hatch", False)) else None,
+            },
+        )
+        self._hatch_debug_log(
+            "hatch_layer_drawn",
+            soil_type=str(soil_type or ""),
+            hatch_requested=True,
+            hatch_built=bool(trace_state["primitives_total"] > 0),
+            hatch_skipped=bool(trace_state["primitives_total"] <= 0),
+            skip_reason=("no_primitives_created" if trace_state["primitives_total"] <= 0 else ""),
+            primitives_count=int(trace_state["primitives_total"]),
+            events_count=len(trace_state["events"]),
+            **ctx,
         )
 
     def _draw_layers_overlay_for_test(self, ti: int, plot_rect, depth_to_y, tags):
@@ -5355,7 +5469,23 @@ class GeoCanvasEditor(tk.Tk):
             soil_type = str(ent.get("soil_type") or SoilType.SANDY_LOAM.value)
             fill_color = self._geology_layer_fill_color(soil_type)
             self.canvas.create_rectangle(x0, ty0, x1, ty1, fill=fill_color, outline="", tags=tags)
-            self._draw_layer_hatch(x0, ty0, x1, ty1, soil_type=soil_type, tags=tags, logical_rect=(x0, y0, x1, y1))
+            self._draw_layer_hatch(
+                x0,
+                ty0,
+                x1,
+                ty1,
+                soil_type=soil_type,
+                tags=tags,
+                logical_rect=(x0, y0, x1, y1),
+                debug_ctx={
+                    "ti": int(ti),
+                    "test_id": int(getattr(t, "tid", ti) or ti),
+                    "card_index": int((getattr(self, "display_cols", []) or []).index(ti)) if ti in (getattr(self, "display_cols", []) or []) else int(ti),
+                    "layer_index": int(interval_index),
+                    "x_range": (float(x0), float(x1)),
+                    "y_range": (float(ty0), float(ty1)),
+                },
+            )
             self._layer_plot_hitbox.append({"kind": "interval", "ti": ti, "interval_index": int(interval_index), "ige_id": ige_id, "top": float(lt), "bot": float(lb), "bbox": (x0, ty0, x1, ty1)})
             label_spans.append({
                 "x0": x0,
@@ -7951,7 +8081,7 @@ class GeoCanvasEditor(tk.Tk):
         self._redraw_graphs_now()
         if xview_before is not None:
             try:
-                self.canvas.xview_moveto(float(xview_before[0]))
+                self._apply_shared_xview("moveto", float(xview_before[0]))
                 self._sync_header_body_after_scroll()
             except Exception:
                 pass
@@ -8690,9 +8820,12 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             body_left = 0.0
         try:
-            header_left = float(getattr(self, "_header_offset_px", 0.0) or 0.0)
+            header_left = float(self.hcanvas.canvasx(0))
         except Exception:
-            header_left = 0.0
+            try:
+                header_left = float(getattr(self, "_header_offset_px", 0.0) or 0.0)
+            except Exception:
+                header_left = 0.0
         state = str(self.state()) if hasattr(self, "state") else ""
         incl = bool(getattr(self, "show_inclinometer", True))
         mode = str(getattr(self, "_header_sync_mode", "legacy") or "legacy")
@@ -8715,26 +8848,9 @@ class GeoCanvasEditor(tk.Tk):
         self._debug_header_sync("wheel_begin", source=source)
 
     def _schedule_header_stabilize(self, source: str = ""):
-        # дедупликация: один sync на одну итерацию idle-loop, без каскадного redraw/move
-        if bool(getattr(self, "_header_sync_pending", False)):
-            self._debug_header_sync("schedule_skip", source=source)
-            return
-        self._header_sync_pending = True
-        self._debug_header_sync("schedule_set", source=source)
-
-        def _run():
-            self._header_stabilize_after_id = None
-            self._header_sync_pending = False
-            try:
-                self._sync_header_x_from_body(defer=False)
-                self._debug_header_sync("schedule_run", source=source)
-            except Exception:
-                pass
-
-        try:
-            self._header_stabilize_after_id = self.after_idle(_run)
-        except Exception:
-            self._header_sync_pending = False
+        # legacy no-op: X синхронизируется только через _apply_shared_xview.
+        self._header_sync_pending = False
+        self._debug_header_sync("schedule_skip", source=source)
 
     # ---------------- scrolling ----------------
     def _on_mousewheel(self, event):
@@ -8788,7 +8904,6 @@ class GeoCanvasEditor(tk.Tk):
                     pass
         finally:
             self._ysync_lock = False
-        self._schedule_header_stabilize(source="yscroll_sync")
 
     def _on_mousewheel_x(self, event):
         """Горизонтальная прокрутка колесом шагом 1 колонка (когда курсор над шапкой или горизонтальным скроллом)."""
@@ -9440,7 +9555,7 @@ class GeoCanvasEditor(tk.Tk):
             dlg.update_idletasks()
             x0, y0, x1, y1 = self._header_bbox(max(0, int(ti)))
             try:
-                x_view = float(self.hcanvas.canvasx(0))
+                x_view = self._shared_x_offset_px()
             except Exception:
                 x_view = 0.0
             sx = self.hcanvas.winfo_rootx() + int(x0 - x_view) + 10
