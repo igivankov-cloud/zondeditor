@@ -4601,21 +4601,6 @@ class GeoCanvasEditor(tk.Tk):
                 frac = 0.0
             return max(0.0, frac) * max(0.0, w_total)
 
-    def _canvas_scroll_width(self, cnv, fallback: float = 0.0) -> float:
-        try:
-            bbox = cnv.bbox("all")
-        except Exception:
-            bbox = None
-        if bbox and len(bbox) == 4:
-            try:
-                return max(0.0, float(bbox[2]) - float(bbox[0]))
-            except Exception:
-                pass
-        try:
-            return max(0.0, float(fallback))
-        except Exception:
-            return 0.0
-
     def _apply_shared_xview(self, *args, close_editor: bool = False):
         """Единая точка записи X для body/header canvas в старой архитектуре."""
         if close_editor:
@@ -4637,16 +4622,12 @@ class GeoCanvasEditor(tk.Tk):
             first = 0.0 if first < 0.0 else (1.0 if first > 1.0 else first)
             self._shared_x_frac = first
             body_left_px = self._shared_x_offset_px()
-            body_scroll_w = self._canvas_scroll_width(getattr(self, "canvas", None), fallback=getattr(self, "_scroll_w", 0.0))
             try:
                 self.hcanvas.configure(width=self.canvas.winfo_width())
             except Exception:
                 pass
-            header_scroll_w = self._canvas_scroll_width(getattr(self, "hcanvas", None), fallback=body_scroll_w)
-            header_frac = 0.0 if header_scroll_w <= 1.0 else (body_left_px / header_scroll_w)
-            header_frac = 0.0 if header_frac < 0.0 else (1.0 if header_frac > 1.0 else header_frac)
             try:
-                self.hcanvas.xview_moveto(header_frac)
+                self.hcanvas.xview_moveto(first)
             except Exception:
                 pass
             try:
@@ -4673,9 +4654,6 @@ class GeoCanvasEditor(tk.Tk):
             self._debug_header_sync(
                 "apply_shared_xview",
                 request=args,
-                body_scroll_w=f"{body_scroll_w:.3f}",
-                header_scroll_w=f"{header_scroll_w:.3f}",
-                header_frac=f"{header_frac:.9f}",
                 body_px=f"{body_left_px:.3f}",
                 header_px=f"{header_left_px:.3f}",
                 delta_px=f"{delta_px:.3f}",

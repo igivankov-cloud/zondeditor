@@ -167,48 +167,54 @@ def test_repeated_scrollregion_refresh_does_not_accumulate_x_drift():
     assert round(editor.canvas.xview()[0], 4) == 0.35
 
 
-def test_repeated_wheel_scrolling_to_far_right_keeps_zero_pixel_drift():
-    editor = _make_editor(header_content_width=601)
+def test_repeated_wheel_scrolling_does_not_accumulate_drift():
+    editor = _make_editor()
 
     for _ in range(10):
         GeoCanvasEditor._scroll_x_by_one_column(editor, 1)
 
-    assert round(editor.canvas.canvasx(0) - editor.hcanvas.canvasx(0), 6) == 0.0
-    assert round(editor.canvas.xview()[0] - editor._shared_x_frac, 12) == 0.0
+    assert editor.canvas.xview()[0] == editor.hcanvas.xview()[0]
 
 
-def test_final_clamped_right_edge_has_zero_pixel_drift():
-    editor = _make_editor(header_content_width=601)
+def test_one_wheel_tick_causes_one_authoritative_shared_x_write():
+    editor = _make_editor()
+    calls = []
+    original = editor._apply_shared_xview
 
-    editor._apply_shared_xview("moveto", 1.0)
+    def wrapped(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
 
-    assert round(editor.canvas.canvasx(0) - editor.hcanvas.canvasx(0), 6) == 0.0
-    assert editor.canvas.xview()[1] <= 1.0
+    editor._apply_shared_xview = wrapped
+
+    result = editor._on_mousewheel_x(SimpleNamespace(delta=-120))
+
+    assert result == "break"
+    assert len(calls) == 1
 
 
-def test_scroll_back_left_does_not_hide_right_edge_drift_fix():
-    editor = _make_editor(header_content_width=601)
+def test_far_right_clamp_does_not_flip_direction():
+    editor = _make_editor()
+    positions = []
 
     for _ in range(10):
         GeoCanvasEditor._scroll_x_by_one_column(editor, 1)
-    right_edge_delta = round(editor.canvas.canvasx(0) - editor.hcanvas.canvasx(0), 6)
-    GeoCanvasEditor._scroll_x_by_one_column(editor, -1)
+        positions.append(editor.canvas.xview()[0])
 
-    assert right_edge_delta == 0.0
-    assert round(editor.canvas.canvasx(0) - editor.hcanvas.canvasx(0), 6) == 0.0
+    assert positions == sorted(positions)
+    assert editor.canvas.xview()[0] == editor.hcanvas.xview()[0]
 
 
-def test_scrollbar_far_right_matches_zero_drift_alignment():
-    editor = _make_editor(header_content_width=601)
+def test_mid_range_scroll_remains_aligned():
+    editor = _make_editor()
+    editor._apply_shared_xview("moveto", 0.4)
+
+    assert editor.canvas.xview()[0] == editor.hcanvas.xview()[0]
+
+
+def test_scrollbar_far_right_path_stays_aligned():
+    editor = _make_editor()
 
     editor._xview_proxy("moveto", 1.0)
 
-    assert round(editor.canvas.canvasx(0) - editor.hcanvas.canvasx(0), 6) == 0.0
-
-
-def test_mid_range_positions_keep_existing_alignment_behavior():
-    editor = _make_editor(header_content_width=601)
-
-    editor._apply_shared_xview("moveto", 0.4)
-
-    assert round(editor.canvas.canvasx(0) - editor.hcanvas.canvasx(0), 6) == 0.0
+    assert editor.canvas.xview()[0] == editor.hcanvas.xview()[0]
