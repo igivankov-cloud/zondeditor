@@ -66,15 +66,22 @@ class _FakeCanvas:
 
 
 class _FakeScrollbar:
-    def __init__(self):
+    def __init__(self, *, width: int = 16):
         self.value = None
         self.states = []
+        self.width = width
 
     def set(self, first, last):
         self.value = (float(first), float(last))
 
     def state(self, state):
         self.states.append(tuple(state))
+
+    def winfo_width(self):
+        return self.width
+
+    def winfo_reqwidth(self):
+        return self.width
 
 
 class _FakeFrame:
@@ -85,12 +92,22 @@ class _FakeFrame:
         self.hidden = True
 
 
+class _FakeSpacer:
+    def __init__(self):
+        self.width = 0
+
+    def configure(self, **kwargs):
+        if "width" in kwargs:
+            self.width = int(kwargs["width"])
+
+
 def _make_editor(*, header_content_width: float = 600) -> GeoCanvasEditor:
     editor = GeoCanvasEditor.__new__(GeoCanvasEditor)
     editor.canvas = _FakeCanvas()
     editor.hcanvas = _FakeCanvas(content_width=header_content_width)
     editor.hscroll = _FakeScrollbar()
-    editor.vbar = _FakeScrollbar()
+    editor.vbar = _FakeScrollbar(width=16)
+    editor.hcanvas_vbar_spacer = _FakeSpacer()
     editor.hscroll_frame = _FakeFrame()
     editor._debug_header_sync = lambda *args, **kwargs: None
     editor._end_edit_calls = []
@@ -174,6 +191,26 @@ def test_repeated_wheel_scrolling_does_not_accumulate_drift():
         GeoCanvasEditor._scroll_x_by_one_column(editor, 1)
 
     assert editor.canvas.xview()[0] == editor.hcanvas.xview()[0]
+
+
+def test_header_gutter_matches_vertical_scrollbar_width():
+    editor = _make_editor()
+    editor.vbar.width = 19
+
+    w = GeoCanvasEditor._sync_header_vbar_gutter(editor)
+
+    assert w == 19
+    assert editor.hcanvas_vbar_spacer.width == 19
+
+
+def test_header_gutter_becomes_zero_when_scrollbar_width_zero():
+    editor = _make_editor()
+    editor.vbar.width = 0
+
+    w = GeoCanvasEditor._sync_header_vbar_gutter(editor)
+
+    assert w == 0
+    assert editor.hcanvas_vbar_spacer.width == 0
 
 
 def test_one_wheel_tick_causes_one_authoritative_shared_x_write():

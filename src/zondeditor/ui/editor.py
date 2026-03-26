@@ -2155,8 +2155,12 @@ class GeoCanvasEditor(tk.Tk):
         self.calc_workspace.pack_forget()
 
         # Верхняя фиксированная шапка
-        self.hcanvas = tk.Canvas(mid, background="white", highlightthickness=0, height=120)
-        self.hcanvas.pack(side="top", fill="x")
+        self.header_row = ttk.Frame(mid)
+        self.header_row.pack(side="top", fill="x")
+        self.hcanvas = tk.Canvas(self.header_row, background="white", highlightthickness=0, height=120)
+        self.hcanvas.pack(side="left", fill="x", expand=True)
+        self.hcanvas_vbar_spacer = ttk.Frame(self.header_row, width=0)
+        self.hcanvas_vbar_spacer.pack(side="right", fill="y")
 
         # Нижняя область с данными (скролл)
         body = ttk.Frame(mid)
@@ -2170,6 +2174,14 @@ class GeoCanvasEditor(tk.Tk):
             yscrollcommand=self.vbar.set
         )
         self.canvas.pack(side="left", fill="both", expand=True)
+        try:
+            self.vbar.bind("<Configure>", lambda _e: self._sync_header_vbar_gutter())
+        except Exception:
+            pass
+        try:
+            self.after_idle(self._sync_header_vbar_gutter)
+        except Exception:
+            pass
 
         def _xview_proxy(*args):
             # ЕДИНАЯ ТОЧКА ЗАПИСИ X — shared helper для body + header.
@@ -2206,7 +2218,7 @@ class GeoCanvasEditor(tk.Tk):
         self.vbar.config(command=_yview_proxy)
         # configure/redraw
         self.canvas.bind("<Configure>", lambda _e: self._update_scrollregion())
-        self.hcanvas.bind("<Configure>", lambda _e: (self.hcanvas.configure(width=self.canvas.winfo_width()), self._update_scrollregion()))
+        self.hcanvas.bind("<Configure>", lambda _e: (self._sync_header_vbar_gutter(), self.hcanvas.configure(width=self.canvas.winfo_width()), self._update_scrollregion()))
 
         # scrolling and events: таблица
         self.canvas.bind("<MouseWheel>", self._on_mousewheel)
@@ -4601,6 +4613,28 @@ class GeoCanvasEditor(tk.Tk):
                 frac = 0.0
             return max(0.0, frac) * max(0.0, w_total)
 
+    def _sync_header_vbar_gutter(self) -> int:
+        spacer = getattr(self, "hcanvas_vbar_spacer", None)
+        if spacer is None:
+            return 0
+        vbar = getattr(self, "vbar", None)
+        width = 0
+        try:
+            width = int(vbar.winfo_width() or 0) if vbar is not None else 0
+        except Exception:
+            width = 0
+        if width <= 0:
+            try:
+                width = int(vbar.winfo_reqwidth() or 0) if vbar is not None else 0
+            except Exception:
+                width = 0
+        width = max(0, int(width))
+        try:
+            spacer.configure(width=width)
+        except Exception:
+            pass
+        return width
+
     def _apply_shared_xview(self, *args, close_editor: bool = False):
         """Единая точка записи X для body/header canvas в старой архитектуре."""
         if close_editor:
@@ -4633,6 +4667,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.hcanvas.configure(width=self.canvas.winfo_width())
             except Exception:
                 pass
+            vbar_w = self._sync_header_vbar_gutter()
             try:
                 self.hcanvas.xview_moveto(first)
             except Exception:
@@ -4689,6 +4724,9 @@ class GeoCanvasEditor(tk.Tk):
                 header_sr_w=f"{header_region_w:.3f}",
                 body_vw=f"{body_vw:.3f}",
                 header_vw=f"{header_vw:.3f}",
+                body_max_left=f"{body_max_px:.3f}",
+                header_max_left=f"{max(0.0, header_region_w - max(1.0, header_vw)):.3f}",
+                vbar_w=f"{float(vbar_w):.3f}",
                 clamp=int(bool(clamp_applied)),
                 right_edge=int(bool(right_edge)),
             )
@@ -4740,6 +4778,10 @@ class GeoCanvasEditor(tk.Tk):
                 self.vbar.state(["!disabled"])
             except Exception:
                 pass
+        try:
+            self._sync_header_vbar_gutter()
+        except Exception:
+            pass
         # Шапка: отдельный canvas, X синхронизируем с body через xview_moveto.
         try:
             self.hcanvas.configure(scrollregion=(0, 0, w_total, header_h))
