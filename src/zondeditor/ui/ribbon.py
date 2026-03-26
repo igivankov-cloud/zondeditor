@@ -33,6 +33,7 @@ class RibbonView(ttk.Frame):
         self.show_geology_var = tk.BooleanVar(value=True)
         self.show_inclinometer_var = tk.BooleanVar(value=True)
         self.show_layer_colors_var = tk.BooleanVar(value=False)
+        self.show_layer_hatching_var = tk.BooleanVar(value=True)
         self.compact_1m_var = tk.BooleanVar(value=False)
         self.display_sort_var = tk.StringVar(value="date")
         self.layers_edit_var = tk.BooleanVar(value=False)
@@ -230,8 +231,17 @@ class RibbonView(ttk.Frame):
         sort_col = ttk.Frame(cols)
         sort_col.grid(row=0, column=1, sticky="nw")
 
+        opts_grid = ttk.Frame(opts_col)
+        opts_grid.pack(side="top", anchor="w")
+
+        left_opts = ttk.Frame(opts_grid)
+        left_opts.grid(row=0, column=0, sticky="nw", padx=(0, 16))
+
+        right_opts = ttk.Frame(opts_grid)
+        right_opts.grid(row=0, column=1, sticky="nw")
+
         compact_chk = ttk.Checkbutton(
-            opts_col,
+            left_opts,
             text="Развернуть / Свернуть",
             variable=self.compact_1m_var,
             command=lambda: self.commands.get("toggle_compact_1m", lambda *_: None)(bool(self.compact_1m_var.get())),
@@ -240,7 +250,7 @@ class RibbonView(ttk.Frame):
         ToolTip(compact_chk, "Использует текущую логику сворачивания/разворачивания вида по 1-метровым интервалам")
 
         graphs_chk = ttk.Checkbutton(
-            opts_col,
+            left_opts,
             text="График зондирования",
             variable=self.show_graphs_var,
             command=lambda: self.commands.get("toggle_graphs", lambda *_: None)(bool(self.show_graphs_var.get())),
@@ -249,25 +259,37 @@ class RibbonView(ttk.Frame):
         ToolTip(graphs_chk, "Показывать графическую часть зондирования")
 
         geology_chk = ttk.Checkbutton(
-            opts_col,
+            left_opts,
             text="Геологическая колонка",
             variable=self.show_geology_var,
-            command=lambda: self.commands.get("toggle_geology_column", lambda *_: None)(bool(self.show_geology_var.get())),
+            command=self._on_toggle_geology_from_ui,
         )
         geology_chk.pack(side="top", anchor="w", pady=(2, 0))
         ToolTip(geology_chk, "Показывать/скрывать геологическую колонку")
+        self._geology_chk = geology_chk
 
         layer_colors_chk = ttk.Checkbutton(
-            opts_col,
+            right_opts,
             text="Цвет слоёв",
             variable=self.show_layer_colors_var,
             command=lambda: self.commands.get("toggle_layer_colors", lambda *_: None)(bool(self.show_layer_colors_var.get())),
         )
         layer_colors_chk.pack(side="top", anchor="w", pady=(2, 0))
         ToolTip(layer_colors_chk, "Мягкая заливка по типу грунта под штриховкой")
+        self._layer_colors_chk = layer_colors_chk
+
+        layer_hatching_chk = ttk.Checkbutton(
+            right_opts,
+            text="Штриховка",
+            variable=self.show_layer_hatching_var,
+            command=lambda: self.commands.get("toggle_layer_hatching", lambda *_: None)(bool(self.show_layer_hatching_var.get())),
+        )
+        layer_hatching_chk.pack(side="top", anchor="w", pady=(2, 0))
+        ToolTip(layer_hatching_chk, "Показывать/скрывать штриховку геологической колонки")
+        self._layer_hatching_chk = layer_hatching_chk
 
         incl_chk = ttk.Checkbutton(
-            opts_col,
+            left_opts,
             text="Инклинометр",
             variable=self.show_inclinometer_var,
             command=lambda: self.commands.get("toggle_inclinometer", lambda *_: None)(bool(self.show_inclinometer_var.get())),
@@ -296,6 +318,23 @@ class RibbonView(ttk.Frame):
         sort_tid.pack(side="top", anchor="w", pady=(2, 0))
         ToolTip(sort_date, "Стандартный режим: хронологический порядок")
         ToolTip(sort_tid, "Альтернативный режим: по номеру опыта")
+        self._sync_geology_dependents()
+
+    def _on_toggle_geology_from_ui(self):
+        value = bool(self.show_geology_var.get())
+        self.commands.get("toggle_geology_column", lambda *_: None)(value)
+        self._sync_geology_dependents()
+
+    def _sync_geology_dependents(self):
+        enabled = bool(self.show_geology_var.get())
+        for attr in ("_layer_colors_chk", "_layer_hatching_chk"):
+            chk = getattr(self, attr, None)
+            if chk is None:
+                continue
+            try:
+                chk.configure(state=("normal" if enabled else "disabled"))
+            except Exception:
+                pass
 
     def _build_layers_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
@@ -662,9 +701,13 @@ class RibbonView(ttk.Frame):
 
     def set_show_geology_column(self, value: bool):
         self.show_geology_var.set(bool(value))
+        self._sync_geology_dependents()
 
     def set_show_layer_colors(self, value: bool):
         self.show_layer_colors_var.set(bool(value))
+
+    def set_show_layer_hatching(self, value: bool):
+        self.show_layer_hatching_var.set(bool(value))
 
     def set_show_inclinometer(self, value: bool, *, enabled: bool = True):
         self.show_inclinometer_var.set(bool(value))
