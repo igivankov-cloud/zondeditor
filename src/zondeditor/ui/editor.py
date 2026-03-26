@@ -259,6 +259,7 @@ class GeoCanvasEditor(tk.Tk):
         self.show_geology_column = True
         self.show_inclinometer = True
         self.show_layer_colors = False
+        self.show_layer_hatching = True
         self.compact_1m = False
         self.display_sort_mode = "date"
         self.expanded_meters: set[int] = set()
@@ -635,6 +636,7 @@ class GeoCanvasEditor(tk.Tk):
             "show_geology_column": bool(getattr(self, "show_geology_column", True)),
             "show_inclinometer": bool(getattr(self, "show_inclinometer", True)),
             "show_layer_colors": bool(getattr(self, "show_layer_colors", False)),
+            "show_layer_hatching": bool(getattr(self, "show_layer_hatching", True)),
             "display_sort_mode": str(getattr(self, "display_sort_mode", "date") or "date"),
             "expanded_meters": sorted(int(x) for x in (getattr(self, "expanded_meters", set()) or set())),
             "layer_edit_mode": bool(getattr(self, "layer_edit_mode", False)),
@@ -703,6 +705,10 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             self.show_layer_colors = bool(getattr(self, "show_layer_colors", False))
         try:
+            self.show_layer_hatching = bool(snap.get("show_layer_hatching", getattr(self, "show_layer_hatching", True)))
+        except Exception:
+            self.show_layer_hatching = bool(getattr(self, "show_layer_hatching", True))
+        try:
             self.display_sort_mode = str(snap.get("display_sort_mode", getattr(self, "display_sort_mode", "date")) or "date").lower()
         except Exception:
             self.display_sort_mode = "date"
@@ -725,6 +731,8 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.set_show_graphs(bool(self.show_graphs))
                 self.ribbon_view.set_show_geology_column(bool(self.show_geology_column))
                 self.ribbon_view.set_show_inclinometer(bool(self.show_inclinometer), enabled=(str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"))
+                self.ribbon_view.set_show_layer_colors(bool(self.show_layer_colors))
+                self.ribbon_view.set_show_layer_hatching(bool(self.show_layer_hatching))
                 self.ribbon_view.set_display_sort_mode(str(self.display_sort_mode))
                 self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
                 self.ribbon_view.set_layer_edit_mode(True)
@@ -991,6 +999,18 @@ class GeoCanvasEditor(tk.Tk):
         try:
             if getattr(self, "ribbon_view", None):
                 self.ribbon_view.set_show_layer_colors(self.show_layer_colors)
+        except Exception:
+            pass
+        self._redraw()
+        self.schedule_graph_redraw()
+
+    def _toggle_show_layer_hatching(self, value: bool | None = None):
+        if value is None:
+            value = bool(getattr(self, "show_layer_hatching", True))
+        self.show_layer_hatching = bool(value)
+        try:
+            if getattr(self, "ribbon_view", None):
+                self.ribbon_view.set_show_layer_hatching(self.show_layer_hatching)
         except Exception:
             pass
         self._redraw()
@@ -2096,6 +2116,7 @@ class GeoCanvasEditor(tk.Tk):
                 "toggle_geology_column": self._toggle_show_geology_column,
                 "toggle_inclinometer": self._toggle_show_inclinometer,
                 "toggle_layer_colors": self._toggle_show_layer_colors,
+                "toggle_layer_hatching": self._toggle_show_layer_hatching,
                 "toggle_compact_1m": self._toggle_compact_1m,
                 "set_display_sort_mode": self._set_display_sort_mode,
                 "toggle_layer_edit": self._toggle_layer_edit_mode,
@@ -2129,6 +2150,7 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view.set_show_geology_column(bool(getattr(self, "show_geology_column", True)))
             self.ribbon_view.set_show_inclinometer(bool(getattr(self, "show_inclinometer", True)), enabled=(str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"))
             self.ribbon_view.set_show_layer_colors(bool(getattr(self, "show_layer_colors", False)))
+            self.ribbon_view.set_show_layer_hatching(bool(getattr(self, "show_layer_hatching", True)))
             self.ribbon_view.set_compact_1m(bool(getattr(self, "compact_1m", False)))
             self.ribbon_view.set_display_sort_mode(str(getattr(self, "display_sort_mode", "date")))
             self.ribbon_view.set_layer_edit_mode(True)
@@ -3547,6 +3569,7 @@ class GeoCanvasEditor(tk.Tk):
         self.show_graphs = False
         self.show_geology_column = False
         self.show_layer_colors = False
+        self.show_layer_hatching = True
         self.compact_1m = False
         self.expanded_meters = set()
         self.row_h = int(self.row_h_default)
@@ -3560,6 +3583,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.set_show_graphs(False)
                 self.ribbon_view.set_show_geology_column(False)
                 self.ribbon_view.set_show_layer_colors(False)
+                self.ribbon_view.set_show_layer_hatching(bool(getattr(self, "show_layer_hatching", True)))
                 self.ribbon_view.set_compact_1m(False)
         except Exception:
             pass
@@ -5469,23 +5493,24 @@ class GeoCanvasEditor(tk.Tk):
             soil_type = str(ent.get("soil_type") or SoilType.SANDY_LOAM.value)
             fill_color = self._geology_layer_fill_color(soil_type)
             self.canvas.create_rectangle(x0, ty0, x1, ty1, fill=fill_color, outline="", tags=tags)
-            self._draw_layer_hatch(
-                x0,
-                ty0,
-                x1,
-                ty1,
-                soil_type=soil_type,
-                tags=tags,
-                logical_rect=(x0, y0, x1, y1),
-                debug_ctx={
-                    "ti": int(ti),
-                    "test_id": int(getattr(t, "tid", ti) or ti),
-                    "card_index": int((getattr(self, "display_cols", []) or []).index(ti)) if ti in (getattr(self, "display_cols", []) or []) else int(ti),
-                    "layer_index": int(interval_index),
-                    "x_range": (float(x0), float(x1)),
-                    "y_range": (float(ty0), float(ty1)),
-                },
-            )
+            if bool(getattr(self, "show_layer_hatching", True)):
+                self._draw_layer_hatch(
+                    x0,
+                    ty0,
+                    x1,
+                    ty1,
+                    soil_type=soil_type,
+                    tags=tags,
+                    logical_rect=(x0, y0, x1, y1),
+                    debug_ctx={
+                        "ti": int(ti),
+                        "test_id": int(getattr(t, "tid", ti) or ti),
+                        "card_index": int((getattr(self, "display_cols", []) or []).index(ti)) if ti in (getattr(self, "display_cols", []) or []) else int(ti),
+                        "layer_index": int(interval_index),
+                        "x_range": (float(x0), float(x1)),
+                        "y_range": (float(ty0), float(ty1)),
+                    },
+                )
             self._layer_plot_hitbox.append({"kind": "interval", "ti": ti, "interval_index": int(interval_index), "ige_id": ige_id, "top": float(lt), "bot": float(lb), "bbox": (x0, ty0, x1, ty1)})
             label_spans.append({
                 "x0": x0,
