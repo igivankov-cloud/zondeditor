@@ -4622,6 +4622,13 @@ class GeoCanvasEditor(tk.Tk):
             first = 0.0 if first < 0.0 else (1.0 if first > 1.0 else first)
             self._shared_x_frac = first
             body_left_px = self._shared_x_offset_px()
+            requested_first = first
+            if args:
+                try:
+                    if str(args[0]) == "moveto" and len(args) > 1:
+                        requested_first = float(args[1])
+                except Exception:
+                    requested_first = first
             try:
                 self.hcanvas.configure(width=self.canvas.winfo_width())
             except Exception:
@@ -4630,6 +4637,31 @@ class GeoCanvasEditor(tk.Tk):
                 self.hcanvas.xview_moveto(first)
             except Exception:
                 pass
+            try:
+                body_region_w = float((self.canvas.bbox("all") or (0, 0, float(getattr(self, "_scroll_w", 0.0) or 0.0), 0))[2])
+            except Exception:
+                body_region_w = float(getattr(self, "_scroll_w", 0.0) or 0.0)
+            try:
+                header_region_w = float((self.hcanvas.bbox("all") or (0, 0, body_region_w, 0))[2])
+            except Exception:
+                header_region_w = body_region_w
+            try:
+                body_vw = float(self.canvas.winfo_width() or 1.0)
+            except Exception:
+                body_vw = 1.0
+            try:
+                header_vw = float(self.hcanvas.winfo_width() or body_vw)
+            except Exception:
+                header_vw = body_vw
+            body_max_px = max(0.0, body_region_w - max(1.0, body_vw))
+            right_edge = bool((last >= (1.0 - 1e-9)) or (body_left_px >= (body_max_px - 1e-6)))
+            if right_edge and header_region_w > 1.0:
+                header_snap_frac = body_left_px / header_region_w
+                header_snap_frac = 0.0 if header_snap_frac < 0.0 else (1.0 if header_snap_frac > 1.0 else header_snap_frac)
+                try:
+                    self.hcanvas.xview_moveto(header_snap_frac)
+                except Exception:
+                    pass
             try:
                 if hasattr(self, "hscroll"):
                     self.hscroll.set(first, last)
@@ -4644,21 +4676,21 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 header_left_px = float(self._header_offset_px or 0.0)
             delta_px = float(header_left_px - body_left_px)
-            clamp_applied = False
-            if args:
-                try:
-                    if str(args[0]) == "moveto" and len(args) > 1:
-                        clamp_applied = abs(float(args[1]) - first) > 1e-9
-                except Exception:
-                    clamp_applied = False
+            clamp_applied = abs(requested_first - first) > 1e-9
             self._debug_header_sync(
                 "apply_shared_xview",
                 request=args,
+                requested=f"{requested_first:.9f}",
+                clamped=f"{first:.9f}",
                 body_px=f"{body_left_px:.3f}",
                 header_px=f"{header_left_px:.3f}",
                 delta_px=f"{delta_px:.3f}",
+                body_sr_w=f"{body_region_w:.3f}",
+                header_sr_w=f"{header_region_w:.3f}",
+                body_vw=f"{body_vw:.3f}",
+                header_vw=f"{header_vw:.3f}",
                 clamp=int(bool(clamp_applied)),
-                right_edge=int(bool(last >= (1.0 - 1e-9))),
+                right_edge=int(bool(right_edge)),
             )
         finally:
             self._shared_x_lock = False

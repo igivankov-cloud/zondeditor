@@ -205,6 +205,24 @@ def test_far_right_clamp_does_not_flip_direction():
     assert editor.canvas.xview()[0] == editor.hcanvas.xview()[0]
 
 
+def test_repeated_wheel_to_far_right_ends_with_zero_drift_on_boundary():
+    editor = _make_editor(header_content_width=601)
+    editor._last_column_right_px = lambda: 10_000
+
+    for _ in range(10):
+        GeoCanvasEditor._scroll_x_by_one_column(editor, 1)
+
+    assert round(editor.hcanvas.canvasx(0) - editor.canvas.canvasx(0), 6) == 0.0
+
+
+def test_right_edge_clamp_uses_final_body_aligned_position():
+    editor = _make_editor(header_content_width=601)
+
+    editor._apply_shared_xview("moveto", 1.0)
+
+    assert round(editor.hcanvas.canvasx(0) - editor.canvas.canvasx(0), 6) == 0.0
+
+
 def test_mid_range_scroll_remains_aligned():
     editor = _make_editor()
     editor._apply_shared_xview("moveto", 0.4)
@@ -213,8 +231,20 @@ def test_mid_range_scroll_remains_aligned():
 
 
 def test_scrollbar_far_right_path_stays_aligned():
-    editor = _make_editor()
+    editor = _make_editor(header_content_width=601)
 
     editor._xview_proxy("moveto", 1.0)
 
-    assert editor.canvas.xview()[0] == editor.hcanvas.xview()[0]
+    assert round(editor.hcanvas.canvasx(0) - editor.canvas.canvasx(0), 6) == 0.0
+
+
+def test_reverse_scroll_no_longer_required_to_clear_boundary_drift():
+    editor = _make_editor()
+    for _ in range(10):
+        GeoCanvasEditor._scroll_x_by_one_column(editor, 1)
+    at_right_delta = round(editor.hcanvas.canvasx(0) - editor.canvas.canvasx(0), 6)
+
+    GeoCanvasEditor._scroll_x_by_one_column(editor, -1)
+
+    assert at_right_delta == 0.0
+    assert round(editor.hcanvas.canvasx(0) - editor.canvas.canvasx(0), 6) == 0.0
