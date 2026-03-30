@@ -9,6 +9,8 @@ def _make_editor(tests, mode="date"):
     editor.display_sort_mode = mode
     editor.display_cols = []
     editor.pad_x = 10
+    editor.pad_y = 8
+    editor.hdr_h = 120
     editor.col_gap = 12
     editor.w_depth = 60
     editor.w_val = 70
@@ -32,9 +34,11 @@ def test_unchecked_experience_stays_in_display_order():
     editor._refresh_display_order()
 
     assert editor.display_cols == [1, 2, 0]
+    assert editor.collapsed_cols == [1]
+    assert editor.expanded_cols == [2, 0]
 
 
-def test_unchecked_experience_is_collapsed_and_next_card_moves_left_without_gap():
+def test_unchecked_experience_moves_to_left_dock_and_expanded_lane_has_no_gap():
     tests = [
         SimpleNamespace(tid="1", dt="01.01.2026 12:00", export_on=True),
         SimpleNamespace(tid="2", dt="02.01.2026 12:00", export_on=False),
@@ -45,15 +49,29 @@ def test_unchecked_experience_is_collapsed_and_next_card_moves_left_without_gap(
     editor._refresh_display_order()
 
     expanded_w = editor._column_block_width()
-    collapsed_w = editor._collapsed_header_width()
+    dock_w = editor._collapsed_dock_width()
 
-    assert editor._display_card_width_by_col(0) == expanded_w
-    assert editor._display_card_width_by_col(1) == collapsed_w
-    assert collapsed_w < expanded_w
+    assert dock_w > 0
+    assert editor.expanded_cols == [0, 2]
+    assert editor._column_x0(0) == editor.pad_x + dock_w
+    assert editor._column_x0(1) == editor.pad_x + dock_w + expanded_w + editor.col_gap
 
-    assert editor._column_x0(0) == editor.pad_x
-    assert editor._column_x0(1) == editor.pad_x + expanded_w + editor.col_gap
-    assert editor._column_x0(2) == editor.pad_x + expanded_w + editor.col_gap + collapsed_w + editor.col_gap
+
+def test_multiple_collapsed_experiences_stack_vertically_in_left_dock():
+    tests = [
+        SimpleNamespace(tid="1", dt="01.01.2026 12:00", export_on=False),
+        SimpleNamespace(tid="2", dt="02.01.2026 12:00", export_on=False),
+        SimpleNamespace(tid="3", dt="03.01.2026 12:00", export_on=True),
+    ]
+    editor = _make_editor(tests)
+
+    editor._refresh_display_order()
+
+    top0 = editor._collapsed_header_bbox(0)
+    top1 = editor._collapsed_header_bbox(1)
+    assert top0[0] == top1[0] == editor.pad_x
+    assert top1[1] > top0[1]
+    assert editor.expanded_cols == [2]
 
 
 def test_recheck_restores_expanded_width_and_graph_area():
@@ -67,14 +85,16 @@ def test_recheck_restores_expanded_width_and_graph_area():
     collapsed_graph_rect = editor._graph_rect_for_test(0)
 
     assert collapsed_graph_rect is None
-    assert editor._display_card_width_by_col(0) == editor._collapsed_header_width()
+    assert editor.collapsed_cols == [0]
+    assert editor.expanded_cols == [1]
 
     tests[0].export_on = True
     editor._refresh_display_order()
 
     expanded_graph_rect = editor._graph_rect_for_test(0)
     assert expanded_graph_rect is not None
-    assert editor._display_card_width_by_col(0) == editor._column_block_width()
+    assert editor.collapsed_cols == []
+    assert editor.expanded_cols == [0, 1]
 
 
 def test_collapsed_mode_keeps_data_in_model_and_stable_order():
