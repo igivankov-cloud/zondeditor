@@ -4891,7 +4891,10 @@ class GeoCanvasEditor(tk.Tk):
         return sorted(range(len(self.tests)), key=_key)
 
     def _refresh_display_order(self):
-        self.display_cols = self._sorted_display_indices()
+        ordered = self._sorted_display_indices()
+        # UX: выключенный чекбокс опыта = карточка исключается из видимой ленты,
+        # но опыт остаётся в модели данных (self.tests).
+        self.display_cols = [i for i in ordered if bool(getattr(self.tests[i], "export_on", True))]
 
 
     def schedule_graph_redraw(self):
@@ -7540,7 +7543,9 @@ class GeoCanvasEditor(tk.Tk):
 
                 meter_has_data = bool((meter_qc_max is not None) or (meter_fs_max is not None)) if is_meter_row else False
 
-                if is_meter_row:
+                if not ex_on:
+                    depth_fill = "white"
+                elif is_meter_row:
                     # В свернутом режиме: существующий интервал окрашен единообразно,
                     # отсутствующий интервал (пустая зона) — белый.
                     depth_fill = "#f3f6fb" if meter_has_data else "white"
@@ -7553,6 +7558,8 @@ class GeoCanvasEditor(tk.Tk):
                     depth_fill = "white"
 
                 def fill_for(kind: str):
+                    if not ex_on:
+                        return "white"
                     # Обычная логика по существующим/пустым строкам
                     if is_meter_row:
                         # Для существующего meter-интервала все ячейки строки одного цвета.
@@ -7618,8 +7625,6 @@ class GeoCanvasEditor(tk.Tk):
                         tx, anchor, color = bx1 - 4, "e", "#000"
                         if is_meter_row and field in ("qc", "fs"):
                             color = "#666"
-                    if not ex_on:
-                        color = "#8a8a8a" if field != "depth" else "#9a9a9a"
                     self.canvas.create_text(tx, (by0 + by1) / 2, text=txt, anchor=anchor, fill=color, font=("Segoe UI", 9))
 
             if bool(getattr(t, "locked", False)):
