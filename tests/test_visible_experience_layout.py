@@ -96,6 +96,22 @@ def test_recheck_restores_expanded_width_and_graph_area():
     assert expanded_graph_rect is not None
     assert editor.collapsed_cols == []
     assert editor.expanded_cols == [0, 1]
+    assert editor._collapsed_dock_width() == 0
+    assert editor._column_x0(0) == editor.pad_x
+
+
+def test_expanded_header_width_does_not_depend_on_graph_toggle():
+    tests = [SimpleNamespace(tid="1", dt="01.01.2026 12:00", export_on=True)]
+    editor = _make_editor(tests)
+    editor._refresh_display_order()
+
+    editor.show_graphs = True
+    x0_on, _y0_on, x1_on, _y1_on = editor._header_bbox(0)
+    editor.show_graphs = False
+    x0_off, _y0_off, x1_off, _y1_off = editor._header_bbox(0)
+
+    assert x0_on == x0_off
+    assert (x1_on - x0_on) == (x1_off - x0_off) == editor._table_col_width()
 
 
 def test_collapsed_mode_keeps_data_in_model_and_stable_order():

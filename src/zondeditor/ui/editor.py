@@ -4632,7 +4632,7 @@ class GeoCanvasEditor(tk.Tk):
     def _last_column_right_px(self) -> float:
         """Правая граница последнего блока в пикселях (с учетом графиков)."""
         try:
-            n_cols = len(getattr(self, "display_cols", []) or [])
+            n_cols = len(getattr(self, "expanded_cols", []) or [])
         except Exception:
             n_cols = 0
         if n_cols <= 0:
@@ -4885,13 +4885,29 @@ class GeoCanvasEditor(tk.Tk):
             pass
         dock_w = int(self._collapsed_dock_width())
         try:
-            if "collapsed_header_spacer" in vars(self):
-                self.collapsed_header_spacer.configure(width=dock_w)
+            spacer = vars(self).get("collapsed_header_spacer")
+            if spacer is not None:
+                if dock_w > 0:
+                    spacer.configure(width=dock_w)
+                    if not bool(spacer.winfo_ismapped()):
+                        spacer.pack(side="left", fill="y", before=self.hcanvas)
+                else:
+                    spacer.configure(width=0)
+                    if bool(spacer.winfo_ismapped()):
+                        spacer.pack_forget()
         except Exception:
             pass
         try:
-            if "collapsed_dock" in vars(self):
-                self.collapsed_dock.configure(width=dock_w)
+            dock = vars(self).get("collapsed_dock")
+            if dock is not None:
+                if dock_w > 0:
+                    dock.configure(width=dock_w)
+                    if not bool(dock.winfo_ismapped()):
+                        dock.pack(side="left", fill="y", before=self.canvas)
+                else:
+                    dock.configure(width=0)
+                    if bool(dock.winfo_ismapped()):
+                        dock.pack_forget()
         except Exception:
             pass
 
@@ -7403,7 +7419,9 @@ class GeoCanvasEditor(tk.Tk):
                 pass
 
     def _header_bbox(self, col: int):
-        col_w = self._column_block_width()
+        # Шапка опыта относится к табличной части и не должна зависеть
+        # от видимости графика/геоколонки справа.
+        col_w = self._table_col_width()
         x0_world = self._column_x0(col)
         x0 = x0_world
         y0 = self.pad_y
