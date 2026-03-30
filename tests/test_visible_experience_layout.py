@@ -126,3 +126,17 @@ def test_collapsed_mode_keeps_data_in_model_and_stable_order():
     assert len(editor.tests) == 2
     assert [t.tid for t in editor.tests] == ["10", "11"]
     assert editor.display_cols == [0, 1]
+
+
+def test_header_actions_disabled_for_collapsed_or_locked():
+    tests = [
+        SimpleNamespace(tid="1", dt="01.01.2026 12:00", export_on=False, locked=False),
+        SimpleNamespace(tid="2", dt="02.01.2026 12:00", export_on=True, locked=True),
+        SimpleNamespace(tid="3", dt="03.01.2026 12:00", export_on=True, locked=False),
+    ]
+    editor = _make_editor(tests)
+    editor._refresh_display_order()
+
+    assert editor._header_action_buttons_enabled(0) is False
+    assert editor._header_action_buttons_enabled(1) is False
+    assert editor._header_action_buttons_enabled(2) is True

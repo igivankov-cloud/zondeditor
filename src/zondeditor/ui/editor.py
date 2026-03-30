@@ -2181,7 +2181,7 @@ class GeoCanvasEditor(tk.Tk):
         # Верхняя фиксированная шапка
         self.header_row = ttk.Frame(mid)
         self.header_row.pack(side="top", fill="x")
-        self.collapsed_header_spacer = ttk.Frame(self.header_row, width=0)
+        self.collapsed_header_spacer = tk.Frame(self.header_row, width=0, bg="white", highlightthickness=0, bd=0)
         self.collapsed_header_spacer.pack(side="left", fill="y")
         self.hcanvas = tk.Canvas(self.header_row, background="white", highlightthickness=0, height=120)
         self.hcanvas.pack(side="left", fill="x", expand=True)
@@ -4613,6 +4613,10 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             return None
 
+    def _header_action_buttons_enabled(self, ti: int) -> bool:
+        # Для collapsed/locked опыта отключаем кнопки даты/копии/удаления.
+        return (not self._is_test_collapsed(int(ti))) and (not self._is_test_locked(int(ti)))
+
     def _collapsed_header_bbox(self, row: int):
         x0 = 4
         x1 = int(x0 + self._collapsed_header_width())
@@ -6069,12 +6073,21 @@ class GeoCanvasEditor(tk.Tk):
 
         # --- Header controls (icons / checkbox) ---
         if kind == "edit":
+            if not self._header_action_buttons_enabled(int(ti)):
+                self._set_status("Кнопка недоступна для свёрнутого/заблокированного опыта")
+                return
             self._edit_header(ti)
             return
         if kind == "dup":
+            if not self._header_action_buttons_enabled(int(ti)):
+                self._set_status("Кнопка недоступна для свёрнутого/заблокированного опыта")
+                return
             self._duplicate_test(ti)
             return
         if kind == "trash":
+            if not self._header_action_buttons_enabled(int(ti)):
+                self._set_status("Кнопка недоступна для свёрнутого/заблокированного опыта")
+                return
             self._delete_test(ti)
             return
         if kind == "export":
@@ -7444,6 +7457,14 @@ class GeoCanvasEditor(tk.Tk):
         try:
             if hasattr(self, "collapsed_dock"):
                 self.collapsed_dock.delete("all")
+                self.collapsed_dock.create_rectangle(
+                    0,
+                    0,
+                    max(1, int(self._collapsed_dock_width())),
+                    max(1, int(self.canvas.winfo_height() or 1)),
+                    fill="white",
+                    outline="",
+                )
         except Exception:
             pass
 
@@ -7478,10 +7499,10 @@ class GeoCanvasEditor(tk.Tk):
             hdr_fill = self._header_fill_for_test(
                 invalid=bool(td.invalid) if td is not None else bool(getattr(fl, "invalid", False)),
                 has_missing=bool(has_missing_values),
-                export_on=bool(ex_on),
+                export_on=True,
             )
-            hdr_text = "#8a8a8a"
-            hdr_icon = "#8a8a8a"
+            hdr_text = "#111111"
+            hdr_icon = "#444444"
             dock = getattr(self, "collapsed_dock", None)
             if dock is None:
                 continue
@@ -7506,10 +7527,8 @@ class GeoCanvasEditor(tk.Tk):
             max_title_x = lock_x - 8
             dock.create_text(title_x, y0 + 12, anchor="w", text=f"Опыт {t.tid}", font=("Segoe UI", 9, "bold"), fill=hdr_text, width=max(24, max_title_x - title_x))
             dock.create_text(lock_x, ico_y, text=("🔒" if lock_on else "🔓"), font=("Segoe UI", 10), fill=hdr_icon, anchor="center")
-            dock.create_text(edit_x, ico_y, text=ICON_CALENDAR, font=ico_font, fill=hdr_icon, anchor="center")
+            dock.create_text(edit_x, ico_y, text=ICON_CALENDAR, font=ico_font, fill="#b6b6b6", anchor="center")
             dock.create_text(title_x, y0 + 30, anchor="w", text=dt_line, font=("Segoe UI", 8), fill=hdr_text)
-            if bool(getattr(t, "locked", False)):
-                dock.create_rectangle(x0, y0, x1, y1, fill="#d0d0d0", outline="", stipple="gray50")
             dock_bottom = max(dock_bottom, y1)
 
         try:
@@ -7581,6 +7600,7 @@ class GeoCanvasEditor(tk.Tk):
             ico_font = _pick_icon_font(12)
 
             lock_on = bool(getattr(t, "locked", False))
+            actions_enabled = bool(self._header_action_buttons_enabled(int(ti)))
             lock_x, edit_x, dup_x, trash_x = (x1 - 92), (x1 - 66), (x1 - 40), (x1 - 14)
             box_w, box_h = 22, 20
 
@@ -7599,9 +7619,9 @@ class GeoCanvasEditor(tk.Tk):
                                               fill="#e9e9e9", outline="")
 
             self.hcanvas.create_text(lock_x, ico_y, text=("🔒" if lock_on else "🔓"), font=("Segoe UI", 10), fill=hdr_icon, anchor="center")
-            self.hcanvas.create_text(edit_x, ico_y, text=ICON_CALENDAR, font=ico_font, fill=hdr_icon, anchor="center")
-            self.hcanvas.create_text(dup_x, ico_y, text=ICON_COPY, font=ico_font, fill=hdr_icon, anchor="center")
-            self.hcanvas.create_text(trash_x, ico_y, text=ICON_DELETE, font=ico_font, fill=hdr_icon, anchor="center")
+            self.hcanvas.create_text(edit_x, ico_y, text=ICON_CALENDAR, font=ico_font, fill=(hdr_icon if actions_enabled else "#b6b6b6"), anchor="center")
+            self.hcanvas.create_text(dup_x, ico_y, text=ICON_COPY, font=ico_font, fill=(hdr_icon if actions_enabled else "#b6b6b6"), anchor="center")
+            self.hcanvas.create_text(trash_x, ico_y, text=ICON_DELETE, font=ico_font, fill=(hdr_icon if actions_enabled else "#b6b6b6"), anchor="center")
 
             # колонка заголовков (H/qc/fs) — в шапке и фиксирована
             sh_y = y0 + self.hdr_h - top_pad
@@ -7816,8 +7836,6 @@ class GeoCanvasEditor(tk.Tk):
                         return ("export", ti, None, None)
                     if (x1 - 44) <= cx <= (x1 - 24) and (y0 + 2) <= cy <= (y0 + 22):
                         return ("lock", ti, None, None)
-                    if (x1 - 24) <= cx <= (x1 - 4) and (y0 + 2) <= cy <= (y0 + 22):
-                        return ("edit", ti, None, None)
                     return ("header", ti, None, None)
             return None
 
@@ -7836,11 +7854,12 @@ class GeoCanvasEditor(tk.Tk):
                     # icons
                     if (x1 - 104) <= cx <= (x1 - 80) and y0 <= cy <= (y0 + 24):
                         return ("lock", ti, None, None)
-                    if (x1 - 78) <= cx <= (x1 - 54) and y0 <= cy <= (y0 + 24):
+                    actions_enabled = bool(self._header_action_buttons_enabled(int(ti)))
+                    if actions_enabled and (x1 - 78) <= cx <= (x1 - 54) and y0 <= cy <= (y0 + 24):
                         return ("edit", ti, None, None)
-                    if (x1 - 52) <= cx <= (x1 - 28) and y0 <= cy <= (y0 + 24):
+                    if actions_enabled and (x1 - 52) <= cx <= (x1 - 28) and y0 <= cy <= (y0 + 24):
                         return ("dup", ti, None, None)
-                    if (x1 - 26) <= cx <= (x1 - 2) and y0 <= cy <= (y0 + 24):
+                    if actions_enabled and (x1 - 26) <= cx <= (x1 - 2) and y0 <= cy <= (y0 + 24):
                         return ("trash", ti, None, None)
                     return ("header", ti, None, None)
             return None
