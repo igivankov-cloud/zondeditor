@@ -1733,6 +1733,8 @@ class GeoCanvasEditor(tk.Tk):
     def _active_layers_test_index(self) -> int | None:
         if getattr(self, "_active_test_idx", None) is not None:
             return int(self._active_test_idx)
+        if getattr(self, "expanded_cols", None):
+            return int(self.expanded_cols[0])
         if getattr(self, "display_cols", None):
             return int(self.display_cols[0])
         if getattr(self, "tests", None):
@@ -2179,6 +2181,8 @@ class GeoCanvasEditor(tk.Tk):
         # Верхняя фиксированная шапка
         self.header_row = ttk.Frame(mid)
         self.header_row.pack(side="top", fill="x")
+        self.collapsed_header_spacer = tk.Frame(self.header_row, width=0, bg="white", highlightthickness=0, bd=0)
+        self.collapsed_header_spacer.pack(side="left", fill="y")
         self.hcanvas = tk.Canvas(self.header_row, background="white", highlightthickness=0, height=120)
         self.hcanvas.pack(side="left", fill="x", expand=True)
         self.hcanvas_vbar_spacer = ttk.Frame(self.header_row, width=0)
@@ -2190,6 +2194,9 @@ class GeoCanvasEditor(tk.Tk):
 
         self.vbar = ttk.Scrollbar(body, orient="vertical")
         self.vbar.pack(side="right", fill="y")
+
+        self.collapsed_dock = tk.Canvas(body, background="white", highlightthickness=0, width=0)
+        self.collapsed_dock.pack(side="left", fill="y")
 
         self.canvas = tk.Canvas(
             body, background="white", highlightthickness=0,
@@ -2259,6 +2266,12 @@ class GeoCanvasEditor(tk.Tk):
             self.bind(_k, self._on_arrow_key)
         self.canvas.bind("<Motion>", self._on_motion)
         self.canvas.bind("<Leave>", lambda _e: self._set_hover(None))
+        self.collapsed_dock.bind("<Button-1>", self._on_left_click)
+        self.collapsed_dock.bind("<Motion>", self._on_motion)
+        self.collapsed_dock.bind("<Leave>", lambda _e: self._set_hover(None))
+        self.collapsed_dock.bind("<MouseWheel>", self._on_collapsed_dock_wheel)
+        self.collapsed_dock.bind("<Button-4>", lambda _e: self._on_collapsed_dock_wheel_linux(-1))
+        self.collapsed_dock.bind("<Button-5>", lambda _e: self._on_collapsed_dock_wheel_linux(1))
 
         # события шапки (клики по иконкам/галочке)
         self.hcanvas.bind("<Button-1>", self._on_left_click)
@@ -4556,38 +4569,94 @@ class GeoCanvasEditor(tk.Tk):
         graph_w = int(getattr(self, "graph_w", 150) or 150) if self._is_graph_panel_visible() else 0
         return self._table_col_width() + graph_w
 
+    def _collapsed_header_width(self) -> int:
+        # Компактная ширина для header-only карточки (чекбокс + title/datetime + иконки).
+        return max(170, min(220, int(self._table_col_width())))
+
+    def _collapsed_header_row_height(self) -> int:
+        return 44
+
+    def _is_test_collapsed(self, ti: int) -> bool:
+        if ti is None or ti < 0 or ti >= len(getattr(self, "tests", []) or []):
+            return False
+        return not bool(getattr(self.tests[int(ti)], "export_on", True))
+
+    def _split_display_columns(self):
+        ordered = list((vars(self).get("display_cols", []) or []))
+        collapsed = [ti for ti in ordered if self._is_test_collapsed(int(ti))]
+        expanded = [ti for ti in ordered if not self._is_test_collapsed(int(ti))]
+        self.collapsed_cols = collapsed
+        self.expanded_cols = expanded
+
+    def _collapsed_dock_width(self) -> int:
+        if not (vars(self).get("collapsed_cols", []) or []):
+            return 0
+        return int(self._collapsed_header_width() + 10)
+
+    def _rebuild_column_layout(self):
+        cols = list(getattr(self, "expanded_cols", []) or [])
+        x_positions: list[int] = []
+        widths: list[int] = []
+        x = int(self.pad_x)
+        for col, _ti in enumerate(cols):
+            w = int(self._column_block_width())
+            x_positions.append(int(x))
+            widths.append(int(w))
+            x += int(w) + int(self.col_gap)
+        self._expanded_col_x0 = x_positions
+        self._expanded_col_widths = widths
+
+    def _expanded_col_index(self, ti: int) -> int | None:
+        cols = getattr(self, "expanded_cols", []) or []
+        try:
+            return int(cols.index(int(ti)))
+        except Exception:
+            return None
+
+    def _header_action_buttons_enabled(self, ti: int) -> bool:
+        # Для collapsed/locked опыта отключаем кнопки даты/копии/удаления.
+        return (not self._is_test_collapsed(int(ti))) and (not self._is_test_locked(int(ti)))
+
+    def _collapsed_header_bbox(self, row: int):
+        x0 = 4
+        x1 = int(x0 + self._collapsed_header_width())
+        y0 = int(4 + row * self._collapsed_header_row_height())
+        y1 = int(y0 + self._collapsed_header_row_height() - 4)
+        return x0, y0, x1, y1
+
     def _column_x0(self, col: int) -> int:
+        try:
+            x_positions = getattr(self, "_expanded_col_x0", []) or []
+            if 0 <= int(col) < len(x_positions):
+                return int(x_positions[int(col)])
+        except Exception:
+            pass
         return self.pad_x + col * (self._column_block_width() + self.col_gap)
 
     def _last_column_right_px(self) -> float:
         """Правая граница последнего блока в пикселях (с учетом графиков)."""
         try:
-            n_cols = len(getattr(self, "display_cols", []) or [])
+            n_cols = len(getattr(self, "expanded_cols", []) or [])
         except Exception:
             n_cols = 0
         if n_cols <= 0:
-            try:
-                n_cols = len(getattr(self, "tests", []) or [])
-            except Exception:
-                n_cols = 0
+            return float((getattr(self, "pad_x", 0) or 0))
         try:
-            col_w = float(self._column_block_width())
+            widths = list(getattr(self, "_expanded_col_widths", []) or [])
+            x_positions = list(getattr(self, "_expanded_col_x0", []) or [])
+            if len(widths) == n_cols and len(x_positions) == n_cols:
+                return float(x_positions[-1] + widths[-1])
         except Exception:
-            col_w = 0.0
-        try:
-            gap = float(self.col_gap)
-        except Exception:
-            gap = 0.0
-        try:
-            pad = float(self.pad_x)
-        except Exception:
-            pad = 0.0
-        last_left_px = pad + (col_w + gap) * max(0, n_cols - 1)
-        return last_left_px + col_w
+            pass
+        # fallback: равные ширины (legacy)
+        col_w = float(self._column_block_width())
+        gap = float(self.col_gap)
+        pad = float(self.pad_x)
+        return float(pad + (col_w + gap) * max(0, n_cols - 1) + col_w)
 
     def _graph_rect_for_test(self, ti: int, r: int | None = None):
         try:
-            col = int(self.display_cols.index(ti))
+            col = int((getattr(self, "expanded_cols", []) or []).index(ti))
         except Exception:
             return None
         if not self._is_graph_panel_visible():
@@ -4612,13 +4681,18 @@ class GeoCanvasEditor(tk.Tk):
             max_rows = max((len(t.qc) for t in self.tests), default=0)
 
         try:
-            n_cols = len(getattr(self, "display_cols", []) or [])
+            n_cols = len(getattr(self, "expanded_cols", []) or [])
         except Exception:
             n_cols = len(getattr(self, "tests", []) or [])
         n_cols = max(0, int(n_cols))
-        block_w = self._column_block_width()
-        self._last_col_w = block_w
-        total_w = self.pad_x * 2 + (block_w * n_cols) + (self.col_gap * max(0, n_cols - 1))
+        try:
+            widths = list(getattr(self, "_expanded_col_widths", []) or [])
+            if len(widths) != n_cols:
+                widths = [int(self._column_block_width())] * n_cols
+        except Exception:
+            widths = [int(self._column_block_width())] * n_cols
+        self._last_col_w = int(widths[-1]) if widths else int(self._column_block_width())
+        total_w = self.pad_x * 2 + sum(widths) + (self.col_gap * max(0, n_cols - 1))
         body_h = self._total_body_height() if max_rows > 0 else 0
         header_h = int(self.pad_y + self.hdr_h)  # фиксированная область
         return total_w, body_h, header_h
@@ -4813,6 +4887,33 @@ class GeoCanvasEditor(tk.Tk):
             self.hcanvas.configure(width=self.canvas.winfo_width())
         except Exception:
             pass
+        dock_w = int(self._collapsed_dock_width())
+        try:
+            spacer = vars(self).get("collapsed_header_spacer")
+            if spacer is not None:
+                if dock_w > 0:
+                    spacer.configure(width=dock_w)
+                    if not bool(spacer.winfo_ismapped()):
+                        spacer.pack(side="left", fill="y", before=self.hcanvas)
+                else:
+                    spacer.configure(width=0)
+                    if bool(spacer.winfo_ismapped()):
+                        spacer.pack_forget()
+        except Exception:
+            pass
+        try:
+            dock = vars(self).get("collapsed_dock")
+            if dock is not None:
+                if dock_w > 0:
+                    dock.configure(width=dock_w)
+                    if not bool(dock.winfo_ismapped()):
+                        dock.pack(side="left", fill="y", before=self.canvas)
+                else:
+                    dock.configure(width=0)
+                    if bool(dock.winfo_ismapped()):
+                        dock.pack_forget()
+        except Exception:
+            pass
 
 
         # восстановить X-сдвиг в пикселях
@@ -4892,6 +4993,8 @@ class GeoCanvasEditor(tk.Tk):
 
     def _refresh_display_order(self):
         self.display_cols = self._sorted_display_indices()
+        self._split_display_columns()
+        self._rebuild_column_layout()
 
 
     def schedule_graph_redraw(self):
@@ -5654,7 +5757,7 @@ class GeoCanvasEditor(tk.Tk):
         self._layer_label_hitbox = []
 
         self._refresh_display_order()
-        for ti in self.display_cols:
+        for ti in (getattr(self, "expanded_cols", []) or []):
             rect = self._graph_rect_for_test(ti)
             if not rect:
                 continue
@@ -5970,12 +6073,21 @@ class GeoCanvasEditor(tk.Tk):
 
         # --- Header controls (icons / checkbox) ---
         if kind == "edit":
+            if not self._header_action_buttons_enabled(int(ti)):
+                self._set_status("Кнопка недоступна для свёрнутого/заблокированного опыта")
+                return
             self._edit_header(ti)
             return
         if kind == "dup":
+            if not self._header_action_buttons_enabled(int(ti)):
+                self._set_status("Кнопка недоступна для свёрнутого/заблокированного опыта")
+                return
             self._duplicate_test(ti)
             return
         if kind == "trash":
+            if not self._header_action_buttons_enabled(int(ti)):
+                self._set_status("Кнопка недоступна для свёрнутого/заблокированного опыта")
+                return
             self._delete_test(ti)
             return
         if kind == "export":
@@ -7320,6 +7432,8 @@ class GeoCanvasEditor(tk.Tk):
                 pass
 
     def _header_bbox(self, col: int):
+        # Шапка опыта относится к табличной части и не должна зависеть
+        # от видимости графика/геоколонки справа.
         col_w = self._table_col_width()
         x0_world = self._column_x0(col)
         x0 = x0_world
@@ -7338,6 +7452,19 @@ class GeoCanvasEditor(tk.Tk):
             pass
         try:
             self.hcanvas.delete("all")
+        except Exception:
+            pass
+        try:
+            if hasattr(self, "collapsed_dock"):
+                self.collapsed_dock.delete("all")
+                self.collapsed_dock.create_rectangle(
+                    0,
+                    0,
+                    max(1, int(self._collapsed_dock_width())),
+                    max(1, int(self.canvas.winfo_height() or 1)),
+                    fill="white",
+                    outline="",
+                )
         except Exception:
             pass
 
@@ -7359,7 +7486,61 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
         diagnostics = self._diagnostics_report()
-        for col, ti in enumerate(self.display_cols):
+
+        # --- Левая вертикальная dock-зона для свернутых опытов ---
+        dock_bottom = 0
+        for dock_row, ti in enumerate(getattr(self, "collapsed_cols", []) or []):
+            t = self.tests[ti]
+            x0, y0, x1, y1 = self._collapsed_header_bbox(dock_row)
+            ex_on = bool(getattr(t, "export_on", True))
+            fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
+            td = diagnostics.by_test.get(int(getattr(t, "tid", 0) or 0))
+            has_missing_values = bool(td and td.missing_rows)
+            hdr_fill = self._header_fill_for_test(
+                invalid=bool(td.invalid) if td is not None else bool(getattr(fl, "invalid", False)),
+                has_missing=bool(has_missing_values),
+                export_on=True,
+            )
+            hdr_text = "#111111"
+            hdr_icon = "#444444"
+            dock = getattr(self, "collapsed_dock", None)
+            if dock is None:
+                continue
+            dock.create_rectangle(x0, y0, x1, y1, fill=hdr_fill, outline=GUI_GRID)
+            dt_val = getattr(t, "dt", "") or ""
+            if isinstance(dt_val, datetime.datetime):
+                dt_line = dt_val.strftime("%d.%m.%y %H:%M")
+            elif isinstance(dt_val, datetime.date):
+                dt_line = dt_val.strftime("%d.%m.%y")
+            else:
+                dt_line = str(dt_val).strip()
+                dt_line = re.sub(r"(\d{2}:\d{2}):\d{2}\b", r"\1", dt_line)
+            cb_s = 12
+            cb_x0 = x0 + 6
+            cb_y0 = y0 + 6
+            dock.create_rectangle(cb_x0, cb_y0, cb_x0 + cb_s, cb_y0 + cb_s, fill="white", outline="#b9b9b9")
+            title_x = cb_x0 + cb_s + 6
+            ico_font = _pick_icon_font(10)
+            lock_on = bool(getattr(t, "locked", False))
+            lock_x, edit_x = (x1 - 34), (x1 - 14)
+            ico_y = y0 + 12
+            max_title_x = lock_x - 8
+            dock.create_text(title_x, y0 + 12, anchor="w", text=f"Опыт {t.tid}", font=("Segoe UI", 9, "bold"), fill=hdr_text, width=max(24, max_title_x - title_x))
+            dock.create_text(lock_x, ico_y, text=("🔒" if lock_on else "🔓"), font=("Segoe UI", 10), fill=hdr_icon, anchor="center")
+            dock.create_text(edit_x, ico_y, text=ICON_CALENDAR, font=ico_font, fill="#b6b6b6", anchor="center")
+            dock.create_text(title_x, y0 + 30, anchor="w", text=dt_line, font=("Segoe UI", 8), fill=hdr_text)
+            dock_bottom = max(dock_bottom, y1)
+
+        try:
+            dock = getattr(self, "collapsed_dock", None)
+            if dock is not None:
+                body_h = int(max(self.canvas.winfo_height() or 0, self._total_body_height() or 0, dock_bottom + 12))
+                dock.configure(scrollregion=(0, 0, max(1, int(self._collapsed_dock_width())), max(1, body_h)))
+        except Exception:
+            pass
+
+        # --- Основная горизонтальная лента только для expanded опытов ---
+        for col, ti in enumerate(getattr(self, "expanded_cols", []) or []):
             t = self.tests[ti]
             x0, y0, x1, y1 = self._header_bbox(col)
 
@@ -7419,6 +7600,7 @@ class GeoCanvasEditor(tk.Tk):
             ico_font = _pick_icon_font(12)
 
             lock_on = bool(getattr(t, "locked", False))
+            actions_enabled = bool(self._header_action_buttons_enabled(int(ti)))
             lock_x, edit_x, dup_x, trash_x = (x1 - 92), (x1 - 66), (x1 - 40), (x1 - 14)
             box_w, box_h = 22, 20
 
@@ -7437,9 +7619,9 @@ class GeoCanvasEditor(tk.Tk):
                                               fill="#e9e9e9", outline="")
 
             self.hcanvas.create_text(lock_x, ico_y, text=("🔒" if lock_on else "🔓"), font=("Segoe UI", 10), fill=hdr_icon, anchor="center")
-            self.hcanvas.create_text(edit_x, ico_y, text=ICON_CALENDAR, font=ico_font, fill=hdr_icon, anchor="center")
-            self.hcanvas.create_text(dup_x, ico_y, text=ICON_COPY, font=ico_font, fill=hdr_icon, anchor="center")
-            self.hcanvas.create_text(trash_x, ico_y, text=ICON_DELETE, font=ico_font, fill=hdr_icon, anchor="center")
+            self.hcanvas.create_text(edit_x, ico_y, text=ICON_CALENDAR, font=ico_font, fill=(hdr_icon if actions_enabled else "#b6b6b6"), anchor="center")
+            self.hcanvas.create_text(dup_x, ico_y, text=ICON_COPY, font=ico_font, fill=(hdr_icon if actions_enabled else "#b6b6b6"), anchor="center")
+            self.hcanvas.create_text(trash_x, ico_y, text=ICON_DELETE, font=ico_font, fill=(hdr_icon if actions_enabled else "#b6b6b6"), anchor="center")
 
             # колонка заголовков (H/qc/fs) — в шапке и фиксирована
             sh_y = y0 + self.hdr_h - top_pad
@@ -7618,8 +7800,6 @@ class GeoCanvasEditor(tk.Tk):
                         tx, anchor, color = bx1 - 4, "e", "#000"
                         if is_meter_row and field in ("qc", "fs"):
                             color = "#666"
-                    if not ex_on:
-                        color = "#8a8a8a" if field != "depth" else "#9a9a9a"
                     self.canvas.create_text(tx, (by0 + by1) / 2, text=txt, anchor=anchor, fill=color, font=("Segoe UI", 9))
 
             if bool(getattr(t, "locked", False)):
@@ -7644,15 +7824,28 @@ class GeoCanvasEditor(tk.Tk):
         if not self.tests:
             return None
 
-        col_w = self._table_col_width()
+        if w is getattr(self, "collapsed_dock", None):
+            cx = self.collapsed_dock.canvasx(x)
+            cy = self.collapsed_dock.canvasy(y)
+
+            self._refresh_display_order()
+            for row_idx, ti in enumerate(getattr(self, "collapsed_cols", []) or []):
+                x0, y0, x1, y1 = self._collapsed_header_bbox(row_idx)
+                if x0 <= cx <= x1 and y0 <= cy <= y1:
+                    if (x0 + 6) <= cx <= (x0 + 18) and (y0 + 6) <= cy <= (y0 + 18):
+                        return ("export", ti, None, None)
+                    if (x1 - 44) <= cx <= (x1 - 24) and (y0 + 2) <= cy <= (y0 + 22):
+                        return ("lock", ti, None, None)
+                    return ("header", ti, None, None)
+            return None
 
         if w is getattr(self, "hcanvas", None):
             cx = self.hcanvas.canvasx(x)
             cy = self.hcanvas.canvasy(y)
-            y0 = self.pad_y  # верхний отступ внутри шапки
 
             self._refresh_display_order()
-            for col, ti in enumerate(self.display_cols):
+            y0 = self.pad_y
+            for col, ti in enumerate(getattr(self, "expanded_cols", []) or []):
                 x0, _hy0, x1, _hy1 = self._header_bbox(col)
                 if x0 <= cx <= x1 and (y0 <= cy <= y0 + self.hdr_h):
                     # export checkbox (left)
@@ -7661,11 +7854,12 @@ class GeoCanvasEditor(tk.Tk):
                     # icons
                     if (x1 - 104) <= cx <= (x1 - 80) and y0 <= cy <= (y0 + 24):
                         return ("lock", ti, None, None)
-                    if (x1 - 78) <= cx <= (x1 - 54) and y0 <= cy <= (y0 + 24):
+                    actions_enabled = bool(self._header_action_buttons_enabled(int(ti)))
+                    if actions_enabled and (x1 - 78) <= cx <= (x1 - 54) and y0 <= cy <= (y0 + 24):
                         return ("edit", ti, None, None)
-                    if (x1 - 52) <= cx <= (x1 - 28) and y0 <= cy <= (y0 + 24):
+                    if actions_enabled and (x1 - 52) <= cx <= (x1 - 28) and y0 <= cy <= (y0 + 24):
                         return ("dup", ti, None, None)
-                    if (x1 - 26) <= cx <= (x1 - 2) and y0 <= cy <= (y0 + 24):
+                    if actions_enabled and (x1 - 26) <= cx <= (x1 - 2) and y0 <= cy <= (y0 + 24):
                         return ("trash", ti, None, None)
                     return ("header", ti, None, None)
             return None
@@ -7721,9 +7915,9 @@ class GeoCanvasEditor(tk.Tk):
             return None
 
         self._refresh_display_order()
-        for col, ti in enumerate(self.display_cols):
+        for col, ti in enumerate(getattr(self, "expanded_cols", []) or []):
             x0 = self._column_x0(col)
-            x1 = x0 + col_w
+            x1 = x0 + self._column_block_width()
             if x0 <= cx <= x1:
                 # which field
                 # depth/qc/fs split
@@ -8342,7 +8536,9 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
         self._refresh_display_order()
-        col = self.display_cols.index(ti)
+        col = self._expanded_col_index(int(ti))
+        if col is None:
+            return
 
         # Автопрокрутка (стрелки/Enter): держим ячейку в видимой зоне
         self._ensure_cell_visible(col, display_row, field)
@@ -8428,7 +8624,9 @@ class GeoCanvasEditor(tk.Tk):
             return
 
         self._refresh_display_order()
-        col = self.display_cols.index(ti)
+        col = self._expanded_col_index(int(ti))
+        if col is None:
+            return
 
         # Автопрокрутка (стрелки/Enter)
         self._ensure_cell_visible(col, display_row, "depth")
@@ -8837,7 +9035,7 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             content_w = 0.0
         try:
-            first_world_x = float(self._column_x0(0)) if getattr(self, "display_cols", []) else float(self.pad_x)
+            first_world_x = float(self._column_x0(0)) if getattr(self, "expanded_cols", []) else float(self.pad_x)
         except Exception:
             first_world_x = 0.0
         try:
@@ -8954,6 +9152,38 @@ class GeoCanvasEditor(tk.Tk):
         if not direction:
             return "break"
         self._scroll_x_by_one_column(direction)
+        return "break"
+
+    def _on_collapsed_dock_wheel(self, event):
+        dock = getattr(self, "collapsed_dock", None)
+        if dock is None:
+            return "break"
+        try:
+            delta = int(-1 * (event.delta / 120)) if getattr(event, "delta", 0) else 0
+        except Exception:
+            delta = 0
+        if not delta:
+            return "break"
+        try:
+            dock.yview_scroll(delta, "units")
+        except Exception:
+            pass
+        return "break"
+
+    def _on_collapsed_dock_wheel_linux(self, direction: int):
+        dock = getattr(self, "collapsed_dock", None)
+        if dock is None:
+            return "break"
+        try:
+            direction = int(direction)
+        except Exception:
+            direction = 0
+        if not direction:
+            return "break"
+        try:
+            dock.yview_scroll(direction, "units")
+        except Exception:
+            pass
         return "break"
 
     def _scroll_x_by_one_column(self, direction: int):
@@ -9578,13 +9808,24 @@ class GeoCanvasEditor(tk.Tk):
         """Позиционирует календарь у шапки выбранной зондирования (колонки) на Canvas."""
         try:
             dlg.update_idletasks()
-            x0, y0, x1, y1 = self._header_bbox(max(0, int(ti)))
+            self._refresh_display_order()
+            ti = int(max(0, int(ti)))
+            host_canvas = self.hcanvas
+            if ti in (getattr(self, "collapsed_cols", []) or []):
+                row_idx = int((getattr(self, "collapsed_cols", []) or []).index(ti))
+                x0, y0, _x1, _y1 = self._collapsed_header_bbox(row_idx)
+                host_canvas = getattr(self, "collapsed_dock", self.hcanvas)
+            else:
+                col = self._expanded_col_index(int(ti))
+                if col is None:
+                    col = 0
+                x0, y0, _x1, _y1 = self._header_bbox(int(col))
             try:
-                x_view = self._shared_x_offset_px()
+                x_view = 0.0 if host_canvas is getattr(self, "collapsed_dock", None) else self._shared_x_offset_px()
             except Exception:
                 x_view = 0.0
-            sx = self.hcanvas.winfo_rootx() + int(x0 - x_view) + 10
-            sy = self.hcanvas.winfo_rooty() + int(y0) + 10
+            sx = host_canvas.winfo_rootx() + int(x0 - x_view) + 10
+            sy = host_canvas.winfo_rooty() + int(y0) + 10
             dlg.geometry(f"+{sx}+{sy}")
         except Exception:
             # fallback: центрируем по основному окну
