@@ -4556,7 +4556,42 @@ class GeoCanvasEditor(tk.Tk):
         graph_w = int(getattr(self, "graph_w", 150) or 150) if self._is_graph_panel_visible() else 0
         return self._table_col_width() + graph_w
 
+    def _collapsed_header_width(self) -> int:
+        # Компактная ширина для header-only карточки (чекбокс + title/datetime + иконки).
+        return max(170, min(220, int(self._table_col_width())))
+
+    def _is_test_collapsed(self, ti: int) -> bool:
+        if ti is None or ti < 0 or ti >= len(getattr(self, "tests", []) or []):
+            return False
+        return not bool(getattr(self.tests[int(ti)], "export_on", True))
+
+    def _display_card_width_by_col(self, col: int) -> int:
+        cols = getattr(self, "display_cols", []) or []
+        if 0 <= int(col) < len(cols):
+            ti = int(cols[int(col)])
+            return int(self._collapsed_header_width() if self._is_test_collapsed(ti) else self._column_block_width())
+        return int(self._column_block_width())
+
+    def _rebuild_column_layout(self):
+        cols = list(getattr(self, "display_cols", []) or [])
+        x_positions: list[int] = []
+        widths: list[int] = []
+        x = int(self.pad_x)
+        for col, _ti in enumerate(cols):
+            w = int(self._display_card_width_by_col(col))
+            x_positions.append(int(x))
+            widths.append(int(w))
+            x += int(w) + int(self.col_gap)
+        self._display_col_x0 = x_positions
+        self._display_col_widths = widths
+
     def _column_x0(self, col: int) -> int:
+        try:
+            x_positions = getattr(self, "_display_col_x0", []) or []
+            if 0 <= int(col) < len(x_positions):
+                return int(x_positions[int(col)])
+        except Exception:
+            pass
         return self.pad_x + col * (self._column_block_width() + self.col_gap)
 
     def _last_column_right_px(self) -> float:
@@ -4566,29 +4601,26 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             n_cols = 0
         if n_cols <= 0:
-            try:
-                n_cols = len(getattr(self, "tests", []) or [])
-            except Exception:
-                n_cols = 0
+            return float(getattr(self, "pad_x", 0) or 0)
         try:
-            col_w = float(self._column_block_width())
+            widths = list(getattr(self, "_display_col_widths", []) or [])
+            x_positions = list(getattr(self, "_display_col_x0", []) or [])
+            if len(widths) == n_cols and len(x_positions) == n_cols:
+                return float(x_positions[-1] + widths[-1])
         except Exception:
-            col_w = 0.0
-        try:
-            gap = float(self.col_gap)
-        except Exception:
-            gap = 0.0
-        try:
-            pad = float(self.pad_x)
-        except Exception:
-            pad = 0.0
-        last_left_px = pad + (col_w + gap) * max(0, n_cols - 1)
-        return last_left_px + col_w
+            pass
+        # fallback: равные ширины (legacy)
+        col_w = float(self._column_block_width())
+        gap = float(self.col_gap)
+        pad = float(self.pad_x)
+        return float(pad + (col_w + gap) * max(0, n_cols - 1) + col_w)
 
     def _graph_rect_for_test(self, ti: int, r: int | None = None):
         try:
             col = int(self.display_cols.index(ti))
         except Exception:
+            return None
+        if self._is_test_collapsed(int(ti)):
             return None
         if not self._is_graph_panel_visible():
             return None
@@ -4616,9 +4648,14 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             n_cols = len(getattr(self, "tests", []) or [])
         n_cols = max(0, int(n_cols))
-        block_w = self._column_block_width()
-        self._last_col_w = block_w
-        total_w = self.pad_x * 2 + (block_w * n_cols) + (self.col_gap * max(0, n_cols - 1))
+        try:
+            widths = list(getattr(self, "_display_col_widths", []) or [])
+            if len(widths) != n_cols:
+                widths = [int(self._column_block_width())] * n_cols
+        except Exception:
+            widths = [int(self._column_block_width())] * n_cols
+        self._last_col_w = int(widths[-1]) if widths else int(self._column_block_width())
+        total_w = self.pad_x * 2 + sum(widths) + (self.col_gap * max(0, n_cols - 1))
         body_h = self._total_body_height() if max_rows > 0 else 0
         header_h = int(self.pad_y + self.hdr_h)  # фиксированная область
         return total_w, body_h, header_h
@@ -4891,10 +4928,8 @@ class GeoCanvasEditor(tk.Tk):
         return sorted(range(len(self.tests)), key=_key)
 
     def _refresh_display_order(self):
-        ordered = self._sorted_display_indices()
-        # UX: выключенный чекбокс опыта = карточка исключается из видимой ленты,
-        # но опыт остаётся в модели данных (self.tests).
-        self.display_cols = [i for i in ordered if bool(getattr(self.tests[i], "export_on", True))]
+        self.display_cols = self._sorted_display_indices()
+        self._rebuild_column_layout()
 
 
     def schedule_graph_redraw(self):
@@ -7323,7 +7358,7 @@ class GeoCanvasEditor(tk.Tk):
                 pass
 
     def _header_bbox(self, col: int):
-        col_w = self._table_col_width()
+        col_w = self._display_card_width_by_col(int(col))
         x0_world = self._column_x0(col)
         x0 = x0_world
         y0 = self.pad_y
@@ -7368,6 +7403,7 @@ class GeoCanvasEditor(tk.Tk):
 
             # checked = will be exported
             ex_on = bool(getattr(t, "export_on", True))
+            collapsed = not bool(ex_on)
             fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
             td = diagnostics.by_test.get(int(getattr(t, "tid", 0) or 0))
             has_missing_values = bool(td and td.missing_rows)
@@ -7451,6 +7487,11 @@ class GeoCanvasEditor(tk.Tk):
             self.hcanvas.create_text(x0 + self.w_depth + self.w_val + self.w_val / 2, sh_y, text="fs", font=("Segoe UI", 9), fill=hdr_text)
             if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True)):
                 self.hcanvas.create_text(x0 + self.w_depth + self.w_val*2 + self.w_val/2, sh_y, text="U", font=("Segoe UI", 9), fill=hdr_text)
+
+            if collapsed:
+                if bool(getattr(t, "locked", False)):
+                    self.hcanvas.create_rectangle(x0, y0, x1, y1, fill="#d0d0d0", outline="", stipple="gray50")
+                continue
 
             # --- ТАБЛИЦА (canvas) ---
             mp = self._grid_row_maps.get(ti, {})
@@ -7543,9 +7584,7 @@ class GeoCanvasEditor(tk.Tk):
 
                 meter_has_data = bool((meter_qc_max is not None) or (meter_fs_max is not None)) if is_meter_row else False
 
-                if not ex_on:
-                    depth_fill = "white"
-                elif is_meter_row:
+                if is_meter_row:
                     # В свернутом режиме: существующий интервал окрашен единообразно,
                     # отсутствующий интервал (пустая зона) — белый.
                     depth_fill = "#f3f6fb" if meter_has_data else "white"
@@ -7558,8 +7597,6 @@ class GeoCanvasEditor(tk.Tk):
                     depth_fill = "white"
 
                 def fill_for(kind: str):
-                    if not ex_on:
-                        return "white"
                     # Обычная логика по существующим/пустым строкам
                     if is_meter_row:
                         # Для существующего meter-интервала все ячейки строки одного цвета.
@@ -7649,8 +7686,6 @@ class GeoCanvasEditor(tk.Tk):
         if not self.tests:
             return None
 
-        col_w = self._table_col_width()
-
         if w is getattr(self, "hcanvas", None):
             cx = self.hcanvas.canvasx(x)
             cy = self.hcanvas.canvasy(y)
@@ -7728,8 +7763,11 @@ class GeoCanvasEditor(tk.Tk):
         self._refresh_display_order()
         for col, ti in enumerate(self.display_cols):
             x0 = self._column_x0(col)
-            x1 = x0 + col_w
+            card_w = self._display_card_width_by_col(col)
+            x1 = x0 + card_w
             if x0 <= cx <= x1:
+                if self._is_test_collapsed(int(ti)):
+                    return None
                 # which field
                 # depth/qc/fs split
                 relx = cx - x0
