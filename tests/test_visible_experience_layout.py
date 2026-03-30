@@ -53,8 +53,8 @@ def test_unchecked_experience_moves_to_left_dock_and_expanded_lane_has_no_gap():
 
     assert dock_w > 0
     assert editor.expanded_cols == [0, 2]
-    assert editor._column_x0(0) == editor.pad_x + dock_w
-    assert editor._column_x0(1) == editor.pad_x + dock_w + expanded_w + editor.col_gap
+    assert editor._column_x0(0) == editor.pad_x
+    assert editor._column_x0(1) == editor.pad_x + expanded_w + editor.col_gap
 
 
 def test_multiple_collapsed_experiences_stack_vertically_in_left_dock():
@@ -69,8 +69,9 @@ def test_multiple_collapsed_experiences_stack_vertically_in_left_dock():
 
     top0 = editor._collapsed_header_bbox(0)
     top1 = editor._collapsed_header_bbox(1)
-    assert top0[0] == top1[0] == editor.pad_x
+    assert top0[0] == top1[0] == 4
     assert top1[1] > top0[1]
+    assert editor._collapsed_header_row_height() >= 40
     assert editor.expanded_cols == [2]
 
 
