@@ -58,7 +58,7 @@ class RibbonView(ttk.Frame):
         self._suspend_common_emit = False
         self.project_type_mode = "type2_electric"
         self.installation_name_var = tk.StringVar(value="")
-        self.step_depth_var = tk.StringVar(value="0.20")
+        self.step_depth_var = tk.StringVar(value="0.05")
         self.mech_lob_coeff_var = tk.StringVar(value="1.00")
         self.mech_total_coeff_var = tk.StringVar(value="1.00")
         self.mech_calib_date_var = tk.StringVar(value="")

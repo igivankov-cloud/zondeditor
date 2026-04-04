@@ -237,6 +237,7 @@ class GeoCanvasEditor(tk.Tk):
         self._suspend_type1_param_validation = False
         self._skip_next_type1_error_popup = False
         self._validation_error_popup_active = False
+        self._ui_ready_for_mode_validation = False
         self.project_path: Path | None = None
         self.project_ops: list[dict] = []
         self._marks_index: dict[tuple[int, float, str], dict] = {}
@@ -2177,7 +2178,7 @@ class GeoCanvasEditor(tk.Tk):
                 "ribbon_tab_changed": self._on_ribbon_tab_changed,
             }
             self.ribbon_view = RibbonView(self, commands=commands, icon_font=_pick_icon_font(11))
-            self.ribbon_view.pack(side="top", fill="x", before=ribbon)
+            self.ribbon_view.pack(side="top", fill="x")
             self.ribbon_view.set_object_name(self.object_name)
             self.ribbon_view.set_project_type(str(getattr(self, "project_type", "type2_electric")), mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
             self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
@@ -2199,6 +2200,7 @@ class GeoCanvasEditor(tk.Tk):
                 pass
             ribbon.pack_forget()
             self.after_idle(self._sync_workspace_visibility)
+        self._ui_ready_for_mode_validation = True
         # ========= Main canvas (fixed header) =========
         mid = ttk.Frame(self)
         mid.pack(side="top", fill="both", expand=True)
@@ -2825,7 +2827,7 @@ class GeoCanvasEditor(tk.Tk):
         if ptype:
             self.project_type = ptype
         mode_keys = {k: v for k, v in p.items() if str(k).startswith("mode_")}
-        if not bool(getattr(self, "_suspend_type1_param_validation", False)) and mode_keys:
+        if bool(getattr(self, "_ui_ready_for_mode_validation", False)) and (not bool(getattr(self, "_suspend_type1_param_validation", False))) and mode_keys:
             ptype_cur = str(getattr(self, "project_type", "") or "")
             if ptype_cur == "type1_mech":
                 if not self._apply_type1_params(mode_keys):
