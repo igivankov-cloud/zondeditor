@@ -10381,26 +10381,13 @@ class GeoCanvasEditor(tk.Tk):
         self._update_window_title()
 
     def _create_initial_mechanical_column(self):
-        step_text = str((getattr(self, "project_mode_params", {}) or {}).get("mode_step_depth", "0.20") or "0.20")
-        try:
-            step_m = float(step_text.replace(",", "."))
-            if step_m <= 0:
-                raise ValueError
-        except Exception:
-            step_m = 0.2
-        self.step_m = float(step_m)
+        # Для стартового механического шаблона фиксируем шаг 0.20 м.
+        # Это гарантирует полный предзаполненный столбец 0.00..5.00.
+        step_m = 0.2
+        self.step_m = step_m
+        self.project_mode_params["mode_step_depth"] = "0.20"
         dt_text = _dt.datetime.now().replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
-        depth_vals: list[str] = []
-        rows_count = max(1, int(round(5.0 / step_m)))
-        for i in range(rows_count + 1):
-            d = round(i * step_m, 6)
-            if d > 5.0 + 1e-9:
-                break
-            depth_vals.append(f"{d:.2f}")
-        if not depth_vals or depth_vals[0] != "0.00":
-            depth_vals.insert(0, "0.00")
-        if depth_vals[-1] != "5.00":
-            depth_vals.append("5.00")
+        depth_vals = [f"{(i * step_m):.2f}" for i in range(26)]  # 0.00 .. 5.00
         n = len(depth_vals)
         self.tests = [TestData(tid=1, dt=dt_text, depth=depth_vals, qc=[""] * n, fs=[""] * n, incl=None, orig_id=None, block=None)]
         self.flags = {1: TestFlags(False, set(), set(), set(), set())}
