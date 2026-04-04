@@ -235,6 +235,7 @@ class GeoCanvasEditor(tk.Tk):
         self.project_type = "type2_electric"
         self.project_mode_params: dict[str, str] = {}
         self._suspend_type1_param_validation = False
+        self._skip_next_type1_error_popup = False
         self.project_path: Path | None = None
         self.project_ops: list[dict] = []
         self._marks_index: dict[tuple[int, float, str], dict] = {}
@@ -2849,11 +2850,19 @@ class GeoCanvasEditor(tk.Tk):
         try:
             step_val = round(float(new_step), 3)
         except Exception:
-            messagebox.showerror("Ошибка", "Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.4 м.")
+            if not self._skip_next_type1_error_popup:
+                messagebox.showerror("Ошибка", "Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
+                self._skip_next_type1_error_popup = True
+            else:
+                self._skip_next_type1_error_popup = False
             self._sync_type1_params_to_ribbon()
             return False
-        if step_val not in {0.1, 0.2, 0.4}:
-            messagebox.showerror("Ошибка", "Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.4 м.")
+        if step_val not in {0.1, 0.2, 0.3, 0.4, 0.5}:
+            if not self._skip_next_type1_error_popup:
+                messagebox.showerror("Ошибка", "Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
+                self._skip_next_type1_error_popup = True
+            else:
+                self._skip_next_type1_error_popup = False
             self._sync_type1_params_to_ribbon()
             return False
 
@@ -2867,7 +2876,11 @@ class GeoCanvasEditor(tk.Tk):
         lob_val = _parse_coeff(new_lob)
         tot_val = _parse_coeff(new_tot)
         if lob_val is None or tot_val is None or not (0.01 <= lob_val <= 5.00) or not (0.01 <= tot_val <= 5.00):
-            messagebox.showerror("Ошибка", "Тарировочный коэффициент должен быть в диапазоне от 0.01 до 5.00.")
+            if not self._skip_next_type1_error_popup:
+                messagebox.showerror("Ошибка", "Тарировочный коэффициент должен быть в диапазоне от 0.01 до 5.00.")
+                self._skip_next_type1_error_popup = True
+            else:
+                self._skip_next_type1_error_popup = False
             self._sync_type1_params_to_ribbon()
             return False
 
@@ -2877,6 +2890,7 @@ class GeoCanvasEditor(tk.Tk):
         self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
         self.project_mode_params["mode_lob_coeff"] = f"{lob_val:.2f}".rstrip("0").rstrip(".")
         self.project_mode_params["mode_total_coeff"] = f"{tot_val:.2f}".rstrip("0").rstrip(".")
+        self._skip_next_type1_error_popup = False
         self._redraw()
         self.schedule_graph_redraw()
         return True
