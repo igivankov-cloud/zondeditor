@@ -2871,10 +2871,6 @@ class GeoCanvasEditor(tk.Tk):
             return False
 
         if round(step_val, 3) != round(float(old_step), 3):
-            if self._type1_has_user_data():
-                messagebox.showwarning("Изменение шага", "Шаг нельзя менять после ввода данных в колонке.")
-                self._sync_type1_params_to_ribbon()
-                return False
             self._rebuild_type1_depth_grid(step_val)
 
         self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
@@ -2890,21 +2886,17 @@ class GeoCanvasEditor(tk.Tk):
             return
         rv.set_project_type("type1_mech", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
 
-    def _type1_has_user_data(self) -> bool:
-        for t in (getattr(self, "tests", []) or []):
-            for arr in (getattr(t, "qc", []) or [], getattr(t, "fs", []) or []):
-                for v in arr:
-                    if str(v or "").strip() != "":
-                        return True
-        return False
-
     def _rebuild_type1_depth_grid(self, step_val: float):
-        rows = max(1, int(round(5.0 / float(step_val)))) + 1
+        start_rows = max(1, int(round(5.0 / float(step_val)))) + 1
+        existing_rows = 0
+        for t in (getattr(self, "tests", []) or []):
+            existing_rows = max(existing_rows, len(getattr(t, "depth", []) or []), len(getattr(t, "qc", []) or []), len(getattr(t, "fs", []) or []))
+        rows = max(start_rows, existing_rows)
         depth = [f"{(i * float(step_val)):.2f}" for i in range(rows)]
         for t in (getattr(self, "tests", []) or []):
             t.depth = list(depth)
-            t.qc = (list(getattr(t, "qc", []) or []) + [""] * rows)[:rows]
-            t.fs = (list(getattr(t, "fs", []) or []) + [""] * rows)[:rows]
+            t.qc = list(getattr(t, "qc", []) or []) + [""] * max(0, rows - len(getattr(t, "qc", []) or []))
+            t.fs = list(getattr(t, "fs", []) or []) + [""] * max(0, rows - len(getattr(t, "fs", []) or []))
             tid = int(getattr(t, "tid", 0) or 0)
             self.depth0_by_tid[tid] = 0.0
             self.step_by_tid[tid] = float(step_val)
