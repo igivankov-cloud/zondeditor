@@ -55,6 +55,7 @@ class RibbonView(ttk.Frame):
         self.calc_allow_normative_lt6_var = tk.BooleanVar(value=False)
         self.calc_legacy_sandy_loam_var = tk.BooleanVar(value=False)
         self.calc_fill_preliminary_var = tk.BooleanVar(value=False)
+        self._suspend_common_emit = False
         self.project_type_mode = "type2_electric"
         self.installation_name_var = tk.StringVar(value="")
         self.step_depth_var = tk.StringVar(value="0.20")
@@ -250,7 +251,7 @@ class RibbonView(ttk.Frame):
             row=3, column=0, columnspan=2, sticky="w", pady=(6, 0)
         )
 
-    def _render_params_by_project_type(self, project_type: str):
+    def _render_params_by_project_type(self, project_type: str, *, emit: bool = True):
         self.project_type_mode = str(project_type or "type2_electric")
         host = getattr(self, "_params_mode_host", None)
         if host is None:
@@ -264,7 +265,8 @@ class RibbonView(ttk.Frame):
         else:
             self.project_type_mode = "type2_electric"
             self._build_type2_params_form(host)
-        self._emit_common_params()
+        if emit:
+            self._emit_common_params()
 
     def _collect_common_params(self) -> dict[str, str]:
         payload = {
@@ -292,6 +294,8 @@ class RibbonView(ttk.Frame):
         return payload
 
     def _emit_common_params(self):
+        if bool(getattr(self, "_suspend_common_emit", False)):
+            return
         cb = self.commands.get("common_params_changed")
         if callable(cb):
             cb(self._collect_common_params())
@@ -748,14 +752,19 @@ class RibbonView(ttk.Frame):
         self.object_name_var.set(value or "")
 
     def set_project_type(self, project_type: str, *, mode_params: dict[str, str] | None = None):
-        self._render_params_by_project_type(project_type)
         mp = dict(mode_params or {})
-        self.installation_name_var.set(str(mp.get("mode_installation_name", "") or ""))
-        self.step_depth_var.set(str(mp.get("mode_step_depth", self.step_depth_var.get() or "0.20") or "0.20"))
-        self.mech_lob_coeff_var.set(str(mp.get("mode_lob_coeff", self.mech_lob_coeff_var.get() or "1.00") or "1.00"))
-        self.mech_total_coeff_var.set(str(mp.get("mode_total_coeff", self.mech_total_coeff_var.get() or "1.00") or "1.00"))
-        self.mech_calib_date_var.set(str(mp.get("mode_calibration_date", "") or ""))
-        self.mech_calib_note_var.set(str(mp.get("mode_calibration_note", "") or ""))
+        self._suspend_common_emit = True
+        try:
+            self._render_params_by_project_type(project_type, emit=False)
+            self.installation_name_var.set(str(mp.get("mode_installation_name", "") or ""))
+            self.step_depth_var.set(str(mp.get("mode_step_depth", self.step_depth_var.get() or "0.20") or "0.20"))
+            self.mech_lob_coeff_var.set(str(mp.get("mode_lob_coeff", self.mech_lob_coeff_var.get() or "1.00") or "1.00"))
+            self.mech_total_coeff_var.set(str(mp.get("mode_total_coeff", self.mech_total_coeff_var.get() or "1.00") or "1.00"))
+            self.mech_calib_date_var.set(str(mp.get("mode_calibration_date", "") or ""))
+            self.mech_calib_note_var.set(str(mp.get("mode_calibration_note", "") or ""))
+        finally:
+            self._suspend_common_emit = False
+        self._emit_common_params()
 
     def set_common_params(self, params: dict[str, str] | None, *, geo_kind: str = "K2"):
         p = dict(params or {})

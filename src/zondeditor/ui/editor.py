@@ -234,6 +234,7 @@ class GeoCanvasEditor(tk.Tk):
         self.project_name = "Новый проект"
         self.project_type = "type2_electric"
         self.project_mode_params: dict[str, str] = {}
+        self._suspend_type1_param_validation = False
         self.project_path: Path | None = None
         self.project_ops: list[dict] = []
         self._marks_index: dict[tuple[int, float, str], dict] = {}
@@ -2821,7 +2822,7 @@ class GeoCanvasEditor(tk.Tk):
         if ptype:
             self.project_type = ptype
         mode_keys = {k: v for k, v in p.items() if str(k).startswith("mode_")}
-        if str(getattr(self, "project_type", "") or "") == "type1_mech" and mode_keys:
+        if (not bool(getattr(self, "_suspend_type1_param_validation", False))) and str(getattr(self, "project_type", "") or "") == "type1_mech" and mode_keys:
             if not self._apply_type1_params(mode_keys):
                 return
         if mode_keys:
@@ -2884,7 +2885,11 @@ class GeoCanvasEditor(tk.Tk):
         rv = getattr(self, "ribbon_view", None)
         if rv is None:
             return
-        rv.set_project_type("type1_mech", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+        self._suspend_type1_param_validation = True
+        try:
+            rv.set_project_type("type1_mech", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+        finally:
+            self._suspend_type1_param_validation = False
 
     def _rebuild_type1_depth_grid(self, step_val: float):
         start_rows = max(1, int(round(5.0 / float(step_val)))) + 1
