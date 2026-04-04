@@ -3427,6 +3427,8 @@ class GeoCanvasEditor(tk.Tk):
         ttk.Label(table, text="УГВ", font=("Segoe UI", 9, "bold")).grid(row=0, column=4, sticky="w", padx=(12, 0))
 
         row_vars = []   # (t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, gwl_on_var, gwl_var, gwl_ent)
+        source_step_by_tid: dict[int, float] = {}
+        k4_mode = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"
 
         def _parse_depth_str(s: str):
             try:
@@ -3485,6 +3487,7 @@ class GeoCanvasEditor(tk.Tk):
                 pass
 
             step_row_m = float(self._current_step_for_test(t))
+            source_step_by_tid[int(tid)] = float(step_row_m)
             step_row_cm = int(round(step_row_m * 100.0))
             if step_row_cm <= 0:
                 step_row_cm = 10
@@ -3538,8 +3541,29 @@ class GeoCanvasEditor(tk.Tk):
                 step_var_row.set(step_cm_txt)
             msg_var.set("")
 
+        def _sync_master_step_to_rows(*_args):
+            step_cm_txt = (step_var.get() or "").strip()
+            if step_cm_txt not in ("5", "10"):
+                return
+            if k4_mode and step_cm_txt == "10":
+                for _tid, _src_step in source_step_by_tid.items():
+                    if abs(float(_src_step) - 0.05) < 1e-6:
+                        msg_var.set("Для K4 нельзя увеличивать шаг с 0.05 до 0.10. Разрешено только 0.10 → 0.05.")
+                        try:
+                            step_var.set("5")
+                        except Exception:
+                            pass
+                        step_cm_txt = "5"
+                        break
+            for (_t, _tid, _h0_var, _ent, step_var_row, _step_ent, _dt_var, _dt_lbl, *_rest) in row_vars:
+                step_var_row.set(step_cm_txt)
+
         try:
             apply_all_btn.configure(command=_apply_common_to_all_rows)
+        except Exception:
+            pass
+        try:
+            step_var.trace_add("write", _sync_master_step_to_rows)
         except Exception:
             pass
 
@@ -3633,6 +3657,7 @@ class GeoCanvasEditor(tk.Tk):
 
         # применить начальные состояния
         _recompute_common_depth_marker()
+        _sync_master_step_to_rows()
 
         # --- сообщение об ошибке + кнопки ---
         msg_lbl = ttk.Label(frm, textvariable=msg_var, foreground="#b00020")
@@ -3699,6 +3724,9 @@ class GeoCanvasEditor(tk.Tk):
                             msg_var.set(f"СЗ-{tid}: шаг должен быть больше 0.")
                             return
                         step_m_row = float(step_cm_row) / 100.0
+                    if k4_mode and abs(float(source_step_by_tid.get(int(tid), step_m_row)) - 0.05) < 1e-6 and float(step_m_row) > 0.05:
+                        msg_var.set(f"СЗ-{tid}: для K4 нельзя менять шаг 0.05 → 0.10.")
+                        return
                     new_step_by_tid[int(tid)] = float(step_m_row)
                     self._set_step_for_test(t, step_m_row)
                 self.step_by_tid = new_step_by_tid
