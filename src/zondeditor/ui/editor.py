@@ -2877,9 +2877,6 @@ class GeoCanvasEditor(tk.Tk):
                 return False
             self._rebuild_type1_depth_grid(step_val)
 
-        if abs(lob_val - float(old_lob)) > 1e-9 or abs(tot_val - float(old_tot)) > 1e-9:
-            self._recalc_type1_channels(float(old_lob), lob_val, float(old_tot), tot_val)
-
         self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
         self.project_mode_params["mode_lob_coeff"] = f"{lob_val:.2f}".rstrip("0").rstrip(".")
         self.project_mode_params["mode_total_coeff"] = f"{tot_val:.2f}".rstrip("0").rstrip(".")
@@ -2912,28 +2909,6 @@ class GeoCanvasEditor(tk.Tk):
             self.depth0_by_tid[tid] = 0.0
             self.step_by_tid[tid] = float(step_val)
         self.step_m = float(step_val)
-
-    def _recalc_type1_channels(self, old_lob: float, new_lob: float, old_tot: float, new_tot: float):
-        ratio_lob = new_lob / old_lob if old_lob else 1.0
-        ratio_tot = new_tot / old_tot if old_tot else 1.0
-        for t in (getattr(self, "tests", []) or []):
-            for i in range(len(getattr(t, "qc", []) or [])):
-                q_raw = str(t.qc[i] if i < len(t.qc) else "").strip().replace(",", ".")
-                if q_raw == "":
-                    continue
-                try:
-                    t.qc[i] = f"{float(q_raw) * ratio_lob:.2f}".rstrip("0").rstrip(".")
-                except Exception:
-                    continue
-            for i in range(len(getattr(t, "fs", []) or [])):
-                qt_raw = str(t.fs[i] if i < len(t.fs) else "").strip().replace(",", ".")
-                if qt_raw == "":
-                    continue
-                try:
-                    qt_new = float(qt_raw) * ratio_tot
-                    t.fs[i] = f"{qt_new:.2f}".rstrip("0").rstrip(".")
-                except Exception:
-                    continue
 
     def open_geo_params_dialog(self):
         """Открыть окно параметров GEO для текущего файла."""
@@ -3127,8 +3102,19 @@ class GeoCanvasEditor(tk.Tk):
     def _calc_qc_fs_from_del(self, qc_del: int, fs_del: int) -> tuple[float, float]:
         """Пересчёт делений в qc/fs через единый контур processing.calibration."""
         if str(getattr(self, "project_type", "") or "") == "type1_mech":
-            qc_val = float(qc_del or 0)
-            qt_val = float(fs_del or 0)  # в механике второй столбец = Qt (общ)
+            mode = dict(getattr(self, "project_mode_params", {}) or {})
+            try:
+                k_lob = float(str(mode.get("mode_lob_coeff", "1.0") or "1.0").replace(",", "."))
+            except Exception:
+                k_lob = 1.0
+            try:
+                k_tot = float(str(mode.get("mode_total_coeff", "1.0") or "1.0").replace(",", "."))
+            except Exception:
+                k_tot = 1.0
+            qc_raw = float(qc_del or 0)
+            qt_raw = float(fs_del or 0)  # в механике второй столбец = Qt (общ)
+            qc_val = qc_raw * k_lob
+            qt_val = qt_raw * k_tot
             qs_val = max(0.0, qt_val - qc_val)  # Qs = Qt - Qc
             return qc_val, qs_val
         cal = self._current_calibration()
