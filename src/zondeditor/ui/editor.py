@@ -476,6 +476,9 @@ class GeoCanvasEditor(tk.Tk):
             self._grid_base_row_maps = {}
             return
 
+        if str(getattr(self, "project_type", "") or "") == "type1_mech":
+            self._ensure_mechanical_depth_template_rows()
+
         grid, grid_step, row_maps, start_rows = self._compute_depth_grid()
         if not grid:
             max_rows = max((len(getattr(t, "qc", []) or []) for t in self.tests), default=0)
@@ -526,6 +529,28 @@ class GeoCanvasEditor(tk.Tk):
         self._grid_base = grid
         self._grid_base_row_maps = row_maps
         self._rebuild_row_geometry()
+
+    def _ensure_mechanical_depth_template_rows(self):
+        tests = list(getattr(self, "tests", []) or [])
+        if not tests:
+            return
+        t0 = tests[0]
+        depth = list(getattr(t0, "depth", []) or [])
+        if len(depth) > 1:
+            return
+        depth = [f"{(i * 0.2):.2f}" for i in range(26)]
+        n = len(depth)
+        qc = list(getattr(t0, "qc", []) or [])
+        fs = list(getattr(t0, "fs", []) or [])
+        if len(qc) < n:
+            qc += [""] * (n - len(qc))
+        if len(fs) < n:
+            fs += [""] * (n - len(fs))
+        t0.depth = depth
+        t0.qc = qc[:n]
+        t0.fs = fs[:n]
+        self.depth0_by_tid[int(getattr(t0, "tid", 1) or 1)] = 0.0
+        self.step_by_tid[int(getattr(t0, "tid", 1) or 1)] = 0.2
 
     def _row_height_for(self, row: int) -> int:
         units = getattr(self, "_grid_units", []) or []
