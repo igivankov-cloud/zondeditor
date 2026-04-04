@@ -2860,6 +2860,18 @@ class GeoCanvasEditor(tk.Tk):
         finally:
             self._validation_error_popup_active = False
 
+    def _sync_mode_step_from_loaded_tests(self):
+        if str(getattr(self, "project_type", "") or "") != "type2_electric":
+            return
+        try:
+            step_val = float(getattr(self, "step_m", 0.05) or 0.05)
+        except Exception:
+            step_val = 0.05
+        self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
+        rv = getattr(self, "ribbon_view", None)
+        if rv is not None:
+            rv.set_project_type("type2_electric", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+
     def _apply_type1_params(self, mode_keys: dict[str, str]) -> bool:
         old_step = str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.20") or "0.20")
         old_lob = str(getattr(self, "project_mode_params", {}).get("mode_lob_coeff", "1.00") or "1.00")
@@ -2948,8 +2960,21 @@ class GeoCanvasEditor(tk.Tk):
             self._show_validation_error_once("Недопустимый шаг зондирования. Для Типа 2 разрешены только значения: 0.05 и 0.10 м.")
             self._sync_type2_params_to_ribbon()
             return False
+        is_k4 = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"
+        try:
+            old_step_val = round(float(old_step), 3)
+        except Exception:
+            old_step_val = 0.05
+        if is_k4 and old_step_val <= 0.05 and step_val > 0.05:
+            self._show_validation_error_once("Для K4 запрещено увеличивать шаг с 0.05 до 0.10. Разрешено только 0.10 → 0.05.")
+            self._sync_type2_params_to_ribbon()
+            return False
         if round(step_val, 3) != round(float(old_step), 3):
-            self._rebuild_type1_depth_grid(step_val)
+            if is_k4 and old_step_val >= 0.1 and step_val == 0.05:
+                self.convert_10_to_5()
+                self.step_by_tid = {int(getattr(t, "tid", 0) or 0): 0.05 for t in (getattr(self, "tests", []) or [])}
+            else:
+                self._rebuild_type1_depth_grid(step_val)
         self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
         self._skip_next_type1_error_popup = False
         self._redraw()
@@ -3969,6 +3994,7 @@ class GeoCanvasEditor(tk.Tk):
 
                 self._apply_gxl_calibration_from_meta(meta_rows)
                 self._set_common_params(self._current_common_params(), self.geo_kind)
+                self._sync_mode_step_from_loaded_tests()
                 if getattr(self, "ribbon_view", None):
                     self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(self.geo_kind))
                 self._update_status_loaded(prefix=f"GXL: загружено опытов {len(self.tests)}")
@@ -4086,6 +4112,7 @@ class GeoCanvasEditor(tk.Tk):
             self.undo_stack.clear()
             self.redo_stack.clear()
 
+            self._sync_mode_step_from_loaded_tests()
             self._update_status_loaded(prefix=f"GEO: загружено опытов {len(self.tests)}")
 
             self._auto_scan_after_load()
