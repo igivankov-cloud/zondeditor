@@ -10528,7 +10528,7 @@ class GeoCanvasEditor(tk.Tk):
         self.step_by_tid = {}
         self.gwl_by_tid = {}
         self.geo_kind = "K2"
-        if selected_type in {"type1_mech", "direct_qcfs"}:
+        if selected_type in {"type1_mech", "type2_electric", "direct_qcfs"}:
             self._create_initial_mechanical_column()
 
         try:
@@ -10549,9 +10549,9 @@ class GeoCanvasEditor(tk.Tk):
 
     def _create_initial_mechanical_column(self):
         # Для стартового механического шаблона фиксируем шаг 0.20 м.
-        # Для direct_qcfs берём шаг из параметров режима (по умолчанию 0.10).
+        # Для type2_electric/direct_qcfs берём шаг из параметров режима (по умолчанию 0.10).
         # Это гарантирует полный предзаполненный столбец 0.00..5.00.
-        if str(getattr(self, "project_type", "") or "") == "direct_qcfs":
+        if str(getattr(self, "project_type", "") or "") in {"type2_electric", "direct_qcfs"}:
             try:
                 step_m = float(str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.10") or "0.10").replace(",", "."))
             except Exception:
