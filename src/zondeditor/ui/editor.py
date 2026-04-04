@@ -7915,11 +7915,6 @@ class GeoCanvasEditor(tk.Tk):
             if getattr(self, "_hover", None) == ("trash", ti):
                 self.hcanvas.create_rectangle(trash_x - box_w/2, ico_y - box_h/2, trash_x + box_w/2, ico_y + box_h/2,
                                               fill="#e9e9e9", outline="")
-            if getattr(self, "_hover", None) == ("rename", ti):
-                self.hcanvas.create_rectangle(title_x - 2, row_center_y - 10, lock_x - 8, row_center_y + 10, fill="#e9e9e9", outline="")
-            if getattr(self, "_hover", None) == ("edit", ti) and dt_line:
-                self.hcanvas.create_rectangle(title_x - 2, row_center_y + 8, lock_x - 8, row_center_y + 28, fill="#e9e9e9", outline="")
-
             self.hcanvas.create_text(lock_x, ico_y, text=("🔒" if lock_on else "🔓"), font=("Segoe UI", 10), fill=hdr_icon, anchor="center")
             self.hcanvas.create_text(dup_x, ico_y, text=ICON_COPY, font=ico_font, fill=(hdr_icon if actions_enabled else "#b6b6b6"), anchor="center")
             self.hcanvas.create_text(trash_x, ico_y, text=ICON_DELETE, font=ico_font, fill=(hdr_icon if actions_enabled else "#b6b6b6"), anchor="center")
