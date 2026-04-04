@@ -173,11 +173,11 @@ class RibbonView(ttk.Frame):
         self.tabs.add(tab, text="Параметры")
         self._params_tab = tab
         layout = ttk.Frame(tab)
-        layout.pack(side="top", fill="x")
+        layout.pack(side="top", anchor="w")
         self._params_mode_host = ttk.Frame(layout)
-        self._params_mode_host.pack(side="left", fill="x", expand=True)
+        self._params_mode_host.pack(side="left", anchor="nw")
         actions = ttk.Frame(layout)
-        actions.pack(side="right", anchor="ne", padx=(12, 0))
+        actions.pack(side="left", anchor="nw", padx=(10, 0))
         self._add_btn(
             actions,
             "fix_algo",
