@@ -2828,6 +2828,9 @@ class GeoCanvasEditor(tk.Tk):
             if ptype_cur == "type1_mech":
                 if not self._apply_type1_params(mode_keys):
                     return
+            elif ptype_cur == "type2_electric":
+                if not self._apply_type2_params(mode_keys):
+                    return
             elif ptype_cur == "direct_qcfs":
                 if not self._apply_direct_params(mode_keys):
                     return
@@ -2938,6 +2941,45 @@ class GeoCanvasEditor(tk.Tk):
         self._redraw()
         self.schedule_graph_redraw()
         return True
+
+    def _apply_type2_params(self, mode_keys: dict[str, str]) -> bool:
+        old_step = str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.05") or "0.05")
+        new_step = str(mode_keys.get("mode_step_depth", old_step) or old_step).replace(",", ".").strip()
+        try:
+            step_val = round(float(new_step), 3)
+        except Exception:
+            if not self._skip_next_type1_error_popup:
+                messagebox.showerror("Ошибка", "Недопустимый шаг зондирования. Для Типа 2 разрешены только значения: 0.05 и 0.10 м.")
+                self._skip_next_type1_error_popup = True
+            else:
+                self._skip_next_type1_error_popup = False
+            self._sync_type2_params_to_ribbon()
+            return False
+        if step_val not in {0.05, 0.1}:
+            if not self._skip_next_type1_error_popup:
+                messagebox.showerror("Ошибка", "Недопустимый шаг зондирования. Для Типа 2 разрешены только значения: 0.05 и 0.10 м.")
+                self._skip_next_type1_error_popup = True
+            else:
+                self._skip_next_type1_error_popup = False
+            self._sync_type2_params_to_ribbon()
+            return False
+        if round(step_val, 3) != round(float(old_step), 3):
+            self._rebuild_type1_depth_grid(step_val)
+        self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
+        self._skip_next_type1_error_popup = False
+        self._redraw()
+        self.schedule_graph_redraw()
+        return True
+
+    def _sync_type2_params_to_ribbon(self):
+        rv = getattr(self, "ribbon_view", None)
+        if rv is None:
+            return
+        self._suspend_type1_param_validation = True
+        try:
+            rv.set_project_type("type2_electric", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+        finally:
+            self._suspend_type1_param_validation = False
 
     def _sync_direct_params_to_ribbon(self):
         rv = getattr(self, "ribbon_view", None)
@@ -10514,19 +10556,25 @@ class GeoCanvasEditor(tk.Tk):
         self.project_path = None
         self.project_name = selected_name
         self.project_type = selected_type
-        self.project_mode_params = {"mode_step_depth": ("0.20" if selected_type == "type1_mech" else "0.10")}
+        self.project_mode_params = {"mode_step_depth": ("0.20" if selected_type == "type1_mech" else ("0.10" if selected_type == "direct_qcfs" else "0.05"))}
         self.object_name = selected_name
         self.object_code = selected_name
         self.geo_path = None
         self.original_bytes = None
         self.depth_start = 0.0
-        self.step_m = 0.2 if selected_type == "type1_mech" else 0.1
+        self.step_m = 0.2 if selected_type == "type1_mech" else (0.1 if selected_type == "direct_qcfs" else 0.05)
         self.depth0_by_tid = {}
         self.step_by_tid = {}
         self.gwl_by_tid = {}
         self.geo_kind = "K2"
         if selected_type in {"type1_mech", "type2_electric", "direct_qcfs"}:
             self._create_initial_mechanical_column()
+        if selected_type == "type2_electric":
+            self.show_graphs = False
+            self.show_geology_column = False
+            self.show_layer_colors = False
+            self.show_layer_hatching = False
+            self.show_inclinometer = False
 
         try:
             self.file_var.set("(шаблон проекта)")
@@ -10546,13 +10594,14 @@ class GeoCanvasEditor(tk.Tk):
 
     def _create_initial_mechanical_column(self):
         # Для стартового механического шаблона фиксируем шаг 0.20 м.
-        # Для type2_electric/direct_qcfs берём шаг из параметров режима (по умолчанию 0.10).
+        # Для type2_electric/direct_qcfs берём шаг из параметров режима (по умолчанию 0.05/0.10).
         # Это гарантирует полный предзаполненный столбец 0.00..5.00.
         if str(getattr(self, "project_type", "") or "") in {"type2_electric", "direct_qcfs"}:
             try:
-                step_m = float(str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.10") or "0.10").replace(",", "."))
+                fallback = "0.10" if str(getattr(self, "project_type", "") or "") == "direct_qcfs" else "0.05"
+                step_m = float(str(getattr(self, "project_mode_params", {}).get("mode_step_depth", fallback) or fallback).replace(",", "."))
             except Exception:
-                step_m = 0.1
+                step_m = 0.1 if str(getattr(self, "project_type", "") or "") == "direct_qcfs" else 0.05
         else:
             step_m = 0.2
         self.step_m = step_m

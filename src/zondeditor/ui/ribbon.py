@@ -191,11 +191,6 @@ class RibbonView(ttk.Frame):
 
         self._common_param_entries: dict[str, ttk.Entry] = {}
 
-        btn = ttk.Button(col_left, text="Параметры СЗ", command=self.commands.get("geo_params"), style="RibbonCompact.TButton", width=14)
-        btn.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
-        ToolTip(btn, "Открыть параметры зондирований")
-        self._buttons["geo_params"] = btn
-
         def add_field(parent, row: int, label: str, var: tk.StringVar, key: str, width: int = 14):
             ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 4), pady=1)
             ent = ttk.Entry(parent, textvariable=var, width=width)
@@ -204,6 +199,7 @@ class RibbonView(ttk.Frame):
             ent.bind("<Return>", lambda _e: self._emit_common_params())
             self._common_param_entries[key] = ent
 
+        add_field(col_left, 0, "Шаг зондирования, м", self.step_depth_var, "mode_step_depth", width=6)
         add_field(col_left, 1, "Тип контроллера", self.controller_type_var, "controller_type", width=12)
         add_field(col_left, 2, "Тип зонда", self.probe_type_var, "probe_type", width=12)
         add_field(col_left, 3, "Шкала прибора", self.controller_scale_div_var, "controller_scale_div", width=4)
@@ -743,11 +739,13 @@ class RibbonView(ttk.Frame):
 
     def set_project_type(self, project_type: str, *, mode_params: dict[str, str] | None = None):
         mp = dict(mode_params or {})
+        ptype = str(project_type or "type2_electric")
+        default_step = "0.20" if ptype == "type1_mech" else ("0.10" if ptype == "direct_qcfs" else "0.05")
         self._suspend_common_emit = True
         try:
-            self._render_params_by_project_type(project_type, emit=False)
+            self._render_params_by_project_type(ptype, emit=False)
             self.installation_name_var.set(str(mp.get("mode_installation_name", "") or ""))
-            self.step_depth_var.set(str(mp.get("mode_step_depth", self.step_depth_var.get() or "0.20") or "0.20"))
+            self.step_depth_var.set(str(mp.get("mode_step_depth", self.step_depth_var.get() or default_step) or default_step))
             self.mech_lob_coeff_var.set(str(mp.get("mode_lob_coeff", self.mech_lob_coeff_var.get() or "1.00") or "1.00"))
             self.mech_total_coeff_var.set(str(mp.get("mode_total_coeff", self.mech_total_coeff_var.get() or "1.00") or "1.00"))
             self.mech_calib_date_var.set(str(mp.get("mode_calibration_date", "") or ""))
