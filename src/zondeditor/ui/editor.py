@@ -232,7 +232,7 @@ class GeoCanvasEditor(tk.Tk):
         self.object_code = ""
         self.object_name = ""
         self.project_name = "Новый проект"
-        self.project_type = "type2_electric"
+        self.project_type = ""
         self.project_mode_params: dict[str, str] = {}
         self._suspend_type1_param_validation = False
         self._skip_next_type1_error_popup = False
@@ -263,10 +263,10 @@ class GeoCanvasEditor(tk.Tk):
         self.pad_x = 8
         self.pad_y = 8
         self.show_graphs = False
-        self.show_geology_column = True
-        self.show_inclinometer = True
+        self.show_geology_column = False
+        self.show_inclinometer = False
         self.show_layer_colors = False
-        self.show_layer_hatching = True
+        self.show_layer_hatching = False
         self.compact_1m = False
         self.display_sort_mode = "date"
         self.expanded_meters: set[int] = set()
