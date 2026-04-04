@@ -95,7 +95,7 @@ class RibbonView(ttk.Frame):
         self._buttons[key] = btn
 
     def _add_btn(self, parent, key: str, text: str, tip: str, *, width: int = 12):
-        btn = ttk.Button(parent, text=text, command=self.commands.get(key), style="RibbonCompact.TButton", width=width)
+        btn = ttk.Button(parent, text=text, command=self.commands.get(key), style="RibbonCompact.TButton", width=width, anchor="w")
         btn.pack(side="top", fill="x", anchor="w", pady=1)
         ToolTip(btn, tip)
         self._buttons[key] = btn
@@ -132,17 +132,17 @@ class RibbonView(ttk.Frame):
     def _build_file_tab(self):
         tab = ttk.Frame(self.tabs, padding=2)
         self.tabs.add(tab, text="Файл")
-        file_group_width_px = 220
-        file_btn_width = 18
+        file_group_width_px = 190
+        file_btn_width = 16
 
         project = ttk.LabelFrame(tab, text="Проект", padding=3)
         project.pack(side="left", fill="y", anchor="nw", padx=(4, 8))
         project.configure(width=file_group_width_px)
         project.pack_propagate(False)
-        self._add_btn(project, "new_project", "🆕 Создать проект", "Создать новый проект", width=file_btn_width)
-        self._add_btn(project, "open_project", "📂 Открыть проект", "Открыть *.zproj", width=file_btn_width)
-        self._add_btn(project, "save_project", "💾 Сохранить", "Сохранить *.zproj", width=file_btn_width)
-        self._add_btn(project, "save_project_as", "💾 Сохранить как", "Сохранить *.zproj как новый", width=file_btn_width)
+        self._add_btn(project, "new_project", "Создать проект", "Создать новый проект", width=file_btn_width)
+        self._add_btn(project, "open_project", "Открыть проект", "Открыть *.zproj", width=file_btn_width)
+        self._add_btn(project, "save_project", "Сохранить", "Сохранить *.zproj", width=file_btn_width)
+        self._add_btn(project, "save_project_as", "Сохранить как", "Сохранить *.zproj как новый", width=file_btn_width)
 
         imports = ttk.LabelFrame(tab, text="Импорт", padding=3)
         imports.pack(side="left", fill="y", anchor="nw", padx=8)
