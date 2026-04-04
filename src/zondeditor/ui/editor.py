@@ -2821,6 +2821,9 @@ class GeoCanvasEditor(tk.Tk):
         if ptype:
             self.project_type = ptype
         mode_keys = {k: v for k, v in p.items() if str(k).startswith("mode_")}
+        if str(getattr(self, "project_type", "") or "") == "type1_mech" and mode_keys:
+            if not self._apply_type1_params(mode_keys):
+                return
         if mode_keys:
             self.project_mode_params.update({k: str(v or "").strip() for k, v in mode_keys.items()})
             for k in list(mode_keys):
@@ -2833,6 +2836,104 @@ class GeoCanvasEditor(tk.Tk):
             self.schedule_graph_redraw()
         except Exception:
             pass
+
+    def _apply_type1_params(self, mode_keys: dict[str, str]) -> bool:
+        old_step = str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.20") or "0.20")
+        old_lob = str(getattr(self, "project_mode_params", {}).get("mode_lob_coeff", "1.00") or "1.00")
+        old_tot = str(getattr(self, "project_mode_params", {}).get("mode_total_coeff", "1.00") or "1.00")
+        new_step = str(mode_keys.get("mode_step_depth", old_step) or old_step).replace(",", ".").strip()
+        new_lob = str(mode_keys.get("mode_lob_coeff", old_lob) or old_lob).replace(",", ".").strip()
+        new_tot = str(mode_keys.get("mode_total_coeff", old_tot) or old_tot).replace(",", ".").strip()
+
+        try:
+            step_val = round(float(new_step), 3)
+        except Exception:
+            messagebox.showerror("Ошибка", "Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.4 м.")
+            self._sync_type1_params_to_ribbon()
+            return False
+        if step_val not in {0.1, 0.2, 0.4}:
+            messagebox.showerror("Ошибка", "Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.4 м.")
+            self._sync_type1_params_to_ribbon()
+            return False
+
+        def _parse_coeff(txt: str) -> float | None:
+            try:
+                v = float(txt)
+            except Exception:
+                return None
+            return v
+
+        lob_val = _parse_coeff(new_lob)
+        tot_val = _parse_coeff(new_tot)
+        if lob_val is None or tot_val is None or not (0.01 <= lob_val <= 5.00) or not (0.01 <= tot_val <= 5.00):
+            messagebox.showerror("Ошибка", "Тарировочный коэффициент должен быть в диапазоне от 0.01 до 5.00.")
+            self._sync_type1_params_to_ribbon()
+            return False
+
+        if round(step_val, 3) != round(float(old_step), 3):
+            if self._type1_has_user_data():
+                messagebox.showwarning("Изменение шага", "Шаг нельзя менять после ввода данных в колонке.")
+                self._sync_type1_params_to_ribbon()
+                return False
+            self._rebuild_type1_depth_grid(step_val)
+
+        if abs(lob_val - float(old_lob)) > 1e-9 or abs(tot_val - float(old_tot)) > 1e-9:
+            self._recalc_type1_channels(float(old_lob), lob_val, float(old_tot), tot_val)
+
+        self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
+        self.project_mode_params["mode_lob_coeff"] = f"{lob_val:.2f}".rstrip("0").rstrip(".")
+        self.project_mode_params["mode_total_coeff"] = f"{tot_val:.2f}".rstrip("0").rstrip(".")
+        self._redraw()
+        self.schedule_graph_redraw()
+        return True
+
+    def _sync_type1_params_to_ribbon(self):
+        rv = getattr(self, "ribbon_view", None)
+        if rv is None:
+            return
+        rv.set_project_type("type1_mech", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+
+    def _type1_has_user_data(self) -> bool:
+        for t in (getattr(self, "tests", []) or []):
+            for arr in (getattr(t, "qc", []) or [], getattr(t, "fs", []) or []):
+                for v in arr:
+                    if str(v or "").strip() != "":
+                        return True
+        return False
+
+    def _rebuild_type1_depth_grid(self, step_val: float):
+        rows = max(1, int(round(5.0 / float(step_val)))) + 1
+        depth = [f"{(i * float(step_val)):.2f}" for i in range(rows)]
+        for t in (getattr(self, "tests", []) or []):
+            t.depth = list(depth)
+            t.qc = (list(getattr(t, "qc", []) or []) + [""] * rows)[:rows]
+            t.fs = (list(getattr(t, "fs", []) or []) + [""] * rows)[:rows]
+            tid = int(getattr(t, "tid", 0) or 0)
+            self.depth0_by_tid[tid] = 0.0
+            self.step_by_tid[tid] = float(step_val)
+        self.step_m = float(step_val)
+
+    def _recalc_type1_channels(self, old_lob: float, new_lob: float, old_tot: float, new_tot: float):
+        ratio_lob = new_lob / old_lob if old_lob else 1.0
+        ratio_tot = new_tot / old_tot if old_tot else 1.0
+        for t in (getattr(self, "tests", []) or []):
+            for i in range(len(getattr(t, "qc", []) or [])):
+                q_raw = str(t.qc[i] if i < len(t.qc) else "").strip().replace(",", ".")
+                if q_raw == "":
+                    continue
+                try:
+                    t.qc[i] = f"{float(q_raw) * ratio_lob:.2f}".rstrip("0").rstrip(".")
+                except Exception:
+                    continue
+            for i in range(len(getattr(t, "fs", []) or [])):
+                qt_raw = str(t.fs[i] if i < len(t.fs) else "").strip().replace(",", ".")
+                if qt_raw == "":
+                    continue
+                try:
+                    qt_new = float(qt_raw) * ratio_tot
+                    t.fs[i] = f"{qt_new:.2f}".rstrip("0").rstrip(".")
+                except Exception:
+                    continue
 
     def open_geo_params_dialog(self):
         """Открыть окно параметров GEO для текущего файла."""
@@ -3025,6 +3126,11 @@ class GeoCanvasEditor(tk.Tk):
 
     def _calc_qc_fs_from_del(self, qc_del: int, fs_del: int) -> tuple[float, float]:
         """Пересчёт делений в qc/fs через единый контур processing.calibration."""
+        if str(getattr(self, "project_type", "") or "") == "type1_mech":
+            qc_val = float(qc_del or 0)
+            qt_val = float(fs_del or 0)  # в механике второй столбец = Qt (общ)
+            qs_val = max(0.0, qt_val - qc_val)  # Qs = Qt - Qc
+            return qc_val, qs_val
         cal = self._current_calibration()
         return calc_qc_fs_from_del(
             qc_del,
