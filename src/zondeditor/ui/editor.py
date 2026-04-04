@@ -478,7 +478,7 @@ class GeoCanvasEditor(tk.Tk):
             self._grid_base_row_maps = {}
             return
 
-        if str(getattr(self, "project_type", "") or "") == "type1_mech":
+        if str(getattr(self, "project_type", "") or "") in {"type1_mech", "direct_qcfs"}:
             self._ensure_mechanical_depth_template_rows()
 
         grid, grid_step, row_maps, start_rows = self._compute_depth_grid()
@@ -7840,9 +7840,13 @@ class GeoCanvasEditor(tk.Tk):
 
             # колонка заголовков (H/qc/fs) — в шапке и фиксирована
             sh_y = y0 + self.hdr_h - top_pad
-            if str(getattr(self, "project_type", "") or "") == "type1_mech":
+            ptype = str(getattr(self, "project_type", "") or "")
+            if ptype == "type1_mech":
                 q_hdr = "Qc (лоб)"
                 f_hdr = "Qt (общ)"
+            elif ptype == "direct_qcfs":
+                q_hdr = "qc, МПа"
+                f_hdr = "fs, кПа"
             else:
                 q_hdr = "qc"
                 f_hdr = "fs"
@@ -10524,7 +10528,7 @@ class GeoCanvasEditor(tk.Tk):
         self.step_by_tid = {}
         self.gwl_by_tid = {}
         self.geo_kind = "K2"
-        if selected_type == "type1_mech":
+        if selected_type in {"type1_mech", "direct_qcfs"}:
             self._create_initial_mechanical_column()
 
         try:
@@ -10545,12 +10549,20 @@ class GeoCanvasEditor(tk.Tk):
 
     def _create_initial_mechanical_column(self):
         # Для стартового механического шаблона фиксируем шаг 0.20 м.
+        # Для direct_qcfs берём шаг из параметров режима (по умолчанию 0.10).
         # Это гарантирует полный предзаполненный столбец 0.00..5.00.
-        step_m = 0.2
+        if str(getattr(self, "project_type", "") or "") == "direct_qcfs":
+            try:
+                step_m = float(str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.10") or "0.10").replace(",", "."))
+            except Exception:
+                step_m = 0.1
+        else:
+            step_m = 0.2
         self.step_m = step_m
-        self.project_mode_params["mode_step_depth"] = "0.20"
+        self.project_mode_params["mode_step_depth"] = f"{step_m:.2f}"
         dt_text = _dt.datetime.now().replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
-        depth_vals = [f"{(i * step_m):.2f}" for i in range(26)]  # 0.00 .. 5.00
+        rows_count = max(1, int(round(5.0 / float(step_m)))) + 1
+        depth_vals = [f"{(i * step_m):.2f}" for i in range(rows_count)]  # 0.00 .. 5.00
         n = len(depth_vals)
         self.tests = [TestData(tid=1, dt=dt_text, depth=depth_vals, qc=[""] * n, fs=[""] * n, incl=None, orig_id=None, block=None)]
         self.flags = {1: TestFlags(False, set(), set(), set(), set())}
