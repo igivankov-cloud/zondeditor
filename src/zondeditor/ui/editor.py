@@ -2961,6 +2961,7 @@ class GeoCanvasEditor(tk.Tk):
             self._sync_type2_params_to_ribbon()
             return False
         is_k4 = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"
+        is_imported_k2 = (str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K2") and bool(getattr(self, "geo_path", None))
         try:
             old_step_val = round(float(old_step), 3)
         except Exception:
@@ -2970,7 +2971,7 @@ class GeoCanvasEditor(tk.Tk):
             self._sync_type2_params_to_ribbon()
             return False
         if round(step_val, 3) != round(float(old_step), 3):
-            if is_k4 and old_step_val >= 0.1 and step_val == 0.05:
+            if old_step_val >= 0.1 and step_val == 0.05 and (is_k4 or is_imported_k2):
                 self.convert_10_to_5()
                 self.step_by_tid = {int(getattr(t, "tid", 0) or 0): 0.05 for t in (getattr(self, "tests", []) or [])}
             else:
