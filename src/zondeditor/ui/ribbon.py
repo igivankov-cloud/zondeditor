@@ -83,7 +83,6 @@ class RibbonView(ttk.Frame):
 
         self._build_file_tab()
         self._build_params_tab()
-        self._build_processing_tab()
         self._build_view_tab()
         self._build_layers_tab()
         self._build_calc_tab()
@@ -173,8 +172,19 @@ class RibbonView(ttk.Frame):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Параметры")
         self._params_tab = tab
-        self._params_mode_host = ttk.Frame(tab)
-        self._params_mode_host.pack(side="top", fill="x")
+        layout = ttk.Frame(tab)
+        layout.pack(side="top", fill="x")
+        self._params_mode_host = ttk.Frame(layout)
+        self._params_mode_host.pack(side="left", fill="x", expand=True)
+        actions = ttk.Frame(layout)
+        actions.pack(side="right", anchor="ne", padx=(12, 0))
+        self._add_btn(
+            actions,
+            "fix_algo",
+            "Интерполировать отсутствующие значения",
+            "Автоматическая корректировка",
+            width=38,
+        )
         self._render_params_by_project_type(self.project_type_mode)
 
     def _build_empty_params_state(self, parent):
@@ -711,19 +721,6 @@ class RibbonView(ttk.Frame):
         cmd = self.commands.get("change_ige_field")
         if callable(cmd):
             cmd(str(ige_id or "").strip(), str(field_name or "").strip(), value)
-
-    def _build_processing_tab(self):
-        tab = ttk.Frame(self.tabs, padding=4)
-        self.tabs.add(tab, text="Обработка")
-        host = ttk.Frame(tab)
-        host.pack(side="left", fill="y", padx=4)
-        self._add_btn(
-            host,
-            "fix_algo",
-            "Интерполировать отсутствующие значения",
-            "Автоматическая корректировка",
-            width=38,
-        )
 
     def _open_ige_params(self, ige_id: str):
         self.layer_ige_var.set(ige_id)
