@@ -200,7 +200,7 @@ class RibbonView(ttk.Frame):
             self._common_param_entries[key] = ent
 
         add_field(col_left, 0, "Шаг зондирования, м", self.step_depth_var, "mode_step_depth", width=6)
-        add_field(col_left, 1, "", self.controller_type_var, "controller_type", width=12)
+        add_field(col_left, 1, "Тип контролера", self.controller_type_var, "controller_type", width=12)
         add_field(col_left, 2, "Тип зонда", self.probe_type_var, "probe_type", width=12)
         add_field(col_left, 3, "Шкала прибора", self.controller_scale_div_var, "controller_scale_div", width=4)
         add_field(col_right, 0, "Максимальная нагрузка на конус, кН", self.cone_kn_var, "cone_kn", width=4)
@@ -759,7 +759,10 @@ class RibbonView(ttk.Frame):
         ptype = str(p.get("project_type", "") or "").strip()
         if ptype:
             self.set_project_type(ptype, mode_params=p)
-        self.controller_type_var.set(str(p.get("controller_type", "") or ""))
+        controller_txt = str(p.get("controller_type", "") or "")
+        if self.project_type_mode == "type2_electric" and controller_txt.strip() == "ТЕСТ-К2М":
+            controller_txt = ""
+        self.controller_type_var.set(controller_txt)
         self.controller_scale_div_var.set(str(p.get("controller_scale_div", "") or ""))
         self.probe_type_var.set(str(p.get("probe_type", "") or ""))
         self.cone_kn_var.set(str(p.get("cone_kn", "") or ""))
