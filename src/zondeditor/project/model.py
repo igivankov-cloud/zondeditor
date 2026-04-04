@@ -37,6 +37,8 @@ class Project:
     created_at: str = ""
     updated_at: str = ""
     object_name: str = ""
+    project_name: str = ""
+    project_type: str = "type2_electric"
     source: SourceInfo = field(default_factory=SourceInfo)
     settings: ProjectSettings = field(default_factory=ProjectSettings)
     ops: list[dict[str, Any]] = field(default_factory=list)

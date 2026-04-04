@@ -231,6 +231,9 @@ class GeoCanvasEditor(tk.Tk):
         self._algo_preview_mode = False
         self.object_code = ""
         self.object_name = ""
+        self.project_name = "Новый проект"
+        self.project_type = "type2_electric"
+        self.project_mode_params: dict[str, str] = {}
         self.project_path: Path | None = None
         self.project_ops: list[dict] = []
         self._marks_index: dict[tuple[int, float, str], dict] = {}
@@ -2147,6 +2150,7 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view = RibbonView(self, commands=commands, icon_font=_pick_icon_font(11))
             self.ribbon_view.pack(side="top", fill="x", before=ribbon)
             self.ribbon_view.set_object_name(self.object_name)
+            self.ribbon_view.set_project_type(str(getattr(self, "project_type", "type2_electric")), mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
             self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
             self.ribbon_view.set_show_graphs(bool(getattr(self, "show_graphs", False)))
             self.ribbon_view.set_show_geology_column(bool(getattr(self, "show_geology_column", True)))
@@ -2445,10 +2449,18 @@ class GeoCanvasEditor(tk.Tk):
         return trees
 
     def _update_window_title(self):
-        obj = self.object_name.strip() if getattr(self, "object_name", "") else ""
-        obj = obj or "(без названия)"
-        pname = Path(self.project_path).name if getattr(self, "project_path", None) else "(без проекта)"
-        self.title(f"ZondEditor — {obj} — {pname}")
+        pname = str(getattr(self, "project_name", "") or "").strip() or "Новый проект"
+        ptype = self._project_type_caption(str(getattr(self, "project_type", "") or "type2_electric"))
+        self.title(f"ZondEditor — {pname} — {ptype}")
+
+    @staticmethod
+    def _project_type_caption(project_type: str) -> str:
+        t = str(project_type or "").strip()
+        if t == "type1_mech":
+            return "Тип 1"
+        if t == "direct_qcfs":
+            return "Прямой ввод qc/fs"
+        return "Тип 2"
 
     def _confirm_discard_if_dirty(self) -> bool:
         if not getattr(self, "_dirty", False):
@@ -2484,12 +2496,16 @@ class GeoCanvasEditor(tk.Tk):
         self.is_gxl = (self.geo_path.suffix.lower() == ".gxl")
         self.loaded_path = str(self.geo_path)
         self.project_path = None
+        self.project_name = str(self.geo_path.stem or "Новый проект")
+        self.project_type = "type2_electric"
         self.load_and_render()
         try:
             _log_event(self.usage_logger, "OPEN", file=str(self.geo_path))
         except Exception:
             pass
         self._ensure_object_code()
+        if getattr(self, "ribbon_view", None):
+            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
         self._update_window_title()
 
     def _current_start_depth_for_test(self, t) -> float:
@@ -2760,9 +2776,18 @@ class GeoCanvasEditor(tk.Tk):
 
     def _on_common_params_changed(self, params: dict[str, str] | None = None):
         p = dict(params or {})
+        ptype = str(p.pop("project_type", "") or "").strip()
+        if ptype:
+            self.project_type = ptype
+        mode_keys = {k: v for k, v in p.items() if str(k).startswith("mode_")}
+        if mode_keys:
+            self.project_mode_params.update({k: str(v or "").strip() for k, v in mode_keys.items()})
+            for k in list(mode_keys):
+                p.pop(k, None)
         if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and "controller_scale_div" in p and str(p.get("controller_scale_div", "")).strip() == "":
             p.pop("controller_scale_div", None)
         self._set_common_params(p, getattr(self, "geo_kind", "K2"))
+        self._update_window_title()
         try:
             self.schedule_graph_redraw()
         except Exception:
@@ -9960,7 +9985,11 @@ class GeoCanvasEditor(tk.Tk):
         return state
 
     def _project_settings_from_ui(self) -> ProjectSettings:
-        extras = {"cpt_calc_settings": dict(getattr(self, "cpt_calc_settings", {}) or {}), "calc_tab_state": dict(getattr(self, "calc_tab_state", CalculationTabState()).__dict__)}
+        extras = {
+            "cpt_calc_settings": dict(getattr(self, "cpt_calc_settings", {}) or {}),
+            "calc_tab_state": dict(getattr(self, "calc_tab_state", CalculationTabState()).__dict__),
+            "project_mode_params": dict(getattr(self, "project_mode_params", {}) or {}),
+        }
         cp = self._current_common_params()
         scale_val = str(cp.get("controller_scale_div", "250") or "250")
         fcone_val = str(cp.get("cone_kn", "30") or "30")
@@ -9994,6 +10023,8 @@ class GeoCanvasEditor(tk.Tk):
         )
         return Project(
             object_name=(self.object_name or self.object_code or ""),
+            project_name=str(getattr(self, "project_name", "") or ""),
+            project_type=str(getattr(self, "project_type", "type2_electric") or "type2_electric"),
             source=src,
             settings=self._project_settings_from_ui(),
             ops=list(getattr(self, "project_ops", []) or []),
@@ -10201,6 +10232,9 @@ class GeoCanvasEditor(tk.Tk):
         self.project_path = Path(path)
         self.object_name = project.object_name or ""
         self.object_code = self.object_name
+        self.project_name = str(getattr(project, "project_name", "") or self.object_name or "Новый проект")
+        self.project_type = str(getattr(project, "project_type", "") or "type2_electric")
+        self.project_mode_params = dict((project.settings.extras or {}).get("project_mode_params") or {})
         self.project_ops = list(project.ops or [])
         self.original_bytes = source_bytes
         self.geo_path = Path(project.source.filename) if (project.source and project.source.filename) else None
@@ -10230,6 +10264,7 @@ class GeoCanvasEditor(tk.Tk):
         self._dirty = False
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)
+            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(self.project_mode_params or {}))
             self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
         self.status.config(text=self._project_open_diagnostics(status_info))
         self._update_window_title()
@@ -10246,23 +10281,19 @@ class GeoCanvasEditor(tk.Tk):
 
         frm = ttk.Frame(dlg, padding=12)
         frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Название проекта:").grid(row=0, column=0, sticky="w", pady=(0, 6))
+        project_name_var = tk.StringVar(master=self, value="Новый проект")
+        e_name = ttk.Entry(frm, textvariable=project_name_var, width=28)
+        e_name.grid(row=1, column=0, sticky="we", pady=(0, 8))
+        frm.columnconfigure(0, weight=1)
 
-        ttk.Label(frm, text="Глубина (м):").grid(row=0, column=0, sticky="w", pady=(0, 6))
-        depth_var = tk.StringVar(master=self, value="10")
-        e_depth = ttk.Entry(frm, textvariable=depth_var, width=12)
-        e_depth.grid(row=0, column=1, sticky="w", pady=(0, 6))
-
-        ttk.Label(frm, text="Шаг (м):").grid(row=1, column=0, sticky="w", pady=(0, 6))
-        step_var = tk.StringVar(master=self, value="0.10")
-        e_step = ttk.Entry(frm, textvariable=step_var, width=12)
-        e_step.grid(row=1, column=1, sticky="w", pady=(0, 6))
-
-        incl_var = tk.BooleanVar(master=self, value=True)
-        ttk.Checkbutton(
-            frm,
-            text="Инклинометр при глубине > 10 м",
-            variable=incl_var,
-        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 10))
+        ttk.Label(frm, text="Тип проекта:").grid(row=2, column=0, sticky="w", pady=(0, 4))
+        project_type_var = tk.StringVar(master=self, value="type1_mech")
+        type_box = ttk.Frame(frm)
+        type_box.grid(row=3, column=0, sticky="we", pady=(0, 10))
+        ttk.Radiobutton(type_box, text="Тип 1 — механический", value="type1_mech", variable=project_type_var).pack(anchor="w")
+        ttk.Radiobutton(type_box, text="Тип 2 — электрический", value="type2_electric", variable=project_type_var).pack(anchor="w")
+        ttk.Radiobutton(type_box, text="Прямой ввод — Qc/Fs", value="direct_qcfs", variable=project_type_var).pack(anchor="w")
 
         result = {"ok": False}
 
@@ -10270,21 +10301,17 @@ class GeoCanvasEditor(tk.Tk):
             dlg.destroy()
 
         def _ok(_evt=None):
-            try:
-                depth_m = float(str(depth_var.get()).replace(",", ".").strip())
-                step_m = float(str(step_var.get()).replace(",", ".").strip())
-                if depth_m <= 0 or step_m <= 0:
-                    raise ValueError
-            except Exception:
-                messagebox.showerror("Ошибка", "Введите корректные значения глубины и шага.", parent=self)
+            name = str(project_name_var.get() or "").strip()
+            if not name:
+                messagebox.showerror("Ошибка", "Укажите название проекта.", parent=self)
                 return
-            result.update(ok=True, depth=depth_m, step=step_m, incl=bool(incl_var.get()))
+            result.update(ok=True, project_name=name, project_type=str(project_type_var.get() or "type1_mech"))
             dlg.destroy()
 
         btns = ttk.Frame(frm)
-        btns.grid(row=3, column=0, columnspan=2, sticky="e")
+        btns.grid(row=4, column=0, sticky="e")
         ttk.Button(btns, text="Отмена", command=_cancel).pack(side="right", padx=(8, 0))
-        ttk.Button(btns, text="OK", command=_ok).pack(side="right")
+        ttk.Button(btns, text="Создать", command=_ok).pack(side="right")
 
         dlg.bind("<Return>", _ok)
         dlg.bind("<Escape>", _cancel)
@@ -10294,15 +10321,14 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
 
-        e_depth.focus_set()
+        e_name.focus_set()
         self.wait_window(dlg)
 
         if not result.get("ok"):
             return
 
-        depth_m = float(result["depth"])
-        step_m = float(result["step"])
-        with_incl = bool(result["incl"])
+        selected_type = str(result.get("project_type") or "type1_mech")
+        selected_name = str(result.get("project_name") or "Новый проект")
 
         self.tests = []
         self.flags = {}
@@ -10315,41 +10341,19 @@ class GeoCanvasEditor(tk.Tk):
         self._marks_applied_count = 0
         self._marks_color_counts: dict[str, int] = {"green": 0, "purple": 0, "blue": 0, "orange": 0}
         self.project_path = None
-        self.object_name = ""
-        self.object_code = ""
+        self.project_name = selected_name
+        self.project_type = selected_type
+        self.project_mode_params = {"mode_step_depth": "0.10"}
+        self.object_name = selected_name
+        self.object_code = selected_name
         self.geo_path = None
         self.original_bytes = None
         self.depth_start = 0.0
-        self.step_m = step_m
-        self.depth0_by_tid = {1: 0.0}
-        self.step_by_tid = {1: float(step_m)}
+        self.step_m = 0.1
+        self.depth0_by_tid = {}
+        self.step_by_tid = {}
         self.gwl_by_tid = {}
-
-        dt_now = _dt.datetime.now().replace(microsecond=0)
-        dt_text = dt_now.strftime("%Y-%m-%d %H:%M:%S")
-
-        depth_vals = []
-        cur = 0.0
-        guard = 0
-        while cur <= depth_m + 1e-9 and guard < 200000:
-            depth_vals.append(f"{round(cur, 2):g}")
-            cur = round(cur + step_m, 6)
-            guard += 1
-        if not depth_vals:
-            depth_vals = ["0"]
-
-        n = len(depth_vals)
-        qc = ["0"] * n
-        fs = ["0"] * n
-
-        incl_data = None
         self.geo_kind = "K2"
-        if depth_m > 10 and with_incl:
-            self.geo_kind = "K4"
-            incl_data = ["0"] * n
-
-        self.tests.append(TestData(tid=1, dt=dt_text, depth=depth_vals, qc=qc, fs=fs, incl=incl_data, orig_id=None, block=None))
-        self.flags[1] = TestFlags(False, set(), set(), set(), set())
 
         try:
             self.file_var.set("(шаблон проекта)")
@@ -10360,7 +10364,10 @@ class GeoCanvasEditor(tk.Tk):
         self._recompute_statuses_after_data_load(preview_mode=False)
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)
-        self.status.config(text="Создан новый проект-шаблон: 1 опыт")
+            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(self.project_mode_params or {}))
+            self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
+            self.ribbon_view.select_tab("Параметры")
+        self.status.config(text=f"Создан новый проект: {self.project_name}")
         self._update_window_title()
 
     def _on_object_name_changed(self, value: str):

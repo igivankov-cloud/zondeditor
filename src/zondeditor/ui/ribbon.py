@@ -55,6 +55,13 @@ class RibbonView(ttk.Frame):
         self.calc_allow_normative_lt6_var = tk.BooleanVar(value=False)
         self.calc_legacy_sandy_loam_var = tk.BooleanVar(value=False)
         self.calc_fill_preliminary_var = tk.BooleanVar(value=False)
+        self.project_type_mode = "type2_electric"
+        self.installation_name_var = tk.StringVar(value="")
+        self.step_depth_var = tk.StringVar(value="0.10")
+        self.mech_lob_coeff_var = tk.StringVar(value="1.00")
+        self.mech_total_coeff_var = tk.StringVar(value="1.00")
+        self.mech_calib_date_var = tk.StringVar(value="")
+        self.mech_calib_note_var = tk.StringVar(value="")
 
         try:
             style = ttk.Style(self)
@@ -165,8 +172,12 @@ class RibbonView(ttk.Frame):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Параметры")
         self._params_tab = tab
+        self._params_mode_host = ttk.Frame(tab)
+        self._params_mode_host.pack(side="top", fill="x")
+        self._render_params_by_project_type(self.project_type_mode)
 
-        common = ttk.LabelFrame(tab, text="Общие параметры прибора и зонда", padding=4)
+    def _build_type2_params_form(self, parent):
+        common = ttk.LabelFrame(parent, text="Параметры — Тип 2 (электрический)", padding=4)
         common.pack(side="top", fill="x")
 
         common_left = ttk.Frame(common)
@@ -200,8 +211,73 @@ class RibbonView(ttk.Frame):
         add_field(col_right, 2, "Площадь конуса, см²", self.cone_area_cm2_var, "cone_area_cm2", width=4)
         add_field(col_right, 3, "Площадь муфты, см²", self.sleeve_area_cm2_var, "sleeve_area_cm2", width=4)
 
+    def _build_type1_params_form(self, parent):
+        frm = ttk.LabelFrame(parent, text="Параметры — Тип 1 (механический)", padding=6)
+        frm.pack(side="top", fill="x")
+        self._common_param_entries = {}
+
+        ttk.Label(frm, text="Тип проекта: Тип 1 — механический").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        rows = [
+            ("Название/тип установки", self.installation_name_var, "mode_installation_name"),
+            ("Шаг по глубине, м", self.step_depth_var, "mode_step_depth"),
+            ("Коэффициент «лоб»", self.mech_lob_coeff_var, "mode_lob_coeff"),
+            ("Коэффициент «общ»", self.mech_total_coeff_var, "mode_total_coeff"),
+            ("Дата тарировки", self.mech_calib_date_var, "mode_calibration_date"),
+            ("Номер/примечание тарировки", self.mech_calib_note_var, "mode_calibration_note"),
+        ]
+        for i, (label, var, key) in enumerate(rows, start=1):
+            ttk.Label(frm, text=label).grid(row=i, column=0, sticky="w", padx=(0, 6), pady=1)
+            ent = ttk.Entry(frm, textvariable=var, width=26)
+            ent.grid(row=i, column=1, sticky="w", pady=1)
+            ent.bind("<FocusOut>", lambda _e: self._emit_common_params())
+            ent.bind("<Return>", lambda _e: self._emit_common_params())
+            self._common_param_entries[key] = ent
+
+    def _build_direct_params_form(self, parent):
+        frm = ttk.LabelFrame(parent, text="Параметры — Прямой ввод qc/fs", padding=6)
+        frm.pack(side="top", fill="x")
+        self._common_param_entries = {}
+        ttk.Label(frm, text="Тип проекта: Прямой ввод — qc/fs без пересчёта").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        ttk.Label(frm, text="Название/тип установки").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=1)
+        ent_install = ttk.Entry(frm, textvariable=self.installation_name_var, width=26)
+        ent_install.grid(row=1, column=1, sticky="w", pady=1)
+        ent_install.bind("<FocusOut>", lambda _e: self._emit_common_params())
+        ent_install.bind("<Return>", lambda _e: self._emit_common_params())
+        self._common_param_entries["mode_installation_name"] = ent_install
+        ttk.Label(frm, text="Шаг по глубине, м").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=1)
+        ent_step = ttk.Entry(frm, textvariable=self.step_depth_var, width=10)
+        ent_step.grid(row=2, column=1, sticky="w", pady=1)
+        ent_step.bind("<FocusOut>", lambda _e: self._emit_common_params())
+        ent_step.bind("<Return>", lambda _e: self._emit_common_params())
+        self._common_param_entries["mode_step_depth"] = ent_step
+        ttk.Label(frm, text="Работа без коэффициентов пересчёта.\nДанные вводятся напрямую как qc и fs.", foreground="#555").grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=(6, 0)
+        )
+
+    def _render_params_by_project_type(self, project_type: str):
+        self.project_type_mode = str(project_type or "type2_electric")
+        host = getattr(self, "_params_mode_host", None)
+        if host is None:
+            return
+        for w in list(host.winfo_children()):
+            w.destroy()
+        if self.project_type_mode == "type1_mech":
+            self._build_type1_params_form(host)
+        elif self.project_type_mode == "direct_qcfs":
+            self._build_direct_params_form(host)
+        else:
+            self.project_type_mode = "type2_electric"
+            self._build_type2_params_form(host)
+        self._emit_common_params()
+
     def _collect_common_params(self) -> dict[str, str]:
-        return {
+        payload = {
+            "project_type": self.project_type_mode,
+            "mode_installation_name": str(self.installation_name_var.get() or "").strip(),
+            "mode_step_depth": str(self.step_depth_var.get() or "").strip(),
+        }
+        if self.project_type_mode == "type2_electric":
+            payload.update({
             "controller_type": str(self.controller_type_var.get() or "").strip(),
             "controller_scale_div": str(self.controller_scale_div_var.get() or "").strip(),
             "probe_type": str(self.probe_type_var.get() or "").strip(),
@@ -209,7 +285,15 @@ class RibbonView(ttk.Frame):
             "sleeve_kn": str(self.sleeve_kn_var.get() or "").strip(),
             "cone_area_cm2": str(self.cone_area_cm2_var.get() or "").strip(),
             "sleeve_area_cm2": str(self.sleeve_area_cm2_var.get() or "").strip(),
-        }
+            })
+        if self.project_type_mode == "type1_mech":
+            payload.update({
+                "mode_lob_coeff": str(self.mech_lob_coeff_var.get() or "").strip(),
+                "mode_total_coeff": str(self.mech_total_coeff_var.get() or "").strip(),
+                "mode_calibration_date": str(self.mech_calib_date_var.get() or "").strip(),
+                "mode_calibration_note": str(self.mech_calib_note_var.get() or "").strip(),
+            })
+        return payload
 
     def _emit_common_params(self):
         cb = self.commands.get("common_params_changed")
@@ -667,8 +751,21 @@ class RibbonView(ttk.Frame):
     def set_object_name(self, value: str):
         self.object_name_var.set(value or "")
 
+    def set_project_type(self, project_type: str, *, mode_params: dict[str, str] | None = None):
+        self._render_params_by_project_type(project_type)
+        mp = dict(mode_params or {})
+        self.installation_name_var.set(str(mp.get("mode_installation_name", "") or ""))
+        self.step_depth_var.set(str(mp.get("mode_step_depth", self.step_depth_var.get() or "0.10") or "0.10"))
+        self.mech_lob_coeff_var.set(str(mp.get("mode_lob_coeff", self.mech_lob_coeff_var.get() or "1.00") or "1.00"))
+        self.mech_total_coeff_var.set(str(mp.get("mode_total_coeff", self.mech_total_coeff_var.get() or "1.00") or "1.00"))
+        self.mech_calib_date_var.set(str(mp.get("mode_calibration_date", "") or ""))
+        self.mech_calib_note_var.set(str(mp.get("mode_calibration_note", "") or ""))
+
     def set_common_params(self, params: dict[str, str] | None, *, geo_kind: str = "K2"):
         p = dict(params or {})
+        ptype = str(p.get("project_type", "") or "").strip()
+        if ptype:
+            self.set_project_type(ptype, mode_params=p)
         self.controller_type_var.set(str(p.get("controller_type", "") or ""))
         self.controller_scale_div_var.set(str(p.get("controller_scale_div", "") or ""))
         self.probe_type_var.set(str(p.get("probe_type", "") or ""))
@@ -682,6 +779,19 @@ class RibbonView(ttk.Frame):
                 ent.configure(state=("disabled" if str(geo_kind or "K2").upper() == "K4" else "normal"))
             except Exception:
                 pass
+
+    def select_tab(self, title: str):
+        target = str(title or "").strip()
+        if not target:
+            return
+        try:
+            for tab_id in self.tabs.tabs():
+                if str(self.tabs.tab(tab_id, "text") or "").strip() == target:
+                    self.tabs.select(tab_id)
+                    self._on_tab_changed()
+                    return
+        except Exception:
+            return
 
     def set_enabled(self, key: str, enabled: bool, reason: str = ""):
         btn = self._buttons.get(key)
