@@ -6370,10 +6370,16 @@ class GeoCanvasEditor(tk.Tk):
 
         # --- Header controls (icons / checkbox) ---
         if kind == "edit":
-            if not self._header_action_buttons_enabled(int(ti)):
-                self._set_status("Кнопка недоступна для свёрнутого/заблокированного опыта")
+            if self._is_test_locked(int(ti)):
+                self._set_status("Опыт заблокирован")
                 return
             self._edit_header(ti)
+            return
+        if kind == "rename":
+            if self._is_test_locked(int(ti)):
+                self._set_status("Опыт заблокирован")
+                return
+            self._edit_header_title(ti)
             return
         if kind == "dup":
             if not self._header_action_buttons_enabled(int(ti)):
@@ -7435,7 +7441,7 @@ class GeoCanvasEditor(tk.Tk):
             _set_cursor("")
             return
         kind, ti, row, field = hit
-        if kind in ("lock", "edit", "dup", "trash"):
+        if kind in ("lock", "edit", "rename", "dup", "trash"):
             self._set_hover((kind, ti))
             _set_cursor("hand2")
         elif kind == "export":
@@ -7817,14 +7823,12 @@ class GeoCanvasEditor(tk.Tk):
             cb_y0 = y0 + 6
             dock.create_rectangle(cb_x0, cb_y0, cb_x0 + cb_s, cb_y0 + cb_s, fill="white", outline="#b9b9b9")
             title_x = cb_x0 + cb_s + 6
-            ico_font = _pick_icon_font(10)
             lock_on = bool(getattr(t, "locked", False))
-            lock_x, edit_x = (x1 - 34), (x1 - 14)
+            lock_x = (x1 - 14)
             ico_y = y0 + 12
             max_title_x = lock_x - 8
-            dock.create_text(title_x, y0 + 12, anchor="w", text=f"Опыт {t.tid}", font=("Segoe UI", 9, "bold"), fill=hdr_text, width=max(24, max_title_x - title_x))
+            dock.create_text(title_x, y0 + 12, anchor="w", text=f"Опыт №{t.tid}", font=("Segoe UI", 9, "bold"), fill=hdr_text, width=max(24, max_title_x - title_x))
             dock.create_text(lock_x, ico_y, text=("🔒" if lock_on else "🔓"), font=("Segoe UI", 10), fill=hdr_icon, anchor="center")
-            dock.create_text(edit_x, ico_y, text=ICON_CALENDAR, font=ico_font, fill="#b6b6b6", anchor="center")
             dock.create_text(title_x, y0 + 30, anchor="w", text=dt_line, font=("Segoe UI", 8), fill=hdr_text)
             dock_bottom = max(dock_bottom, y1)
 
@@ -7887,7 +7891,7 @@ class GeoCanvasEditor(tk.Tk):
             # Title and datetime
             title_x = cb_x0 + cb_s + 8
             self.hcanvas.create_text(title_x, row_center_y, anchor="w",
-                                     text=f"Опыт {t.tid}", font=("Segoe UI", 9, "bold"), fill=hdr_text)
+                                     text=f"Опыт №{t.tid}", font=("Segoe UI", 9, "bold"), fill=hdr_text)
             if dt_line:
                 self.hcanvas.create_text(title_x, row_center_y + 18, anchor="w",
                                          text=dt_line, font=("Segoe UI", 9), fill=hdr_text)
@@ -7898,15 +7902,12 @@ class GeoCanvasEditor(tk.Tk):
 
             lock_on = bool(getattr(t, "locked", False))
             actions_enabled = bool(self._header_action_buttons_enabled(int(ti)))
-            lock_x, edit_x, dup_x, trash_x = (x1 - 92), (x1 - 66), (x1 - 40), (x1 - 14)
+            lock_x, dup_x, trash_x = (x1 - 66), (x1 - 40), (x1 - 14)
             box_w, box_h = 22, 20
 
             # hover background (только для иконок, не для галочки)
             if getattr(self, "_hover", None) == ("lock", ti):
                 self.hcanvas.create_rectangle(lock_x - box_w/2, ico_y - box_h/2, lock_x + box_w/2, ico_y + box_h/2,
-                                              fill="#e9e9e9", outline="")
-            if getattr(self, "_hover", None) == ("edit", ti):
-                self.hcanvas.create_rectangle(edit_x - box_w/2, ico_y - box_h/2, edit_x + box_w/2, ico_y + box_h/2,
                                               fill="#e9e9e9", outline="")
             if getattr(self, "_hover", None) == ("dup", ti):
                 self.hcanvas.create_rectangle(dup_x - box_w/2, ico_y - box_h/2, dup_x + box_w/2, ico_y + box_h/2,
@@ -7914,9 +7915,12 @@ class GeoCanvasEditor(tk.Tk):
             if getattr(self, "_hover", None) == ("trash", ti):
                 self.hcanvas.create_rectangle(trash_x - box_w/2, ico_y - box_h/2, trash_x + box_w/2, ico_y + box_h/2,
                                               fill="#e9e9e9", outline="")
+            if getattr(self, "_hover", None) == ("rename", ti):
+                self.hcanvas.create_rectangle(title_x - 2, row_center_y - 10, lock_x - 8, row_center_y + 10, fill="#e9e9e9", outline="")
+            if getattr(self, "_hover", None) == ("edit", ti) and dt_line:
+                self.hcanvas.create_rectangle(title_x - 2, row_center_y + 8, lock_x - 8, row_center_y + 28, fill="#e9e9e9", outline="")
 
             self.hcanvas.create_text(lock_x, ico_y, text=("🔒" if lock_on else "🔓"), font=("Segoe UI", 10), fill=hdr_icon, anchor="center")
-            self.hcanvas.create_text(edit_x, ico_y, text=ICON_CALENDAR, font=ico_font, fill=(hdr_icon if actions_enabled else "#b6b6b6"), anchor="center")
             self.hcanvas.create_text(dup_x, ico_y, text=ICON_COPY, font=ico_font, fill=(hdr_icon if actions_enabled else "#b6b6b6"), anchor="center")
             self.hcanvas.create_text(trash_x, ico_y, text=ICON_DELETE, font=ico_font, fill=(hdr_icon if actions_enabled else "#b6b6b6"), anchor="center")
 
@@ -8130,8 +8134,15 @@ class GeoCanvasEditor(tk.Tk):
                 if x0 <= cx <= x1 and y0 <= cy <= y1:
                     if (x0 + 6) <= cx <= (x0 + 18) and (y0 + 6) <= cy <= (y0 + 18):
                         return ("export", ti, None, None)
-                    if (x1 - 44) <= cx <= (x1 - 24) and (y0 + 2) <= cy <= (y0 + 22):
+                    if (x1 - 24) <= cx <= (x1 - 4) and (y0 + 2) <= cy <= (y0 + 22):
                         return ("lock", ti, None, None)
+                    cb_s = 12
+                    title_x = x0 + 6 + cb_s + 6
+                    lock_x = x1 - 14
+                    if title_x <= cx <= (lock_x - 8) and (y0 + 4) <= cy <= (y0 + 20):
+                        return ("rename", ti, None, None)
+                    if title_x <= cx <= (lock_x - 8) and (y0 + 22) <= cy <= (y0 + 38):
+                        return ("edit", ti, None, None)
                     return ("header", ti, None, None)
             return None
 
@@ -8148,15 +8159,21 @@ class GeoCanvasEditor(tk.Tk):
                     if (x0 + 6) <= cx <= (x0 + 20) and (y0 + 8) <= cy <= (y0 + 22):
                         return ("export", ti, None, None)
                     # icons
-                    if (x1 - 104) <= cx <= (x1 - 80) and y0 <= cy <= (y0 + 24):
+                    if (x1 - 78) <= cx <= (x1 - 54) and y0 <= cy <= (y0 + 24):
                         return ("lock", ti, None, None)
                     actions_enabled = bool(self._header_action_buttons_enabled(int(ti)))
-                    if actions_enabled and (x1 - 78) <= cx <= (x1 - 54) and y0 <= cy <= (y0 + 24):
-                        return ("edit", ti, None, None)
                     if actions_enabled and (x1 - 52) <= cx <= (x1 - 28) and y0 <= cy <= (y0 + 24):
                         return ("dup", ti, None, None)
                     if actions_enabled and (x1 - 26) <= cx <= (x1 - 2) and y0 <= cy <= (y0 + 24):
                         return ("trash", ti, None, None)
+                    cb_s = 14
+                    title_x = x0 + 6 + cb_s + 8
+                    row_center_y = y0 + 14
+                    lock_x = x1 - 66
+                    if title_x <= cx <= (lock_x - 8) and (row_center_y - 9) <= cy <= (row_center_y + 9):
+                        return ("rename", ti, None, None)
+                    if title_x <= cx <= (lock_x - 8) and (row_center_y + 9) <= cy <= (row_center_y + 27):
+                        return ("edit", ti, None, None)
                     return ("header", ti, None, None)
             return None
 
@@ -8631,20 +8648,8 @@ class GeoCanvasEditor(tk.Tk):
         PADX = 12
         PADY = 6
 
-        # ---- № ----
-        ttk.Label(win, text="№ зондирования").grid(row=0, column=0, sticky="w", padx=PADX, pady=(PADY, 2))
-        tid_var = tk.StringVar(master=self, value=str(t.tid))
-        tid_entry = ttk.Entry(
-            win,
-            textvariable=tid_var,
-            width=10,
-            validate="key",
-            validatecommand=(win.register(_validate_tid_key), "%P"),
-        )
-        tid_entry.grid(row=0, column=1, sticky="w", padx=(0, PADX), pady=(PADY, 2), columnspan=2)
-
         # ---- Date + Time ----
-        ttk.Label(win, text="Дата").grid(row=1, column=0, sticky="w", padx=PADX, pady=2)
+        ttk.Label(win, text="Дата").grid(row=0, column=0, sticky="w", padx=PADX, pady=(PADY, 2))
 
         parsed = _try_parse_dt(t.dt or "")
         if parsed is None:
@@ -8659,7 +8664,7 @@ class GeoCanvasEditor(tk.Tk):
 
         date_var = tk.StringVar(master=self, value=_format_date_ru(d0))
         date_entry = ttk.Entry(win, textvariable=date_var, width=12, state="readonly")
-        date_entry.grid(row=1, column=1, sticky="w", padx=(0, 6), pady=2)
+        date_entry.grid(row=0, column=1, sticky="w", padx=(0, 6), pady=(PADY, 2))
 
         def pick_date():
             try:
@@ -8673,12 +8678,12 @@ class GeoCanvasEditor(tk.Tk):
                 date_var.set(_format_date_ru(dlg.selected))
 
         cal_btn = ttk.Button(win, text="📅", style="Hdr.TButton", command=pick_date)
-        cal_btn.grid(row=1, column=2, sticky="w", padx=(0, PADX), pady=2)
+        cal_btn.grid(row=0, column=2, sticky="w", padx=(0, PADX), pady=(PADY, 2))
 
-        ttk.Label(win, text="Время").grid(row=2, column=0, sticky="w", padx=PADX, pady=2)
+        ttk.Label(win, text="Время").grid(row=1, column=0, sticky="w", padx=PADX, pady=2)
 
         time_frame = ttk.Frame(win)
-        time_frame.grid(row=2, column=1, columnspan=2, sticky="w", padx=(0, PADX), pady=2)
+        time_frame.grid(row=1, column=1, columnspan=2, sticky="w", padx=(0, PADX), pady=2)
 
         hh_var = tk.StringVar(master=self, value=f"{hh0:02d}")
         mm_var = tk.StringVar(master=self, value=f"{mm0:02d}")
@@ -8705,22 +8710,6 @@ class GeoCanvasEditor(tk.Tk):
 
 
         def apply():
-            new_tid_txt = tid_var.get().strip()
-            if not new_tid_txt:
-                messagebox.showwarning("Внимание", "Номер зондирования не может быть пустым.", parent=win)
-                return
-            try:
-                new_tid = int(new_tid_txt)
-            except Exception:
-                messagebox.showwarning("Внимание", "Номер зондирования должен быть числом.", parent=win)
-                return
-            if not (1 <= new_tid <= 999):
-                messagebox.showwarning("Внимание", "Номер зондирования: от 1 до 999.", parent=win)
-                return
-            if any((i != ti and int(tt.tid) == new_tid) for i, tt in enumerate(self.tests)):
-                messagebox.showwarning("Внимание", f"Номер {new_tid} уже существует.", parent=win)
-                return
-
             try:
                 d = _dt.datetime.strptime(date_var.get().strip(), "%d.%m.%Y").date()
             except Exception:
@@ -8741,21 +8730,14 @@ class GeoCanvasEditor(tk.Tk):
             dt_text = f"{d.day:02d}.{d.month:02d}.{d.year:04d} {hh:02d}:{mm:02d}"
 
             self._push_undo()
-            old_tid = t.tid
-            t.tid = new_tid
             dt_obj = _try_parse_dt(dt_text)
             t.dt = dt_obj.strftime("%Y-%m-%d %H:%M:%S") if dt_obj else dt_text
-
-            if old_tid in self.flags:
-                self.flags[new_tid] = self.flags.pop(old_tid)
-            else:
-                self.flags[new_tid] = TestFlags(False, set(), set(), set(), set())
 
             self._redraw()
             win.destroy()
 
         # Enter = сохранить
-        for _w in (tid_entry, hh_entry, mm_entry):
+        for _w in (hh_entry, mm_entry):
             try:
                 _w.bind('<Return>', lambda _e: apply())
             except Exception:
@@ -8768,7 +8750,7 @@ class GeoCanvasEditor(tk.Tk):
         
         # ---- Buttons (centered) ----
         btns = ttk.Frame(win)
-        btns.grid(row=3, column=0, columnspan=3, sticky="ew", padx=12, pady=(8, 12))
+        btns.grid(row=2, column=0, columnspan=3, sticky="ew", padx=12, pady=(8, 12))
         btns.columnconfigure(0, weight=1)
         btns.columnconfigure(2, weight=1)
 
@@ -8788,6 +8770,71 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
         try:
+            self._center_child(win)
+        except Exception:
+            pass
+
+    def _edit_header_title(self, ti: int):
+        t = self.tests[ti]
+        win = tk.Toplevel(self)
+        win.title("Переименовать опыт")
+        win.resizable(False, False)
+
+        PADX = 12
+        PADY = 8
+
+        ttk.Label(win, text="№ зондирования").grid(row=0, column=0, sticky="w", padx=PADX, pady=(PADY, 2))
+        tid_var = tk.StringVar(master=self, value=str(t.tid))
+        tid_entry = ttk.Entry(
+            win,
+            textvariable=tid_var,
+            width=14,
+            validate="key",
+            validatecommand=(win.register(_validate_tid_key), "%P"),
+        )
+        tid_entry.grid(row=1, column=0, sticky="ew", padx=PADX, pady=(0, 8))
+        tid_entry.focus_set()
+        tid_entry.selection_range(0, "end")
+
+        def apply():
+            new_tid_txt = tid_var.get().strip()
+            if not new_tid_txt:
+                messagebox.showwarning("Внимание", "Номер зондирования не может быть пустым.", parent=win)
+                return
+            try:
+                new_tid = int(new_tid_txt)
+            except Exception:
+                messagebox.showwarning("Внимание", "Номер зондирования должен быть числом.", parent=win)
+                return
+            if not (1 <= new_tid <= 999):
+                messagebox.showwarning("Внимание", "Номер зондирования: от 1 до 999.", parent=win)
+                return
+            if any((i != ti and int(tt.tid) == new_tid) for i, tt in enumerate(self.tests)):
+                messagebox.showwarning("Внимание", f"Номер {new_tid} уже существует.", parent=win)
+                return
+
+            self._push_undo()
+            old_tid = t.tid
+            t.tid = new_tid
+
+            if old_tid in self.flags:
+                self.flags[new_tid] = self.flags.pop(old_tid)
+            else:
+                self.flags[new_tid] = TestFlags(False, set(), set(), set(), set())
+
+            self._redraw()
+            win.destroy()
+
+        btns = ttk.Frame(win)
+        btns.grid(row=2, column=0, sticky="e", padx=PADX, pady=(0, PADY))
+        ttk.Button(btns, text="Сохранить", command=apply).pack(side="left", padx=(0, 8))
+        ttk.Button(btns, text="Отмена", command=win.destroy).pack(side="left")
+
+        win.bind("<Return>", lambda _e: apply())
+        win.bind("<KP_Enter>", lambda _e: apply())
+
+        try:
+            win.update_idletasks()
             self._center_child(win)
         except Exception:
             pass
