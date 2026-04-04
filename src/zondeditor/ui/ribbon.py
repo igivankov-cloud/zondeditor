@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import ttk, simpledialog
 
 from src.zondeditor.calculations.ige_policy import get_ige_profile
-from src.zondeditor.ui.consts import ICON_EXPORT, ICON_IMPORT, ICON_REDO, ICON_SAVE, ICON_UNDO, ICON_TRASH
+from src.zondeditor.ui.consts import ICON_REDO, ICON_SAVE, ICON_UNDO, ICON_TRASH
 from src.zondeditor.ui.widgets import ToolTip
 
 
@@ -55,10 +55,19 @@ class RibbonView(ttk.Frame):
         self.calc_allow_normative_lt6_var = tk.BooleanVar(value=False)
         self.calc_legacy_sandy_loam_var = tk.BooleanVar(value=False)
         self.calc_fill_preliminary_var = tk.BooleanVar(value=False)
+        self._suspend_common_emit = False
+        self.project_type_mode = "type2_electric"
+        self.installation_name_var = tk.StringVar(value="")
+        self.step_depth_var = tk.StringVar(value="0.05")
+        self.mech_lob_coeff_var = tk.StringVar(value="1.00")
+        self.mech_total_coeff_var = tk.StringVar(value="1.00")
+        self.mech_calib_date_var = tk.StringVar(value="")
+        self.mech_calib_note_var = tk.StringVar(value="")
 
         try:
             style = ttk.Style(self)
             style.configure("RibbonCompact.TButton", padding=(4, 1))
+            style.configure("RibbonFileLeft.TButton", padding=(4, 1), anchor="w")
             style.configure("IGEHdr.TButton", padding=(3, 1))
         except Exception:
             pass
@@ -94,9 +103,9 @@ class RibbonView(ttk.Frame):
         ToolTip(btn, tip)
         self._buttons[key] = btn
 
-    def _add_btn(self, parent, key: str, text: str, tip: str):
-        btn = ttk.Button(parent, text=text, command=self.commands.get(key), style="RibbonCompact.TButton", width=12)
-        btn.pack(side="top", fill="x", pady=1)
+    def _add_btn(self, parent, key: str, text: str, tip: str, *, width: int = 12, style: str = "RibbonCompact.TButton"):
+        btn = ttk.Button(parent, text=text, command=self.commands.get(key), style=style, width=width)
+        btn.pack(side="top", fill="x", anchor="w", pady=1)
         ToolTip(btn, tip)
         self._buttons[key] = btn
 
@@ -132,43 +141,44 @@ class RibbonView(ttk.Frame):
     def _build_file_tab(self):
         tab = ttk.Frame(self.tabs, padding=2)
         self.tabs.add(tab, text="Файл")
+        file_group_width_px = 190
+        file_btn_width = 16
+
         project = ttk.LabelFrame(tab, text="Проект", padding=3)
-        project.pack(side="left", fill="y", padx=4)
-        project.columnconfigure(0, weight=1)
-        project.columnconfigure(1, weight=1)
-        self._add_btn_grid(project, "new_project", "🆕 Новый", "Создать новый проект", 0, 0)
-        self._add_btn_grid(project, "open_project", "📂 Открыть", "Открыть *.zproj", 0, 1)
-        self._add_btn_grid(project, "save_project", "💾 Сохранить", "Сохранить *.zproj", 1, 0)
-        self._add_btn_grid(project, "save_project_as", "💾 Как…", "Сохранить *.zproj как новый", 1, 1)
+        project.pack(side="left", fill="y", anchor="nw", padx=(4, 8))
+        project.configure(width=file_group_width_px)
+        project.pack_propagate(False)
+        self._add_btn(project, "new_project", "🆕 Создать проект", "Создать новый проект", width=file_btn_width, style="RibbonFileLeft.TButton")
+        self._add_btn(project, "open_project", "📂 Открыть проект", "Открыть *.zproj", width=file_btn_width, style="RibbonFileLeft.TButton")
+        self._add_btn(project, "save_project", "💾 Сохранить", "Сохранить *.zproj", width=file_btn_width, style="RibbonFileLeft.TButton")
+        self._add_btn(project, "save_project_as", "💾 Сохранить как", "Сохранить *.zproj как новый", width=file_btn_width, style="RibbonFileLeft.TButton")
 
-        obj = ttk.LabelFrame(tab, text="Объект", padding=3)
-        obj.pack(side="left", fill="y", padx=4)
-        ttk.Label(obj, text="Название объекта:").pack(anchor="w")
-        ent = ttk.Entry(obj, textvariable=self.object_name_var, width=28)
-        ent.pack(fill="x", pady=(2, 0))
-        ent.bind("<FocusOut>", lambda _e: self.commands.get("object_name_changed", lambda *_: None)(self.object_name_var.get()))
-        ent.bind("<Return>", lambda _e: self.commands.get("object_name_changed", lambda *_: None)(self.object_name_var.get()))
+        imports = ttk.LabelFrame(tab, text="Импорт", padding=3)
+        imports.pack(side="left", fill="y", anchor="nw", padx=8)
+        imports.configure(width=file_group_width_px)
+        imports.pack_propagate(False)
+        self._add_btn(imports, "open_geo", "GEO", "Открыть GEO/GE0", width=file_btn_width)
+        self._add_btn(imports, "open_gxl", "GXL", "Открыть GXL", width=file_btn_width)
+        self._add_btn(imports, "export_excel", "Excel", "Импорт данных из Excel", width=file_btn_width)
 
-        actions = ttk.LabelFrame(tab, text="Импорт / Экспорт", padding=3)
-        actions.pack(side="left", fill="y", padx=4)
-        actions.columnconfigure(0, weight=1)
-        actions.columnconfigure(1, weight=1)
-        self._add_btn_grid(actions, "open_geo", f"{ICON_IMPORT} GEO", "Открыть GEO/GE0", 0, 0)
-        self._add_btn_grid(actions, "export_geo", f"{ICON_EXPORT} GEO", "Экспорт GEO только через Сохранить как", 0, 1)
-        self._add_btn_grid(actions, "open_gxl", f"{ICON_IMPORT} GXL", "Открыть GXL", 1, 0)
-        self._add_btn_grid(actions, "export_gxl", f"{ICON_EXPORT} GXL", "Экспорт GXL только через Сохранить как", 1, 1)
-        self._add_btn_grid(actions, "export_excel", f"{ICON_EXPORT} Excel", "Экспорт Excel", 2, 0)
-        self._add_btn_grid(actions, "export_credo", f"{ICON_EXPORT} CREDO", "Экспорт CREDO", 2, 1)
-        self._add_btn_grid(actions, "export_archive", "🗜 Архив", "Собрать ZIP с выбранными файлами", 3, 0)
-        self._add_btn_grid(actions, "export_dxf", f"{ICON_EXPORT} DXF", "Экспорт графиков в DXF (заглушка)", 3, 1)
-        self._add_btn_grid(actions, "export_cpt_protocol", "📄 φ/E (CPT)", "Экспорт Word-протокола расчёта φ и E по CPT", 4, 0)
+        exports = ttk.LabelFrame(tab, text="Экспорт", padding=3)
+        exports.pack(side="left", fill="y", anchor="nw", padx=(8, 4))
+        exports.configure(width=file_group_width_px)
+        exports.pack_propagate(False)
+        self._add_btn(exports, "export_geo", "GEO", "Экспорт GEO только через Сохранить как", width=file_btn_width)
+        self._add_btn(exports, "export_gxl", "GXL", "Экспорт GXL только через Сохранить как", width=file_btn_width)
+        self._add_btn(exports, "export_dxf", "DXF", "Экспорт графиков в DXF (заглушка)", width=file_btn_width)
 
     def _build_params_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Параметры")
         self._params_tab = tab
+        self._params_mode_host = ttk.Frame(tab)
+        self._params_mode_host.pack(side="top", fill="x")
+        self._render_params_by_project_type(self.project_type_mode)
 
-        common = ttk.LabelFrame(tab, text="Общие параметры прибора и зонда", padding=4)
+    def _build_type2_params_form(self, parent):
+        common = ttk.LabelFrame(parent, text="Параметры — Тип 2 (электрический)", padding=4)
         common.pack(side="top", fill="x")
 
         common_left = ttk.Frame(common)
@@ -181,11 +191,6 @@ class RibbonView(ttk.Frame):
 
         self._common_param_entries: dict[str, ttk.Entry] = {}
 
-        btn = ttk.Button(col_left, text="Параметры СЗ", command=self.commands.get("geo_params"), style="RibbonCompact.TButton", width=14)
-        btn.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
-        ToolTip(btn, "Открыть параметры зондирований")
-        self._buttons["geo_params"] = btn
-
         def add_field(parent, row: int, label: str, var: tk.StringVar, key: str, width: int = 14):
             ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 4), pady=1)
             ent = ttk.Entry(parent, textvariable=var, width=width)
@@ -194,7 +199,8 @@ class RibbonView(ttk.Frame):
             ent.bind("<Return>", lambda _e: self._emit_common_params())
             self._common_param_entries[key] = ent
 
-        add_field(col_left, 1, "Тип контроллера", self.controller_type_var, "controller_type", width=12)
+        add_field(col_left, 0, "Шаг зондирования, м", self.step_depth_var, "mode_step_depth", width=6)
+        add_field(col_left, 1, "Тип контролера", self.controller_type_var, "controller_type", width=12)
         add_field(col_left, 2, "Тип зонда", self.probe_type_var, "probe_type", width=12)
         add_field(col_left, 3, "Шкала прибора", self.controller_scale_div_var, "controller_scale_div", width=4)
         add_field(col_right, 0, "Максимальная нагрузка на конус, кН", self.cone_kn_var, "cone_kn", width=4)
@@ -202,8 +208,60 @@ class RibbonView(ttk.Frame):
         add_field(col_right, 2, "Площадь конуса, см²", self.cone_area_cm2_var, "cone_area_cm2", width=4)
         add_field(col_right, 3, "Площадь муфты, см²", self.sleeve_area_cm2_var, "sleeve_area_cm2", width=4)
 
+    def _build_type1_params_form(self, parent):
+        frm = ttk.LabelFrame(parent, text="Параметры — Тип 1 (механический)", padding=6)
+        frm.pack(side="top", fill="x")
+        self._common_param_entries = {}
+
+        rows = [
+            ("Шаг зондирования, м", self.step_depth_var, "mode_step_depth"),
+            ("Тарировочный коэффициент «лоб»", self.mech_lob_coeff_var, "mode_lob_coeff"),
+            ("Тарировочный коэффициент «общ»", self.mech_total_coeff_var, "mode_total_coeff"),
+        ]
+        for i, (label, var, key) in enumerate(rows, start=0):
+            ttk.Label(frm, text=label).grid(row=i, column=0, sticky="w", padx=(0, 6), pady=1)
+            ent = ttk.Entry(frm, textvariable=var, width=26)
+            ent.grid(row=i, column=1, sticky="w", pady=1)
+            ent.bind("<FocusOut>", lambda _e: self._emit_common_params())
+            ent.bind("<Return>", lambda _e: self._emit_common_params())
+            self._common_param_entries[key] = ent
+
+    def _build_direct_params_form(self, parent):
+        frm = ttk.LabelFrame(parent, text="Параметры — Прямой ввод qc/fs", padding=6)
+        frm.pack(side="top", fill="x")
+        self._common_param_entries = {}
+        ttk.Label(frm, text="Шаг зондирования, м").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=1)
+        ent_step = ttk.Entry(frm, textvariable=self.step_depth_var, width=10)
+        ent_step.grid(row=0, column=1, sticky="w", pady=1)
+        ent_step.bind("<FocusOut>", lambda _e: self._emit_common_params())
+        ent_step.bind("<Return>", lambda _e: self._emit_common_params())
+        self._common_param_entries["mode_step_depth"] = ent_step
+
+    def _render_params_by_project_type(self, project_type: str, *, emit: bool = True):
+        self.project_type_mode = str(project_type or "type2_electric")
+        host = getattr(self, "_params_mode_host", None)
+        if host is None:
+            return
+        for w in list(host.winfo_children()):
+            w.destroy()
+        if self.project_type_mode == "type1_mech":
+            self._build_type1_params_form(host)
+        elif self.project_type_mode == "direct_qcfs":
+            self._build_direct_params_form(host)
+        else:
+            self.project_type_mode = "type2_electric"
+            self._build_type2_params_form(host)
+        if emit:
+            self._emit_common_params()
+
     def _collect_common_params(self) -> dict[str, str]:
-        return {
+        payload = {
+            "project_type": self.project_type_mode,
+            "mode_installation_name": str(self.installation_name_var.get() or "").strip(),
+            "mode_step_depth": str(self.step_depth_var.get() or "").strip(),
+        }
+        if self.project_type_mode == "type2_electric":
+            payload.update({
             "controller_type": str(self.controller_type_var.get() or "").strip(),
             "controller_scale_div": str(self.controller_scale_div_var.get() or "").strip(),
             "probe_type": str(self.probe_type_var.get() or "").strip(),
@@ -211,9 +269,19 @@ class RibbonView(ttk.Frame):
             "sleeve_kn": str(self.sleeve_kn_var.get() or "").strip(),
             "cone_area_cm2": str(self.cone_area_cm2_var.get() or "").strip(),
             "sleeve_area_cm2": str(self.sleeve_area_cm2_var.get() or "").strip(),
-        }
+            })
+        if self.project_type_mode == "type1_mech":
+            payload.update({
+                "mode_lob_coeff": str(self.mech_lob_coeff_var.get() or "").strip(),
+                "mode_total_coeff": str(self.mech_total_coeff_var.get() or "").strip(),
+                "mode_calibration_date": str(self.mech_calib_date_var.get() or "").strip(),
+                "mode_calibration_note": str(self.mech_calib_note_var.get() or "").strip(),
+            })
+        return payload
 
     def _emit_common_params(self):
+        if bool(getattr(self, "_suspend_common_emit", False)):
+            return
         cb = self.commands.get("common_params_changed")
         if callable(cb):
             cb(self._collect_common_params())
@@ -669,9 +737,32 @@ class RibbonView(ttk.Frame):
     def set_object_name(self, value: str):
         self.object_name_var.set(value or "")
 
+    def set_project_type(self, project_type: str, *, mode_params: dict[str, str] | None = None):
+        mp = dict(mode_params or {})
+        ptype = str(project_type or "type2_electric")
+        default_step = "0.20" if ptype == "type1_mech" else ("0.10" if ptype == "direct_qcfs" else "0.05")
+        self._suspend_common_emit = True
+        try:
+            self._render_params_by_project_type(ptype, emit=False)
+            self.installation_name_var.set(str(mp.get("mode_installation_name", "") or ""))
+            self.step_depth_var.set(str(mp.get("mode_step_depth", self.step_depth_var.get() or default_step) or default_step))
+            self.mech_lob_coeff_var.set(str(mp.get("mode_lob_coeff", self.mech_lob_coeff_var.get() or "1.00") or "1.00"))
+            self.mech_total_coeff_var.set(str(mp.get("mode_total_coeff", self.mech_total_coeff_var.get() or "1.00") or "1.00"))
+            self.mech_calib_date_var.set(str(mp.get("mode_calibration_date", "") or ""))
+            self.mech_calib_note_var.set(str(mp.get("mode_calibration_note", "") or ""))
+        finally:
+            self._suspend_common_emit = False
+        self._emit_common_params()
+
     def set_common_params(self, params: dict[str, str] | None, *, geo_kind: str = "K2"):
         p = dict(params or {})
-        self.controller_type_var.set(str(p.get("controller_type", "") or ""))
+        ptype = str(p.get("project_type", "") or "").strip()
+        if ptype:
+            self.set_project_type(ptype, mode_params=p)
+        controller_txt = str(p.get("controller_type", "") or "")
+        if self.project_type_mode == "type2_electric" and controller_txt.strip() == "ТЕСТ-К2М":
+            controller_txt = ""
+        self.controller_type_var.set(controller_txt)
         self.controller_scale_div_var.set(str(p.get("controller_scale_div", "") or ""))
         self.probe_type_var.set(str(p.get("probe_type", "") or ""))
         self.cone_kn_var.set(str(p.get("cone_kn", "") or ""))
@@ -684,6 +775,19 @@ class RibbonView(ttk.Frame):
                 ent.configure(state=("disabled" if str(geo_kind or "K2").upper() == "K4" else "normal"))
             except Exception:
                 pass
+
+    def select_tab(self, title: str):
+        target = str(title or "").strip()
+        if not target:
+            return
+        try:
+            for tab_id in self.tabs.tabs():
+                if str(self.tabs.tab(tab_id, "text") or "").strip() == target:
+                    self.tabs.select(tab_id)
+                    self._on_tab_changed()
+                    return
+        except Exception:
+            return
 
     def set_enabled(self, key: str, enabled: bool, reason: str = ""):
         btn = self._buttons.get(key)

@@ -231,6 +231,13 @@ class GeoCanvasEditor(tk.Tk):
         self._algo_preview_mode = False
         self.object_code = ""
         self.object_name = ""
+        self.project_name = "Новый проект"
+        self.project_type = "type2_electric"
+        self.project_mode_params: dict[str, str] = {}
+        self._suspend_type1_param_validation = False
+        self._skip_next_type1_error_popup = False
+        self._validation_error_popup_active = False
+        self._ui_ready_for_mode_validation = False
         self.project_path: Path | None = None
         self.project_ops: list[dict] = []
         self._marks_index: dict[tuple[int, float, str], dict] = {}
@@ -473,6 +480,9 @@ class GeoCanvasEditor(tk.Tk):
             self._grid_base_row_maps = {}
             return
 
+        if str(getattr(self, "project_type", "") or "") in {"type1_mech", "direct_qcfs"}:
+            self._ensure_mechanical_depth_template_rows()
+
         grid, grid_step, row_maps, start_rows = self._compute_depth_grid()
         if not grid:
             max_rows = max((len(getattr(t, "qc", []) or []) for t in self.tests), default=0)
@@ -523,6 +533,28 @@ class GeoCanvasEditor(tk.Tk):
         self._grid_base = grid
         self._grid_base_row_maps = row_maps
         self._rebuild_row_geometry()
+
+    def _ensure_mechanical_depth_template_rows(self):
+        tests = list(getattr(self, "tests", []) or [])
+        if not tests:
+            return
+        t0 = tests[0]
+        depth = list(getattr(t0, "depth", []) or [])
+        if len(depth) > 1:
+            return
+        depth = [f"{(i * 0.2):.2f}" for i in range(26)]
+        n = len(depth)
+        qc = list(getattr(t0, "qc", []) or [])
+        fs = list(getattr(t0, "fs", []) or [])
+        if len(qc) < n:
+            qc += [""] * (n - len(qc))
+        if len(fs) < n:
+            fs += [""] * (n - len(fs))
+        t0.depth = depth
+        t0.qc = qc[:n]
+        t0.fs = fs[:n]
+        self.depth0_by_tid[int(getattr(t0, "tid", 1) or 1)] = 0.0
+        self.step_by_tid[int(getattr(t0, "tid", 1) or 1)] = 0.2
 
     def _row_height_for(self, row: int) -> int:
         units = getattr(self, "_grid_units", []) or []
@@ -1953,7 +1985,8 @@ class GeoCanvasEditor(tk.Tk):
         self.ribbon_view = None
         # ========= LEGACY TOP BAR =========
         ribbon = ttk.Frame(self, padding=(10,8))
-        ribbon.pack(side="top", fill="x")
+        if not getattr(self, "use_ribbon_ui", False):
+            ribbon.pack(side="top", fill="x")
 
         # Win11-ish ttk styles
         s = ttk.Style()
@@ -2145,8 +2178,9 @@ class GeoCanvasEditor(tk.Tk):
                 "ribbon_tab_changed": self._on_ribbon_tab_changed,
             }
             self.ribbon_view = RibbonView(self, commands=commands, icon_font=_pick_icon_font(11))
-            self.ribbon_view.pack(side="top", fill="x", before=ribbon)
+            self.ribbon_view.pack(side="top", fill="x")
             self.ribbon_view.set_object_name(self.object_name)
+            self.ribbon_view.set_project_type(str(getattr(self, "project_type", "type2_electric")), mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
             self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
             self.ribbon_view.set_show_graphs(bool(getattr(self, "show_graphs", False)))
             self.ribbon_view.set_show_geology_column(bool(getattr(self, "show_geology_column", True)))
@@ -2166,6 +2200,7 @@ class GeoCanvasEditor(tk.Tk):
                 pass
             ribbon.pack_forget()
             self.after_idle(self._sync_workspace_visibility)
+        self._ui_ready_for_mode_validation = True
         # ========= Main canvas (fixed header) =========
         mid = ttk.Frame(self)
         mid.pack(side="top", fill="both", expand=True)
@@ -2445,10 +2480,34 @@ class GeoCanvasEditor(tk.Tk):
         return trees
 
     def _update_window_title(self):
-        obj = self.object_name.strip() if getattr(self, "object_name", "") else ""
-        obj = obj or "(без названия)"
-        pname = Path(self.project_path).name if getattr(self, "project_path", None) else "(без проекта)"
-        self.title(f"ZondEditor — {obj} — {pname}")
+        pname = str(getattr(self, "project_name", "") or "").strip() or "Новый проект"
+        ptype = self._project_type_caption(str(getattr(self, "project_type", "") or "type2_electric"))
+        self.title(f"ZondEditor — {pname} — {ptype}")
+
+    @staticmethod
+    def _project_type_caption(project_type: str) -> str:
+        t = str(project_type or "").strip()
+        if t == "type1_mech":
+            return "Тип 1"
+        if t == "direct_qcfs":
+            return "Прямой ввод qc/fs"
+        return "Тип 2"
+
+    def _apply_visual_mode_for_project_type(self):
+        ptype = str(getattr(self, "project_type", "") or "")
+        if ptype in {"type1_mech", "direct_qcfs"}:
+            self.show_graphs = False
+            self.show_geology_column = False
+            self.show_layer_colors = False
+            self.show_layer_hatching = False
+            self.show_inclinometer = False
+        rv = getattr(self, "ribbon_view", None)
+        if rv is not None:
+            rv.set_show_graphs(bool(getattr(self, "show_graphs", False)))
+            rv.set_show_geology_column(bool(getattr(self, "show_geology_column", True)))
+            rv.set_show_layer_colors(bool(getattr(self, "show_layer_colors", False)))
+            rv.set_show_layer_hatching(bool(getattr(self, "show_layer_hatching", True)))
+            rv.set_show_inclinometer(bool(getattr(self, "show_inclinometer", True)), enabled=(str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"))
 
     def _confirm_discard_if_dirty(self) -> bool:
         if not getattr(self, "_dirty", False):
@@ -2484,12 +2543,16 @@ class GeoCanvasEditor(tk.Tk):
         self.is_gxl = (self.geo_path.suffix.lower() == ".gxl")
         self.loaded_path = str(self.geo_path)
         self.project_path = None
+        self.project_name = str(self.geo_path.stem or "Новый проект")
+        self.project_type = "type2_electric"
         self.load_and_render()
         try:
             _log_event(self.usage_logger, "OPEN", file=str(self.geo_path))
         except Exception:
             pass
         self._ensure_object_code()
+        if getattr(self, "ribbon_view", None):
+            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
         self._update_window_title()
 
     def _current_start_depth_for_test(self, t) -> float:
@@ -2760,13 +2823,199 @@ class GeoCanvasEditor(tk.Tk):
 
     def _on_common_params_changed(self, params: dict[str, str] | None = None):
         p = dict(params or {})
+        ptype = str(p.pop("project_type", "") or "").strip()
+        if ptype:
+            self.project_type = ptype
+        mode_keys = {k: v for k, v in p.items() if str(k).startswith("mode_")}
+        if bool(getattr(self, "_ui_ready_for_mode_validation", False)) and (not bool(getattr(self, "_suspend_type1_param_validation", False))) and mode_keys:
+            ptype_cur = str(getattr(self, "project_type", "") or "")
+            if ptype_cur == "type1_mech":
+                if not self._apply_type1_params(mode_keys):
+                    return
+            elif ptype_cur == "type2_electric":
+                if not self._apply_type2_params(mode_keys):
+                    return
+            elif ptype_cur == "direct_qcfs":
+                if not self._apply_direct_params(mode_keys):
+                    return
+        if mode_keys:
+            self.project_mode_params.update({k: str(v or "").strip() for k, v in mode_keys.items()})
+            for k in list(mode_keys):
+                p.pop(k, None)
         if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and "controller_scale_div" in p and str(p.get("controller_scale_div", "")).strip() == "":
             p.pop("controller_scale_div", None)
         self._set_common_params(p, getattr(self, "geo_kind", "K2"))
+        self._update_window_title()
         try:
             self.schedule_graph_redraw()
         except Exception:
             pass
+
+    def _show_validation_error_once(self, message: str):
+        if bool(getattr(self, "_validation_error_popup_active", False)):
+            return
+        self._validation_error_popup_active = True
+        try:
+            messagebox.showerror("Ошибка", str(message or "Некорректные параметры."))
+        finally:
+            self._validation_error_popup_active = False
+
+    def _sync_mode_step_from_loaded_tests(self):
+        if str(getattr(self, "project_type", "") or "") != "type2_electric":
+            return
+        try:
+            step_val = float(getattr(self, "step_m", 0.05) or 0.05)
+        except Exception:
+            step_val = 0.05
+        self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
+        rv = getattr(self, "ribbon_view", None)
+        if rv is not None:
+            rv.set_project_type("type2_electric", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+
+    def _apply_type1_params(self, mode_keys: dict[str, str]) -> bool:
+        old_step = str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.20") or "0.20")
+        old_lob = str(getattr(self, "project_mode_params", {}).get("mode_lob_coeff", "1.00") or "1.00")
+        old_tot = str(getattr(self, "project_mode_params", {}).get("mode_total_coeff", "1.00") or "1.00")
+        new_step = str(mode_keys.get("mode_step_depth", old_step) or old_step).replace(",", ".").strip()
+        new_lob = str(mode_keys.get("mode_lob_coeff", old_lob) or old_lob).replace(",", ".").strip()
+        new_tot = str(mode_keys.get("mode_total_coeff", old_tot) or old_tot).replace(",", ".").strip()
+
+        try:
+            step_val = round(float(new_step), 3)
+        except Exception:
+            self._show_validation_error_once("Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
+            self._sync_type1_params_to_ribbon()
+            return False
+        if step_val not in {0.1, 0.2, 0.3, 0.4, 0.5}:
+            self._show_validation_error_once("Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
+            self._sync_type1_params_to_ribbon()
+            return False
+
+        def _parse_coeff(txt: str) -> float | None:
+            try:
+                v = float(txt)
+            except Exception:
+                return None
+            return v
+
+        lob_val = _parse_coeff(new_lob)
+        tot_val = _parse_coeff(new_tot)
+        if lob_val is None or tot_val is None or not (0.01 <= lob_val <= 5.00) or not (0.01 <= tot_val <= 5.00):
+            self._show_validation_error_once("Тарировочный коэффициент должен быть в диапазоне от 0.01 до 5.00.")
+            self._sync_type1_params_to_ribbon()
+            return False
+
+        if round(step_val, 3) != round(float(old_step), 3):
+            self._rebuild_type1_depth_grid(step_val)
+
+        self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
+        self.project_mode_params["mode_lob_coeff"] = f"{lob_val:.2f}".rstrip("0").rstrip(".")
+        self.project_mode_params["mode_total_coeff"] = f"{tot_val:.2f}".rstrip("0").rstrip(".")
+        self._skip_next_type1_error_popup = False
+        self._redraw()
+        self.schedule_graph_redraw()
+        return True
+
+    def _sync_type1_params_to_ribbon(self):
+        rv = getattr(self, "ribbon_view", None)
+        if rv is None:
+            return
+        self._suspend_type1_param_validation = True
+        try:
+            rv.set_project_type("type1_mech", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+        finally:
+            self._suspend_type1_param_validation = False
+
+    def _apply_direct_params(self, mode_keys: dict[str, str]) -> bool:
+        old_step = str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.20") or "0.20")
+        new_step = str(mode_keys.get("mode_step_depth", old_step) or old_step).replace(",", ".").strip()
+        try:
+            step_val = round(float(new_step), 3)
+        except Exception:
+            self._show_validation_error_once("Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
+            self._sync_direct_params_to_ribbon()
+            return False
+        if step_val not in {0.1, 0.2, 0.3, 0.4, 0.5}:
+            self._show_validation_error_once("Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
+            self._sync_direct_params_to_ribbon()
+            return False
+        if round(step_val, 3) != round(float(old_step), 3):
+            self._rebuild_type1_depth_grid(step_val)
+        self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
+        self._skip_next_type1_error_popup = False
+        self._redraw()
+        self.schedule_graph_redraw()
+        return True
+
+    def _apply_type2_params(self, mode_keys: dict[str, str]) -> bool:
+        old_step = str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.05") or "0.05")
+        new_step = str(mode_keys.get("mode_step_depth", old_step) or old_step).replace(",", ".").strip()
+        try:
+            step_val = round(float(new_step), 3)
+        except Exception:
+            self._show_validation_error_once("Недопустимый шаг зондирования. Для Типа 2 разрешены только значения: 0.05 и 0.10 м.")
+            self._sync_type2_params_to_ribbon()
+            return False
+        if step_val not in {0.05, 0.1}:
+            self._show_validation_error_once("Недопустимый шаг зондирования. Для Типа 2 разрешены только значения: 0.05 и 0.10 м.")
+            self._sync_type2_params_to_ribbon()
+            return False
+        is_k4 = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"
+        try:
+            old_step_val = round(float(old_step), 3)
+        except Exception:
+            old_step_val = 0.05
+        if is_k4 and old_step_val <= 0.05 and step_val > 0.05:
+            self._show_validation_error_once("Для K4 запрещено увеличивать шаг с 0.05 до 0.10. Разрешено только 0.10 → 0.05.")
+            self._sync_type2_params_to_ribbon()
+            return False
+        if round(step_val, 3) != round(float(old_step), 3):
+            if is_k4 and old_step_val >= 0.1 and step_val == 0.05:
+                self.convert_10_to_5()
+                self.step_by_tid = {int(getattr(t, "tid", 0) or 0): 0.05 for t in (getattr(self, "tests", []) or [])}
+            else:
+                self._rebuild_type1_depth_grid(step_val)
+        self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
+        self._skip_next_type1_error_popup = False
+        self._redraw()
+        self.schedule_graph_redraw()
+        return True
+
+    def _sync_type2_params_to_ribbon(self):
+        rv = getattr(self, "ribbon_view", None)
+        if rv is None:
+            return
+        self._suspend_type1_param_validation = True
+        try:
+            rv.set_project_type("type2_electric", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+        finally:
+            self._suspend_type1_param_validation = False
+
+    def _sync_direct_params_to_ribbon(self):
+        rv = getattr(self, "ribbon_view", None)
+        if rv is None:
+            return
+        self._suspend_type1_param_validation = True
+        try:
+            rv.set_project_type("direct_qcfs", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+        finally:
+            self._suspend_type1_param_validation = False
+
+    def _rebuild_type1_depth_grid(self, step_val: float):
+        start_rows = max(1, int(round(5.0 / float(step_val)))) + 1
+        existing_rows = 0
+        for t in (getattr(self, "tests", []) or []):
+            existing_rows = max(existing_rows, len(getattr(t, "depth", []) or []), len(getattr(t, "qc", []) or []), len(getattr(t, "fs", []) or []))
+        rows = max(start_rows, existing_rows)
+        depth = [f"{(i * float(step_val)):.2f}" for i in range(rows)]
+        for t in (getattr(self, "tests", []) or []):
+            t.depth = list(depth)
+            t.qc = list(getattr(t, "qc", []) or []) + [""] * max(0, rows - len(getattr(t, "qc", []) or []))
+            t.fs = list(getattr(t, "fs", []) or []) + [""] * max(0, rows - len(getattr(t, "fs", []) or []))
+            tid = int(getattr(t, "tid", 0) or 0)
+            self.depth0_by_tid[tid] = 0.0
+            self.step_by_tid[tid] = float(step_val)
+        self.step_m = float(step_val)
 
     def open_geo_params_dialog(self):
         """Открыть окно параметров GEO для текущего файла."""
@@ -2959,6 +3208,24 @@ class GeoCanvasEditor(tk.Tk):
 
     def _calc_qc_fs_from_del(self, qc_del: int, fs_del: int) -> tuple[float, float]:
         """Пересчёт делений в qc/fs через единый контур processing.calibration."""
+        if str(getattr(self, "project_type", "") or "") == "type1_mech":
+            mode = dict(getattr(self, "project_mode_params", {}) or {})
+            try:
+                k_lob = float(str(mode.get("mode_lob_coeff", "1.0") or "1.0").replace(",", "."))
+            except Exception:
+                k_lob = 1.0
+            try:
+                k_tot = float(str(mode.get("mode_total_coeff", "1.0") or "1.0").replace(",", "."))
+            except Exception:
+                k_tot = 1.0
+            qc_raw = float(qc_del or 0)
+            qt_raw = float(fs_del or 0)  # в механике второй столбец = Qt (общ)
+            qc_val = qc_raw * k_lob
+            qt_val = qt_raw * k_tot
+            qs_val = max(0.0, qt_val - qc_val)  # Qs = Qt - Qc
+            return qc_val, qs_val
+        if str(getattr(self, "project_type", "") or "") == "direct_qcfs":
+            return float(qc_del or 0), float(fs_del or 0)
         cal = self._current_calibration()
         return calc_qc_fs_from_del(
             qc_del,
@@ -3185,6 +3452,8 @@ class GeoCanvasEditor(tk.Tk):
         ttk.Label(table, text="УГВ", font=("Segoe UI", 9, "bold")).grid(row=0, column=4, sticky="w", padx=(12, 0))
 
         row_vars = []   # (t, tid, h0_var, ent, step_var_row, step_ent, dt_var, dt_lbl, gwl_on_var, gwl_var, gwl_ent)
+        source_step_by_tid: dict[int, float] = {}
+        k4_mode = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"
 
         def _parse_depth_str(s: str):
             try:
@@ -3243,6 +3512,7 @@ class GeoCanvasEditor(tk.Tk):
                 pass
 
             step_row_m = float(self._current_step_for_test(t))
+            source_step_by_tid[int(tid)] = float(step_row_m)
             step_row_cm = int(round(step_row_m * 100.0))
             if step_row_cm <= 0:
                 step_row_cm = 10
@@ -3296,8 +3566,29 @@ class GeoCanvasEditor(tk.Tk):
                 step_var_row.set(step_cm_txt)
             msg_var.set("")
 
+        def _sync_master_step_to_rows(*_args):
+            step_cm_txt = (step_var.get() or "").strip()
+            if step_cm_txt not in ("5", "10"):
+                return
+            if k4_mode and step_cm_txt == "10":
+                for _tid, _src_step in source_step_by_tid.items():
+                    if abs(float(_src_step) - 0.05) < 1e-6:
+                        msg_var.set("Для K4 нельзя увеличивать шаг с 0.05 до 0.10. Разрешено только 0.10 → 0.05.")
+                        try:
+                            step_var.set("5")
+                        except Exception:
+                            pass
+                        step_cm_txt = "5"
+                        break
+            for (_t, _tid, _h0_var, _ent, step_var_row, _step_ent, _dt_var, _dt_lbl, *_rest) in row_vars:
+                step_var_row.set(step_cm_txt)
+
         try:
             apply_all_btn.configure(command=_apply_common_to_all_rows)
+        except Exception:
+            pass
+        try:
+            step_var.trace_add("write", _sync_master_step_to_rows)
         except Exception:
             pass
 
@@ -3391,6 +3682,7 @@ class GeoCanvasEditor(tk.Tk):
 
         # применить начальные состояния
         _recompute_common_depth_marker()
+        _sync_master_step_to_rows()
 
         # --- сообщение об ошибке + кнопки ---
         msg_lbl = ttk.Label(frm, textvariable=msg_var, foreground="#b00020")
@@ -3457,6 +3749,9 @@ class GeoCanvasEditor(tk.Tk):
                             msg_var.set(f"СЗ-{tid}: шаг должен быть больше 0.")
                             return
                         step_m_row = float(step_cm_row) / 100.0
+                    if k4_mode and abs(float(source_step_by_tid.get(int(tid), step_m_row)) - 0.05) < 1e-6 and float(step_m_row) > 0.05:
+                        msg_var.set(f"СЗ-{tid}: для K4 нельзя менять шаг 0.05 → 0.10.")
+                        return
                     new_step_by_tid[int(tid)] = float(step_m_row)
                     self._set_step_for_test(t, step_m_row)
                 self.step_by_tid = new_step_by_tid
@@ -3699,6 +3994,7 @@ class GeoCanvasEditor(tk.Tk):
 
                 self._apply_gxl_calibration_from_meta(meta_rows)
                 self._set_common_params(self._current_common_params(), self.geo_kind)
+                self._sync_mode_step_from_loaded_tests()
                 if getattr(self, "ribbon_view", None):
                     self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(self.geo_kind))
                 self._update_status_loaded(prefix=f"GXL: загружено опытов {len(self.tests)}")
@@ -3816,6 +4112,7 @@ class GeoCanvasEditor(tk.Tk):
             self.undo_stack.clear()
             self.redo_stack.clear()
 
+            self._sync_mode_step_from_loaded_tests()
             self._update_status_loaded(prefix=f"GEO: загружено опытов {len(self.tests)}")
 
             self._auto_scan_after_load()
@@ -7625,9 +7922,19 @@ class GeoCanvasEditor(tk.Tk):
 
             # колонка заголовков (H/qc/fs) — в шапке и фиксирована
             sh_y = y0 + self.hdr_h - top_pad
+            ptype = str(getattr(self, "project_type", "") or "")
+            if ptype == "type1_mech":
+                q_hdr = "Qc (лоб)"
+                f_hdr = "Qt (общ)"
+            elif ptype == "direct_qcfs":
+                q_hdr = "qc, МПа"
+                f_hdr = "fs, кПа"
+            else:
+                q_hdr = "qc (лоб)"
+                f_hdr = "fs (бок)"
             self.hcanvas.create_text(x0 + self.w_depth / 2, sh_y, text="H, м", font=("Segoe UI", 9), fill=hdr_text)
-            self.hcanvas.create_text(x0 + self.w_depth + self.w_val / 2, sh_y, text="qc", font=("Segoe UI", 9), fill=hdr_text)
-            self.hcanvas.create_text(x0 + self.w_depth + self.w_val + self.w_val / 2, sh_y, text="fs", font=("Segoe UI", 9), fill=hdr_text)
+            self.hcanvas.create_text(x0 + self.w_depth + self.w_val / 2, sh_y, text=q_hdr, font=("Segoe UI", 9), fill=hdr_text)
+            self.hcanvas.create_text(x0 + self.w_depth + self.w_val + self.w_val / 2, sh_y, text=f_hdr, font=("Segoe UI", 9), fill=hdr_text)
             if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True)):
                 self.hcanvas.create_text(x0 + self.w_depth + self.w_val*2 + self.w_val/2, sh_y, text="U", font=("Segoe UI", 9), fill=hdr_text)
 
@@ -7705,19 +8012,8 @@ class GeoCanvasEditor(tk.Tk):
                 if not has_row and not is_meter_row:
                     depth_txt = ""
 
-                # Если строка данных пустая (оба значения пустые) — скрываем глубину напротив,
-                # но во время редактирования показываем глубину (чтобы было понятно, куда вводим).
-                _is_editing_this = False
-                try:
-                    ed = getattr(self, '_editing', None)
-                    if ed and len(ed) >= 3:
-                        ed_ti, ed_row, _ed_field = ed[0], ed[1], ed[2]
-                        if ed_ti == ti and data_i is not None and ed_row == data_i:
-                            _is_editing_this = True
-                except Exception:
-                    _is_editing_this = False
-                if has_row and is_blank_row and not _is_editing_this and not is_meter_row:
-                    depth_txt = ""
+                # Для стартовых диапазонов новых колонок глубина должна быть видна сразу,
+                # даже если qc/fs ещё пустые. Поэтому не скрываем depth для blank-row.
 
 
                 meter_has_data = bool((meter_qc_max is not None) or (meter_fs_max is not None)) if is_meter_row else False
@@ -9960,7 +10256,11 @@ class GeoCanvasEditor(tk.Tk):
         return state
 
     def _project_settings_from_ui(self) -> ProjectSettings:
-        extras = {"cpt_calc_settings": dict(getattr(self, "cpt_calc_settings", {}) or {}), "calc_tab_state": dict(getattr(self, "calc_tab_state", CalculationTabState()).__dict__)}
+        extras = {
+            "cpt_calc_settings": dict(getattr(self, "cpt_calc_settings", {}) or {}),
+            "calc_tab_state": dict(getattr(self, "calc_tab_state", CalculationTabState()).__dict__),
+            "project_mode_params": dict(getattr(self, "project_mode_params", {}) or {}),
+        }
         cp = self._current_common_params()
         scale_val = str(cp.get("controller_scale_div", "250") or "250")
         fcone_val = str(cp.get("cone_kn", "30") or "30")
@@ -9994,6 +10294,8 @@ class GeoCanvasEditor(tk.Tk):
         )
         return Project(
             object_name=(self.object_name or self.object_code or ""),
+            project_name=str(getattr(self, "project_name", "") or ""),
+            project_type=str(getattr(self, "project_type", "type2_electric") or "type2_electric"),
             source=src,
             settings=self._project_settings_from_ui(),
             ops=list(getattr(self, "project_ops", []) or []),
@@ -10201,6 +10503,9 @@ class GeoCanvasEditor(tk.Tk):
         self.project_path = Path(path)
         self.object_name = project.object_name or ""
         self.object_code = self.object_name
+        self.project_name = str(getattr(project, "project_name", "") or self.object_name or "Новый проект")
+        self.project_type = str(getattr(project, "project_type", "") or "type2_electric")
+        self.project_mode_params = dict((project.settings.extras or {}).get("project_mode_params") or {})
         self.project_ops = list(project.ops or [])
         self.original_bytes = source_bytes
         self.geo_path = Path(project.source.filename) if (project.source and project.source.filename) else None
@@ -10228,8 +10533,10 @@ class GeoCanvasEditor(tk.Tk):
         _safe_cts = {k: v for k, v in _raw_cts.items() if k in _base_cts}
         self.calc_tab_state = CalculationTabState(**{**_base_cts, **_safe_cts})
         self._dirty = False
+        self._apply_visual_mode_for_project_type()
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)
+            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(self.project_mode_params or {}))
             self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
         self.status.config(text=self._project_open_diagnostics(status_info))
         self._update_window_title()
@@ -10246,47 +10553,21 @@ class GeoCanvasEditor(tk.Tk):
 
         frm = ttk.Frame(dlg, padding=12)
         frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Выберите тип проекта:").pack(anchor="w", pady=(0, 8))
 
-        ttk.Label(frm, text="Глубина (м):").grid(row=0, column=0, sticky="w", pady=(0, 6))
-        depth_var = tk.StringVar(master=self, value="10")
-        e_depth = ttk.Entry(frm, textvariable=depth_var, width=12)
-        e_depth.grid(row=0, column=1, sticky="w", pady=(0, 6))
-
-        ttk.Label(frm, text="Шаг (м):").grid(row=1, column=0, sticky="w", pady=(0, 6))
-        step_var = tk.StringVar(master=self, value="0.10")
-        e_step = ttk.Entry(frm, textvariable=step_var, width=12)
-        e_step.grid(row=1, column=1, sticky="w", pady=(0, 6))
-
-        incl_var = tk.BooleanVar(master=self, value=True)
-        ttk.Checkbutton(
-            frm,
-            text="Инклинометр при глубине > 10 м",
-            variable=incl_var,
-        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 10))
-
-        result = {"ok": False}
+        result = {"project_type": ""}
 
         def _cancel(_evt=None):
             dlg.destroy()
 
-        def _ok(_evt=None):
-            try:
-                depth_m = float(str(depth_var.get()).replace(",", ".").strip())
-                step_m = float(str(step_var.get()).replace(",", ".").strip())
-                if depth_m <= 0 or step_m <= 0:
-                    raise ValueError
-            except Exception:
-                messagebox.showerror("Ошибка", "Введите корректные значения глубины и шага.", parent=self)
-                return
-            result.update(ok=True, depth=depth_m, step=step_m, incl=bool(incl_var.get()))
+        def _choose(project_type: str):
+            result["project_type"] = str(project_type or "")
             dlg.destroy()
 
-        btns = ttk.Frame(frm)
-        btns.grid(row=3, column=0, columnspan=2, sticky="e")
-        ttk.Button(btns, text="Отмена", command=_cancel).pack(side="right", padx=(8, 0))
-        ttk.Button(btns, text="OK", command=_ok).pack(side="right")
+        ttk.Button(frm, text="Тип 1 — механический", command=lambda: _choose("type1_mech"), width=34).pack(fill="x", pady=2)
+        ttk.Button(frm, text="Тип 2 — электрический", command=lambda: _choose("type2_electric"), width=34).pack(fill="x", pady=2)
+        ttk.Button(frm, text="Прямой ввод — qc/fs", command=lambda: _choose("direct_qcfs"), width=34).pack(fill="x", pady=2)
 
-        dlg.bind("<Return>", _ok)
         dlg.bind("<Escape>", _cancel)
 
         try:
@@ -10294,15 +10575,13 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
 
-        e_depth.focus_set()
         self.wait_window(dlg)
 
-        if not result.get("ok"):
+        if not result.get("project_type"):
             return
 
-        depth_m = float(result["depth"])
-        step_m = float(result["step"])
-        with_incl = bool(result["incl"])
+        selected_type = str(result.get("project_type") or "type1_mech")
+        selected_name = "Новый проект"
 
         self.tests = []
         self.flags = {}
@@ -10315,41 +10594,27 @@ class GeoCanvasEditor(tk.Tk):
         self._marks_applied_count = 0
         self._marks_color_counts: dict[str, int] = {"green": 0, "purple": 0, "blue": 0, "orange": 0}
         self.project_path = None
-        self.object_name = ""
-        self.object_code = ""
+        self.project_name = selected_name
+        self.project_type = selected_type
+        self.project_mode_params = {"mode_step_depth": ("0.20" if selected_type == "type1_mech" else ("0.10" if selected_type == "direct_qcfs" else "0.05"))}
+        self.object_name = selected_name
+        self.object_code = selected_name
         self.geo_path = None
         self.original_bytes = None
         self.depth_start = 0.0
-        self.step_m = step_m
-        self.depth0_by_tid = {1: 0.0}
-        self.step_by_tid = {1: float(step_m)}
+        self.step_m = 0.2 if selected_type == "type1_mech" else (0.1 if selected_type == "direct_qcfs" else 0.05)
+        self.depth0_by_tid = {}
+        self.step_by_tid = {}
         self.gwl_by_tid = {}
-
-        dt_now = _dt.datetime.now().replace(microsecond=0)
-        dt_text = dt_now.strftime("%Y-%m-%d %H:%M:%S")
-
-        depth_vals = []
-        cur = 0.0
-        guard = 0
-        while cur <= depth_m + 1e-9 and guard < 200000:
-            depth_vals.append(f"{round(cur, 2):g}")
-            cur = round(cur + step_m, 6)
-            guard += 1
-        if not depth_vals:
-            depth_vals = ["0"]
-
-        n = len(depth_vals)
-        qc = ["0"] * n
-        fs = ["0"] * n
-
-        incl_data = None
         self.geo_kind = "K2"
-        if depth_m > 10 and with_incl:
-            self.geo_kind = "K4"
-            incl_data = ["0"] * n
-
-        self.tests.append(TestData(tid=1, dt=dt_text, depth=depth_vals, qc=qc, fs=fs, incl=incl_data, orig_id=None, block=None))
-        self.flags[1] = TestFlags(False, set(), set(), set(), set())
+        if selected_type in {"type1_mech", "type2_electric", "direct_qcfs"}:
+            self._create_initial_mechanical_column()
+        if selected_type == "type2_electric":
+            self.show_graphs = False
+            self.show_geology_column = False
+            self.show_layer_colors = False
+            self.show_layer_hatching = False
+            self.show_inclinometer = False
 
         try:
             self.file_var.set("(шаблон проекта)")
@@ -10357,11 +10622,38 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
         self._dirty = True
+        self._apply_visual_mode_for_project_type()
         self._recompute_statuses_after_data_load(preview_mode=False)
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)
-        self.status.config(text="Создан новый проект-шаблон: 1 опыт")
+            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(self.project_mode_params or {}))
+            self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
+            self.ribbon_view.select_tab("Параметры")
+        self.status.config(text=f"Создан новый проект: {self.project_name}")
         self._update_window_title()
+
+    def _create_initial_mechanical_column(self):
+        # Для стартового механического шаблона фиксируем шаг 0.20 м.
+        # Для type2_electric/direct_qcfs берём шаг из параметров режима (по умолчанию 0.05/0.10).
+        # Это гарантирует полный предзаполненный столбец 0.00..5.00.
+        if str(getattr(self, "project_type", "") or "") in {"type2_electric", "direct_qcfs"}:
+            try:
+                fallback = "0.10" if str(getattr(self, "project_type", "") or "") == "direct_qcfs" else "0.05"
+                step_m = float(str(getattr(self, "project_mode_params", {}).get("mode_step_depth", fallback) or fallback).replace(",", "."))
+            except Exception:
+                step_m = 0.1 if str(getattr(self, "project_type", "") or "") == "direct_qcfs" else 0.05
+        else:
+            step_m = 0.2
+        self.step_m = step_m
+        self.project_mode_params["mode_step_depth"] = f"{step_m:.2f}"
+        dt_text = _dt.datetime.now().replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+        rows_count = max(1, int(round(5.0 / float(step_m)))) + 1
+        depth_vals = [f"{(i * step_m):.2f}" for i in range(rows_count)]  # 0.00 .. 5.00
+        n = len(depth_vals)
+        self.tests = [TestData(tid=1, dt=dt_text, depth=depth_vals, qc=[""] * n, fs=[""] * n, incl=None, orig_id=None, block=None)]
+        self.flags = {1: TestFlags(False, set(), set(), set(), set())}
+        self.depth0_by_tid = {1: 0.0}
+        self.step_by_tid = {1: float(step_m)}
 
     def _on_object_name_changed(self, value: str):
         before = self.object_name
