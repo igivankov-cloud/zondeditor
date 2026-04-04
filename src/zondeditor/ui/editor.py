@@ -7777,19 +7777,8 @@ class GeoCanvasEditor(tk.Tk):
                 if not has_row and not is_meter_row:
                     depth_txt = ""
 
-                # Если строка данных пустая (оба значения пустые) — скрываем глубину напротив,
-                # но во время редактирования показываем глубину (чтобы было понятно, куда вводим).
-                _is_editing_this = False
-                try:
-                    ed = getattr(self, '_editing', None)
-                    if ed and len(ed) >= 3:
-                        ed_ti, ed_row, _ed_field = ed[0], ed[1], ed[2]
-                        if ed_ti == ti and data_i is not None and ed_row == data_i:
-                            _is_editing_this = True
-                except Exception:
-                    _is_editing_this = False
-                if has_row and is_blank_row and not _is_editing_this and not is_meter_row:
-                    depth_txt = ""
+                # Для стартовых диапазонов новых колонок глубина должна быть видна сразу,
+                # даже если qc/fs ещё пустые. Поэтому не скрываем depth для blank-row.
 
 
                 meter_has_data = bool((meter_qc_max is not None) or (meter_fs_max is not None)) if is_meter_row else False
