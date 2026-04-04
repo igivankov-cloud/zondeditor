@@ -57,7 +57,7 @@ class RibbonView(ttk.Frame):
         self.calc_fill_preliminary_var = tk.BooleanVar(value=False)
         self.project_type_mode = "type2_electric"
         self.installation_name_var = tk.StringVar(value="")
-        self.step_depth_var = tk.StringVar(value="0.10")
+        self.step_depth_var = tk.StringVar(value="0.20")
         self.mech_lob_coeff_var = tk.StringVar(value="1.00")
         self.mech_total_coeff_var = tk.StringVar(value="1.00")
         self.mech_calib_date_var = tk.StringVar(value="")
@@ -216,16 +216,15 @@ class RibbonView(ttk.Frame):
         frm.pack(side="top", fill="x")
         self._common_param_entries = {}
 
-        ttk.Label(frm, text="Тип проекта: Тип 1 — механический").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
         rows = [
             ("Название/тип установки", self.installation_name_var, "mode_installation_name"),
-            ("Шаг по глубине, м", self.step_depth_var, "mode_step_depth"),
-            ("Коэффициент «лоб»", self.mech_lob_coeff_var, "mode_lob_coeff"),
+            ("Шаг зондирования, м", self.step_depth_var, "mode_step_depth"),
+            ("Тарировочный коэффициент", self.mech_lob_coeff_var, "mode_lob_coeff"),
             ("Коэффициент «общ»", self.mech_total_coeff_var, "mode_total_coeff"),
             ("Дата тарировки", self.mech_calib_date_var, "mode_calibration_date"),
             ("Номер/примечание тарировки", self.mech_calib_note_var, "mode_calibration_note"),
         ]
-        for i, (label, var, key) in enumerate(rows, start=1):
+        for i, (label, var, key) in enumerate(rows, start=0):
             ttk.Label(frm, text=label).grid(row=i, column=0, sticky="w", padx=(0, 6), pady=1)
             ent = ttk.Entry(frm, textvariable=var, width=26)
             ent.grid(row=i, column=1, sticky="w", pady=1)
@@ -755,7 +754,7 @@ class RibbonView(ttk.Frame):
         self._render_params_by_project_type(project_type)
         mp = dict(mode_params or {})
         self.installation_name_var.set(str(mp.get("mode_installation_name", "") or ""))
-        self.step_depth_var.set(str(mp.get("mode_step_depth", self.step_depth_var.get() or "0.10") or "0.10"))
+        self.step_depth_var.set(str(mp.get("mode_step_depth", self.step_depth_var.get() or "0.20") or "0.20"))
         self.mech_lob_coeff_var.set(str(mp.get("mode_lob_coeff", self.mech_lob_coeff_var.get() or "1.00") or "1.00"))
         self.mech_total_coeff_var.set(str(mp.get("mode_total_coeff", self.mech_total_coeff_var.get() or "1.00") or "1.00"))
         self.mech_calib_date_var.set(str(mp.get("mode_calibration_date", "") or ""))

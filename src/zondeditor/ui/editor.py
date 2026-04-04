@@ -10281,39 +10281,24 @@ class GeoCanvasEditor(tk.Tk):
 
         frm = ttk.Frame(dlg, padding=12)
         frm.pack(fill="both", expand=True)
-        ttk.Label(frm, text="Название проекта:").grid(row=0, column=0, sticky="w", pady=(0, 6))
-        project_name_var = tk.StringVar(master=self, value="Новый проект")
-        e_name = ttk.Entry(frm, textvariable=project_name_var, width=28)
-        e_name.grid(row=1, column=0, sticky="we", pady=(0, 8))
-        frm.columnconfigure(0, weight=1)
+        ttk.Label(frm, text="Выберите тип проекта:").pack(anchor="w", pady=(0, 8))
 
-        ttk.Label(frm, text="Тип проекта:").grid(row=2, column=0, sticky="w", pady=(0, 4))
-        project_type_var = tk.StringVar(master=self, value="type1_mech")
-        type_box = ttk.Frame(frm)
-        type_box.grid(row=3, column=0, sticky="we", pady=(0, 10))
-        ttk.Radiobutton(type_box, text="Тип 1 — механический", value="type1_mech", variable=project_type_var).pack(anchor="w")
-        ttk.Radiobutton(type_box, text="Тип 2 — электрический", value="type2_electric", variable=project_type_var).pack(anchor="w")
-        ttk.Radiobutton(type_box, text="Прямой ввод — Qc/Fs", value="direct_qcfs", variable=project_type_var).pack(anchor="w")
-
-        result = {"ok": False}
+        result = {"project_type": ""}
 
         def _cancel(_evt=None):
             dlg.destroy()
 
-        def _ok(_evt=None):
-            name = str(project_name_var.get() or "").strip()
-            if not name:
-                messagebox.showerror("Ошибка", "Укажите название проекта.", parent=self)
-                return
-            result.update(ok=True, project_name=name, project_type=str(project_type_var.get() or "type1_mech"))
+        def _choose(project_type: str):
+            result["project_type"] = str(project_type or "")
             dlg.destroy()
 
-        btns = ttk.Frame(frm)
-        btns.grid(row=4, column=0, sticky="e")
-        ttk.Button(btns, text="Отмена", command=_cancel).pack(side="right", padx=(8, 0))
-        ttk.Button(btns, text="Создать", command=_ok).pack(side="right")
+        ttk.Button(frm, text="Тип 1 — механический", command=lambda: _choose("type1_mech"), width=34).pack(fill="x", pady=2)
+        ttk.Button(frm, text="Тип 2 — электрический", command=lambda: _choose("type2_electric"), width=34).pack(fill="x", pady=2)
+        ttk.Button(frm, text="Прямой ввод — qc/fs", command=lambda: _choose("direct_qcfs"), width=34).pack(fill="x", pady=2)
 
-        dlg.bind("<Return>", _ok)
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x", pady=(8, 0))
+        ttk.Button(btns, text="Отмена", command=_cancel).pack(side="right", padx=(8, 0))
         dlg.bind("<Escape>", _cancel)
 
         try:
@@ -10321,14 +10306,13 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
 
-        e_name.focus_set()
         self.wait_window(dlg)
 
-        if not result.get("ok"):
+        if not result.get("project_type"):
             return
 
         selected_type = str(result.get("project_type") or "type1_mech")
-        selected_name = str(result.get("project_name") or "Новый проект")
+        selected_name = "Новый проект"
 
         self.tests = []
         self.flags = {}
@@ -10343,17 +10327,19 @@ class GeoCanvasEditor(tk.Tk):
         self.project_path = None
         self.project_name = selected_name
         self.project_type = selected_type
-        self.project_mode_params = {"mode_step_depth": "0.10"}
+        self.project_mode_params = {"mode_step_depth": ("0.20" if selected_type == "type1_mech" else "0.10")}
         self.object_name = selected_name
         self.object_code = selected_name
         self.geo_path = None
         self.original_bytes = None
         self.depth_start = 0.0
-        self.step_m = 0.1
+        self.step_m = 0.2 if selected_type == "type1_mech" else 0.1
         self.depth0_by_tid = {}
         self.step_by_tid = {}
         self.gwl_by_tid = {}
         self.geo_kind = "K2"
+        if selected_type == "type1_mech":
+            self._create_initial_mechanical_column()
 
         try:
             self.file_var.set("(шаблон проекта)")
@@ -10369,6 +10355,27 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view.select_tab("Параметры")
         self.status.config(text=f"Создан новый проект: {self.project_name}")
         self._update_window_title()
+
+    def _create_initial_mechanical_column(self):
+        step_text = str((getattr(self, "project_mode_params", {}) or {}).get("mode_step_depth", "0.20") or "0.20")
+        try:
+            step_m = float(step_text.replace(",", "."))
+            if step_m <= 0:
+                raise ValueError
+        except Exception:
+            step_m = 0.2
+        self.step_m = float(step_m)
+        dt_text = _dt.datetime.now().replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+        depth_vals = []
+        cur = 0.0
+        while cur <= 5.0 + 1e-9:
+            depth_vals.append(f"{cur:.1f}" if abs(step_m - 0.2) < 1e-9 else f"{cur:g}")
+            cur = round(cur + step_m, 6)
+        n = len(depth_vals)
+        self.tests = [TestData(tid=1, dt=dt_text, depth=depth_vals, qc=[""] * n, fs=[""] * n, incl=None, orig_id=None, block=None)]
+        self.flags = {1: TestFlags(False, set(), set(), set(), set())}
+        self.depth0_by_tid = {1: 0.0}
+        self.step_by_tid = {1: float(step_m)}
 
     def _on_object_name_changed(self, value: str):
         before = self.object_name
