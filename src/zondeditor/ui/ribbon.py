@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import ttk, simpledialog
 
 from src.zondeditor.calculations.ige_policy import get_ige_profile
-from src.zondeditor.ui.consts import ICON_EXPORT, ICON_IMPORT, ICON_REDO, ICON_SAVE, ICON_UNDO, ICON_TRASH
+from src.zondeditor.ui.consts import ICON_REDO, ICON_SAVE, ICON_UNDO, ICON_TRASH
 from src.zondeditor.ui.widgets import ToolTip
 
 
@@ -94,9 +94,9 @@ class RibbonView(ttk.Frame):
         ToolTip(btn, tip)
         self._buttons[key] = btn
 
-    def _add_btn(self, parent, key: str, text: str, tip: str):
-        btn = ttk.Button(parent, text=text, command=self.commands.get(key), style="RibbonCompact.TButton", width=12)
-        btn.pack(side="top", fill="x", pady=1)
+    def _add_btn(self, parent, key: str, text: str, tip: str, *, width: int = 12):
+        btn = ttk.Button(parent, text=text, command=self.commands.get(key), style="RibbonCompact.TButton", width=width)
+        btn.pack(side="top", fill="x", anchor="w", pady=1)
         ToolTip(btn, tip)
         self._buttons[key] = btn
 
@@ -132,24 +132,33 @@ class RibbonView(ttk.Frame):
     def _build_file_tab(self):
         tab = ttk.Frame(self.tabs, padding=2)
         self.tabs.add(tab, text="Файл")
+        file_group_width_px = 220
+        file_btn_width = 18
+
         project = ttk.LabelFrame(tab, text="Проект", padding=3)
-        project.pack(side="left", fill="y", padx=(4, 8))
-        self._add_btn(project, "new_project", "🆕 Создать проект", "Создать новый проект")
-        self._add_btn(project, "open_project", "📂 Открыть проект", "Открыть *.zproj")
-        self._add_btn(project, "save_project", "💾 Сохранить", "Сохранить *.zproj")
-        self._add_btn(project, "save_project_as", "💾 Сохранить как", "Сохранить *.zproj как новый")
+        project.pack(side="left", fill="y", anchor="nw", padx=(4, 8))
+        project.configure(width=file_group_width_px)
+        project.pack_propagate(False)
+        self._add_btn(project, "new_project", "🆕 Создать проект", "Создать новый проект", width=file_btn_width)
+        self._add_btn(project, "open_project", "📂 Открыть проект", "Открыть *.zproj", width=file_btn_width)
+        self._add_btn(project, "save_project", "💾 Сохранить", "Сохранить *.zproj", width=file_btn_width)
+        self._add_btn(project, "save_project_as", "💾 Сохранить как", "Сохранить *.zproj как новый", width=file_btn_width)
 
         imports = ttk.LabelFrame(tab, text="Импорт", padding=3)
-        imports.pack(side="left", fill="y", padx=8)
-        self._add_btn(imports, "open_geo", f"{ICON_IMPORT} GEO", "Открыть GEO/GE0")
-        self._add_btn(imports, "open_gxl", f"{ICON_IMPORT} GXL", "Открыть GXL")
-        self._add_btn(imports, "export_excel", f"{ICON_IMPORT} Excel", "Импорт данных из Excel")
+        imports.pack(side="left", fill="y", anchor="nw", padx=8)
+        imports.configure(width=file_group_width_px)
+        imports.pack_propagate(False)
+        self._add_btn(imports, "open_geo", "GEO", "Открыть GEO/GE0", width=file_btn_width)
+        self._add_btn(imports, "open_gxl", "GXL", "Открыть GXL", width=file_btn_width)
+        self._add_btn(imports, "export_excel", "Excel", "Импорт данных из Excel", width=file_btn_width)
 
         exports = ttk.LabelFrame(tab, text="Экспорт", padding=3)
-        exports.pack(side="left", fill="y", padx=(8, 4))
-        self._add_btn(exports, "export_geo", f"{ICON_EXPORT} GEO", "Экспорт GEO только через Сохранить как")
-        self._add_btn(exports, "export_gxl", f"{ICON_EXPORT} GXL", "Экспорт GXL только через Сохранить как")
-        self._add_btn(exports, "export_dxf", f"{ICON_EXPORT} DXF", "Экспорт графиков в DXF (заглушка)")
+        exports.pack(side="left", fill="y", anchor="nw", padx=(8, 4))
+        exports.configure(width=file_group_width_px)
+        exports.pack_propagate(False)
+        self._add_btn(exports, "export_geo", "GEO", "Экспорт GEO только через Сохранить как", width=file_btn_width)
+        self._add_btn(exports, "export_gxl", "GXL", "Экспорт GXL только через Сохранить как", width=file_btn_width)
+        self._add_btn(exports, "export_dxf", "DXF", "Экспорт графиков в DXF (заглушка)", width=file_btn_width)
 
     def _build_params_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
