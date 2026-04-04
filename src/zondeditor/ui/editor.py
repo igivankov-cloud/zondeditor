@@ -2462,6 +2462,22 @@ class GeoCanvasEditor(tk.Tk):
             return "Прямой ввод qc/fs"
         return "Тип 2"
 
+    def _apply_visual_mode_for_project_type(self):
+        is_mech = str(getattr(self, "project_type", "") or "") == "type1_mech"
+        if is_mech:
+            self.show_graphs = False
+            self.show_geology_column = False
+            self.show_layer_colors = False
+            self.show_layer_hatching = False
+            self.show_inclinometer = False
+        rv = getattr(self, "ribbon_view", None)
+        if rv is not None:
+            rv.set_show_graphs(bool(getattr(self, "show_graphs", False)))
+            rv.set_show_geology_column(bool(getattr(self, "show_geology_column", True)))
+            rv.set_show_layer_colors(bool(getattr(self, "show_layer_colors", False)))
+            rv.set_show_layer_hatching(bool(getattr(self, "show_layer_hatching", True)))
+            rv.set_show_inclinometer(bool(getattr(self, "show_inclinometer", True)), enabled=(str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"))
+
     def _confirm_discard_if_dirty(self) -> bool:
         if not getattr(self, "_dirty", False):
             return True
@@ -7650,9 +7666,15 @@ class GeoCanvasEditor(tk.Tk):
 
             # колонка заголовков (H/qc/fs) — в шапке и фиксирована
             sh_y = y0 + self.hdr_h - top_pad
+            if str(getattr(self, "project_type", "") or "") == "type1_mech":
+                q_hdr = "Qc (лоб)"
+                f_hdr = "Qt (общ)"
+            else:
+                q_hdr = "qc"
+                f_hdr = "fs"
             self.hcanvas.create_text(x0 + self.w_depth / 2, sh_y, text="H, м", font=("Segoe UI", 9), fill=hdr_text)
-            self.hcanvas.create_text(x0 + self.w_depth + self.w_val / 2, sh_y, text="qc", font=("Segoe UI", 9), fill=hdr_text)
-            self.hcanvas.create_text(x0 + self.w_depth + self.w_val + self.w_val / 2, sh_y, text="fs", font=("Segoe UI", 9), fill=hdr_text)
+            self.hcanvas.create_text(x0 + self.w_depth + self.w_val / 2, sh_y, text=q_hdr, font=("Segoe UI", 9), fill=hdr_text)
+            self.hcanvas.create_text(x0 + self.w_depth + self.w_val + self.w_val / 2, sh_y, text=f_hdr, font=("Segoe UI", 9), fill=hdr_text)
             if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True)):
                 self.hcanvas.create_text(x0 + self.w_depth + self.w_val*2 + self.w_val/2, sh_y, text="U", font=("Segoe UI", 9), fill=hdr_text)
 
@@ -10262,6 +10284,7 @@ class GeoCanvasEditor(tk.Tk):
         _safe_cts = {k: v for k, v in _raw_cts.items() if k in _base_cts}
         self.calc_tab_state = CalculationTabState(**{**_base_cts, **_safe_cts})
         self._dirty = False
+        self._apply_visual_mode_for_project_type()
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)
             self.ribbon_view.set_project_type(self.project_type, mode_params=dict(self.project_mode_params or {}))
@@ -10347,6 +10370,7 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
         self._dirty = True
+        self._apply_visual_mode_for_project_type()
         self._recompute_statuses_after_data_load(preview_mode=False)
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)

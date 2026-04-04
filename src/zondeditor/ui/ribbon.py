@@ -217,12 +217,9 @@ class RibbonView(ttk.Frame):
         self._common_param_entries = {}
 
         rows = [
-            ("Название/тип установки", self.installation_name_var, "mode_installation_name"),
             ("Шаг зондирования, м", self.step_depth_var, "mode_step_depth"),
-            ("Тарировочный коэффициент", self.mech_lob_coeff_var, "mode_lob_coeff"),
-            ("Коэффициент «общ»", self.mech_total_coeff_var, "mode_total_coeff"),
-            ("Дата тарировки", self.mech_calib_date_var, "mode_calibration_date"),
-            ("Номер/примечание тарировки", self.mech_calib_note_var, "mode_calibration_note"),
+            ("Тарировочный коэффициент «лоб»", self.mech_lob_coeff_var, "mode_lob_coeff"),
+            ("Тарировочный коэффициент «общ»", self.mech_total_coeff_var, "mode_total_coeff"),
         ]
         for i, (label, var, key) in enumerate(rows, start=0):
             ttk.Label(frm, text=label).grid(row=i, column=0, sticky="w", padx=(0, 6), pady=1)
