@@ -30,10 +30,10 @@ class RibbonView(ttk.Frame):
         self.cone_area_cm2_var = tk.StringVar(value="10")
         self.sleeve_area_cm2_var = tk.StringVar(value="350")
         self.show_graphs_var = tk.BooleanVar(value=False)
-        self.show_geology_var = tk.BooleanVar(value=True)
-        self.show_inclinometer_var = tk.BooleanVar(value=True)
+        self.show_geology_var = tk.BooleanVar(value=False)
+        self.show_inclinometer_var = tk.BooleanVar(value=False)
         self.show_layer_colors_var = tk.BooleanVar(value=False)
-        self.show_layer_hatching_var = tk.BooleanVar(value=True)
+        self.show_layer_hatching_var = tk.BooleanVar(value=False)
         self.compact_1m_var = tk.BooleanVar(value=False)
         self.display_sort_var = tk.StringVar(value="date")
         self.layers_edit_var = tk.BooleanVar(value=False)
@@ -56,7 +56,7 @@ class RibbonView(ttk.Frame):
         self.calc_legacy_sandy_loam_var = tk.BooleanVar(value=False)
         self.calc_fill_preliminary_var = tk.BooleanVar(value=False)
         self._suspend_common_emit = False
-        self.project_type_mode = "type2_electric"
+        self.project_type_mode = ""
         self.installation_name_var = tk.StringVar(value="")
         self.step_depth_var = tk.StringVar(value="0.05")
         self.mech_lob_coeff_var = tk.StringVar(value="1.00")
@@ -83,7 +83,6 @@ class RibbonView(ttk.Frame):
 
         self._build_file_tab()
         self._build_params_tab()
-        self._build_processing_tab()
         self._build_view_tab()
         self._build_layers_tab()
         self._build_calc_tab()
@@ -173,9 +172,30 @@ class RibbonView(ttk.Frame):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Параметры")
         self._params_tab = tab
-        self._params_mode_host = ttk.Frame(tab)
-        self._params_mode_host.pack(side="top", fill="x")
+        layout = ttk.Frame(tab)
+        layout.pack(side="top", anchor="w")
+        self._params_mode_host = ttk.Frame(layout)
+        self._params_mode_host.pack(side="left", anchor="nw")
+        actions = ttk.Frame(layout)
+        actions.pack(side="left", anchor="nw", padx=(10, 0))
+        self._add_btn(
+            actions,
+            "fix_algo",
+            "Интерполировать отсутствующие значения",
+            "Автоматическая корректировка",
+            width=38,
+        )
         self._render_params_by_project_type(self.project_type_mode)
+
+    def _build_empty_params_state(self, parent):
+        holder = ttk.Frame(parent, padding=(8, 12))
+        holder.pack(side="top", fill="x")
+        ttk.Label(holder, text="Проект не выбран").pack(side="top", anchor="w")
+        ttk.Label(
+            holder,
+            text="Создайте новый проект или откройте существующий файл",
+            foreground="#5f6b7a",
+        ).pack(side="top", anchor="w", pady=(2, 0))
 
     def _build_type2_params_form(self, parent):
         common = ttk.LabelFrame(parent, text="Параметры — Тип 2 (электрический)", padding=4)
@@ -238,7 +258,7 @@ class RibbonView(ttk.Frame):
         self._common_param_entries["mode_step_depth"] = ent_step
 
     def _render_params_by_project_type(self, project_type: str, *, emit: bool = True):
-        self.project_type_mode = str(project_type or "type2_electric")
+        self.project_type_mode = str(project_type or "").strip()
         host = getattr(self, "_params_mode_host", None)
         if host is None:
             return
@@ -248,9 +268,11 @@ class RibbonView(ttk.Frame):
             self._build_type1_params_form(host)
         elif self.project_type_mode == "direct_qcfs":
             self._build_direct_params_form(host)
-        else:
-            self.project_type_mode = "type2_electric"
+        elif self.project_type_mode == "type2_electric":
             self._build_type2_params_form(host)
+        else:
+            self.project_type_mode = ""
+            self._build_empty_params_state(host)
         if emit:
             self._emit_common_params()
 
@@ -700,23 +722,6 @@ class RibbonView(ttk.Frame):
         if callable(cmd):
             cmd(str(ige_id or "").strip(), str(field_name or "").strip(), value)
 
-    def _build_processing_tab(self):
-        tab = ttk.Frame(self.tabs, padding=4)
-        self.tabs.add(tab, text="Обработка")
-        fix = ttk.LabelFrame(tab, text="Исправление", padding=4)
-        fix.pack(side="left", fill="y", padx=4)
-        self._add_btn(fix, "fix_algo", "Исправить (алгоритм)", "Автоматическая корректировка")
-        step = ttk.LabelFrame(tab, text="Шаг", padding=4)
-        step.pack(side="left", fill="y", padx=4)
-        self._add_btn(step, "reduce_step", "Уменьшить шаг…", "Преобразовать шаг")
-        calc = ttk.LabelFrame(tab, text="Параметры пересчёта", padding=4)
-        calc.pack(side="left", fill="y", padx=4)
-        self._add_btn(calc, "apply_calc", "Применить", "Применить параметры пересчёта")
-        k2k4 = ttk.LabelFrame(tab, text="К2 → К4", padding=4)
-        k2k4.pack(side="left", fill="y", padx=4)
-        self._add_btn(k2k4, "k2k4_30", "Пересчитать К2→К4 (30 МПа)", "Режим 30 МПа")
-        self._add_btn(k2k4, "k2k4_50", "Пересчитать К2→К4 (50 МПа)", "Режим 50 МПа")
-
     def _open_ige_params(self, ige_id: str):
         self.layer_ige_var.set(ige_id)
         cmd = self.commands.get("edit_ige_cpt")
@@ -739,7 +744,10 @@ class RibbonView(ttk.Frame):
 
     def set_project_type(self, project_type: str, *, mode_params: dict[str, str] | None = None):
         mp = dict(mode_params or {})
-        ptype = str(project_type or "type2_electric")
+        ptype = str(project_type or "").strip()
+        if not ptype:
+            self._render_params_by_project_type("", emit=False)
+            return
         default_step = "0.20" if ptype == "type1_mech" else ("0.10" if ptype == "direct_qcfs" else "0.05")
         self._suspend_common_emit = True
         try:

@@ -232,7 +232,7 @@ class GeoCanvasEditor(tk.Tk):
         self.object_code = ""
         self.object_name = ""
         self.project_name = "Новый проект"
-        self.project_type = "type2_electric"
+        self.project_type = ""
         self.project_mode_params: dict[str, str] = {}
         self._suspend_type1_param_validation = False
         self._skip_next_type1_error_popup = False
@@ -263,10 +263,10 @@ class GeoCanvasEditor(tk.Tk):
         self.pad_x = 8
         self.pad_y = 8
         self.show_graphs = False
-        self.show_geology_column = True
-        self.show_inclinometer = True
+        self.show_geology_column = False
+        self.show_inclinometer = False
         self.show_layer_colors = False
-        self.show_layer_hatching = True
+        self.show_layer_hatching = False
         self.compact_1m = False
         self.display_sort_mode = "date"
         self.expanded_meters: set[int] = set()
@@ -2961,6 +2961,7 @@ class GeoCanvasEditor(tk.Tk):
             self._sync_type2_params_to_ribbon()
             return False
         is_k4 = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"
+        is_imported_k2 = (str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K2") and bool(getattr(self, "geo_path", None))
         try:
             old_step_val = round(float(old_step), 3)
         except Exception:
@@ -2970,7 +2971,7 @@ class GeoCanvasEditor(tk.Tk):
             self._sync_type2_params_to_ribbon()
             return False
         if round(step_val, 3) != round(float(old_step), 3):
-            if is_k4 and old_step_val >= 0.1 and step_val == 0.05:
+            if old_step_val >= 0.1 and step_val == 0.05 and (is_k4 or is_imported_k2):
                 self.convert_10_to_5()
                 self.step_by_tid = {int(getattr(t, "tid", 0) or 0): 0.05 for t in (getattr(self, "tests", []) or [])}
             else:
@@ -5336,6 +5337,10 @@ class GeoCanvasEditor(tk.Tk):
         self.graph_fs_max_kpa = float(fs_max)
 
     def _clear_graph_layers(self):
+        self._layer_handle_hitbox = []
+        self._layer_depth_box_hitbox = []
+        self._layer_plot_hitbox = []
+        self._layer_label_hitbox = []
         for cnv in (getattr(self, "canvas", None), getattr(self, "hcanvas", None)):
             if cnv is None:
                 continue
@@ -8177,6 +8182,16 @@ class GeoCanvasEditor(tk.Tk):
         cy = self.canvas.canvasy(y)
 
         for hit in (getattr(self, "_layer_depth_box_hitbox", []) or []):
+            try:
+                hit_ti = int(hit.get("ti", -1))
+                hit_col = self._expanded_col_index(hit_ti)
+                if hit_col is None:
+                    continue
+                table_right = float(self._column_x0(int(hit_col)) + self._table_col_width())
+                if float(cx) < table_right:
+                    continue
+            except Exception:
+                continue
             bx0, by0, bx1, by1 = hit.get("bbox", (0, 0, 0, 0))
             if bx0 <= cx <= bx1 and by0 <= cy <= by1:
                 hit_kind = str(hit.get("kind") or "boundary_depth_edit")
@@ -8185,6 +8200,16 @@ class GeoCanvasEditor(tk.Tk):
                 return ("layer_boundary_depth_edit", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
 
         for hit in (getattr(self, "_layer_handle_hitbox", []) or []):
+            try:
+                hit_ti = int(hit.get("ti", -1))
+                hit_col = self._expanded_col_index(hit_ti)
+                if hit_col is None:
+                    continue
+                table_right = float(self._column_x0(int(hit_col)) + self._table_col_width())
+                if float(cx) < table_right:
+                    continue
+            except Exception:
+                continue
             bx0, by0, bx1, by1 = hit.get("bbox", (0, 0, 0, 0))
             if bx0 <= cx <= bx1 and by0 <= cy <= by1:
                 if hit.get("kind") == "boundary":
@@ -8205,11 +8230,31 @@ class GeoCanvasEditor(tk.Tk):
                     return ("layer_minus_bottom", int(hit.get("ti", -1)), int(hit.get("boundary", 0)), None)
 
         for hit in (getattr(self, "_layer_label_hitbox", []) or []):
+            try:
+                hit_ti = int(hit.get("ti", -1))
+                hit_col = self._expanded_col_index(hit_ti)
+                if hit_col is None:
+                    continue
+                table_right = float(self._column_x0(int(hit_col)) + self._table_col_width())
+                if float(cx) < table_right:
+                    continue
+            except Exception:
+                continue
             bx0, by0, bx1, by1 = hit.get("bbox", (0, 0, 0, 0))
             if bx0 <= cx <= bx1 and by0 <= cy <= by1:
                 return ("layer_label", int(hit.get("ti", -1)), None, {"depth": float(hit.get("depth", 0.0)), "bbox": (bx0, by0, bx1, by1)})
 
         for hit in (getattr(self, "_layer_plot_hitbox", []) or []):
+            try:
+                hit_ti = int(hit.get("ti", -1))
+                hit_col = self._expanded_col_index(hit_ti)
+                if hit_col is None:
+                    continue
+                table_right = float(self._column_x0(int(hit_col)) + self._table_col_width())
+                if float(cx) < table_right:
+                    continue
+            except Exception:
+                continue
             bx0, by0, bx1, by1 = hit.get("bbox", (0, 0, 0, 0))
             if bx0 <= cx <= bx1 and by0 <= cy <= by1:
                 return ("layer_interval", int(hit.get("ti", -1)), None, float(hit.get("top", 0.0) + (hit.get("bot", 0.0) - hit.get("top", 0.0)) * ((cy - by0) / max(1.0, (by1 - by0)))))
