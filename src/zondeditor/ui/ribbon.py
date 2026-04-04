@@ -59,6 +59,7 @@ class RibbonView(ttk.Frame):
         try:
             style = ttk.Style(self)
             style.configure("RibbonCompact.TButton", padding=(4, 1))
+            style.configure("RibbonFileLeft.TButton", padding=(4, 1), anchor="w")
             style.configure("IGEHdr.TButton", padding=(3, 1))
         except Exception:
             pass
@@ -94,8 +95,8 @@ class RibbonView(ttk.Frame):
         ToolTip(btn, tip)
         self._buttons[key] = btn
 
-    def _add_btn(self, parent, key: str, text: str, tip: str, *, width: int = 12):
-        btn = ttk.Button(parent, text=text, command=self.commands.get(key), style="RibbonCompact.TButton", width=width, anchor="w")
+    def _add_btn(self, parent, key: str, text: str, tip: str, *, width: int = 12, style: str = "RibbonCompact.TButton"):
+        btn = ttk.Button(parent, text=text, command=self.commands.get(key), style=style, width=width)
         btn.pack(side="top", fill="x", anchor="w", pady=1)
         ToolTip(btn, tip)
         self._buttons[key] = btn
@@ -139,26 +140,26 @@ class RibbonView(ttk.Frame):
         project.pack(side="left", fill="y", anchor="nw", padx=(4, 8))
         project.configure(width=file_group_width_px)
         project.pack_propagate(False)
-        self._add_btn(project, "new_project", "Создать проект", "Создать новый проект", width=file_btn_width)
-        self._add_btn(project, "open_project", "Открыть проект", "Открыть *.zproj", width=file_btn_width)
-        self._add_btn(project, "save_project", "Сохранить", "Сохранить *.zproj", width=file_btn_width)
-        self._add_btn(project, "save_project_as", "Сохранить как", "Сохранить *.zproj как новый", width=file_btn_width)
+        self._add_btn(project, "new_project", "Создать проект", "Создать новый проект", width=file_btn_width, style="RibbonFileLeft.TButton")
+        self._add_btn(project, "open_project", "Открыть проект", "Открыть *.zproj", width=file_btn_width, style="RibbonFileLeft.TButton")
+        self._add_btn(project, "save_project", "Сохранить", "Сохранить *.zproj", width=file_btn_width, style="RibbonFileLeft.TButton")
+        self._add_btn(project, "save_project_as", "Сохранить как", "Сохранить *.zproj как новый", width=file_btn_width, style="RibbonFileLeft.TButton")
 
         imports = ttk.LabelFrame(tab, text="Импорт", padding=3)
         imports.pack(side="left", fill="y", anchor="nw", padx=8)
         imports.configure(width=file_group_width_px)
         imports.pack_propagate(False)
-        self._add_btn(imports, "open_geo", "GEO", "Открыть GEO/GE0", width=file_btn_width)
-        self._add_btn(imports, "open_gxl", "GXL", "Открыть GXL", width=file_btn_width)
-        self._add_btn(imports, "export_excel", "Excel", "Импорт данных из Excel", width=file_btn_width)
+        self._add_btn(imports, "open_geo", "GEO", "Открыть GEO/GE0", width=file_btn_width, style="RibbonFileLeft.TButton")
+        self._add_btn(imports, "open_gxl", "GXL", "Открыть GXL", width=file_btn_width, style="RibbonFileLeft.TButton")
+        self._add_btn(imports, "export_excel", "Excel", "Импорт данных из Excel", width=file_btn_width, style="RibbonFileLeft.TButton")
 
         exports = ttk.LabelFrame(tab, text="Экспорт", padding=3)
         exports.pack(side="left", fill="y", anchor="nw", padx=(8, 4))
         exports.configure(width=file_group_width_px)
         exports.pack_propagate(False)
-        self._add_btn(exports, "export_geo", "GEO", "Экспорт GEO только через Сохранить как", width=file_btn_width)
-        self._add_btn(exports, "export_gxl", "GXL", "Экспорт GXL только через Сохранить как", width=file_btn_width)
-        self._add_btn(exports, "export_dxf", "DXF", "Экспорт графиков в DXF (заглушка)", width=file_btn_width)
+        self._add_btn(exports, "export_geo", "GEO", "Экспорт GEO только через Сохранить как", width=file_btn_width, style="RibbonFileLeft.TButton")
+        self._add_btn(exports, "export_gxl", "GXL", "Экспорт GXL только через Сохранить как", width=file_btn_width, style="RibbonFileLeft.TButton")
+        self._add_btn(exports, "export_dxf", "DXF", "Экспорт графиков в DXF (заглушка)", width=file_btn_width, style="RibbonFileLeft.TButton")
 
     def _build_params_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
