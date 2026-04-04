@@ -7848,8 +7848,8 @@ class GeoCanvasEditor(tk.Tk):
                 q_hdr = "qc, МПа"
                 f_hdr = "fs, кПа"
             else:
-                q_hdr = "qc"
-                f_hdr = "fs"
+                q_hdr = "qc (лоб)"
+                f_hdr = "fs (бок)"
             self.hcanvas.create_text(x0 + self.w_depth / 2, sh_y, text="H, м", font=("Segoe UI", 9), fill=hdr_text)
             self.hcanvas.create_text(x0 + self.w_depth + self.w_val / 2, sh_y, text=q_hdr, font=("Segoe UI", 9), fill=hdr_text)
             self.hcanvas.create_text(x0 + self.w_depth + self.w_val + self.w_val / 2, sh_y, text=f_hdr, font=("Segoe UI", 9), fill=hdr_text)
@@ -10486,9 +10486,6 @@ class GeoCanvasEditor(tk.Tk):
         ttk.Button(frm, text="Тип 2 — электрический", command=lambda: _choose("type2_electric"), width=34).pack(fill="x", pady=2)
         ttk.Button(frm, text="Прямой ввод — qc/fs", command=lambda: _choose("direct_qcfs"), width=34).pack(fill="x", pady=2)
 
-        btns = ttk.Frame(frm)
-        btns.pack(fill="x", pady=(8, 0))
-        ttk.Button(btns, text="Отмена", command=_cancel).pack(side="right", padx=(8, 0))
         dlg.bind("<Escape>", _cancel)
 
         try:
