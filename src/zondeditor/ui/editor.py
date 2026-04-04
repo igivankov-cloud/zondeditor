@@ -2490,8 +2490,8 @@ class GeoCanvasEditor(tk.Tk):
         return "Тип 2"
 
     def _apply_visual_mode_for_project_type(self):
-        is_mech = str(getattr(self, "project_type", "") or "") == "type1_mech"
-        if is_mech:
+        ptype = str(getattr(self, "project_type", "") or "")
+        if ptype in {"type1_mech", "direct_qcfs"}:
             self.show_graphs = False
             self.show_geology_column = False
             self.show_layer_colors = False
@@ -2823,9 +2823,14 @@ class GeoCanvasEditor(tk.Tk):
         if ptype:
             self.project_type = ptype
         mode_keys = {k: v for k, v in p.items() if str(k).startswith("mode_")}
-        if (not bool(getattr(self, "_suspend_type1_param_validation", False))) and str(getattr(self, "project_type", "") or "") == "type1_mech" and mode_keys:
-            if not self._apply_type1_params(mode_keys):
-                return
+        if not bool(getattr(self, "_suspend_type1_param_validation", False)) and mode_keys:
+            ptype_cur = str(getattr(self, "project_type", "") or "")
+            if ptype_cur == "type1_mech":
+                if not self._apply_type1_params(mode_keys):
+                    return
+            elif ptype_cur == "direct_qcfs":
+                if not self._apply_direct_params(mode_keys):
+                    return
         if mode_keys:
             self.project_mode_params.update({k: str(v or "").strip() for k, v in mode_keys.items()})
             for k in list(mode_keys):
@@ -2902,6 +2907,45 @@ class GeoCanvasEditor(tk.Tk):
         self._suspend_type1_param_validation = True
         try:
             rv.set_project_type("type1_mech", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+        finally:
+            self._suspend_type1_param_validation = False
+
+    def _apply_direct_params(self, mode_keys: dict[str, str]) -> bool:
+        old_step = str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.20") or "0.20")
+        new_step = str(mode_keys.get("mode_step_depth", old_step) or old_step).replace(",", ".").strip()
+        try:
+            step_val = round(float(new_step), 3)
+        except Exception:
+            if not self._skip_next_type1_error_popup:
+                messagebox.showerror("Ошибка", "Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
+                self._skip_next_type1_error_popup = True
+            else:
+                self._skip_next_type1_error_popup = False
+            self._sync_direct_params_to_ribbon()
+            return False
+        if step_val not in {0.1, 0.2, 0.3, 0.4, 0.5}:
+            if not self._skip_next_type1_error_popup:
+                messagebox.showerror("Ошибка", "Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
+                self._skip_next_type1_error_popup = True
+            else:
+                self._skip_next_type1_error_popup = False
+            self._sync_direct_params_to_ribbon()
+            return False
+        if round(step_val, 3) != round(float(old_step), 3):
+            self._rebuild_type1_depth_grid(step_val)
+        self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
+        self._skip_next_type1_error_popup = False
+        self._redraw()
+        self.schedule_graph_redraw()
+        return True
+
+    def _sync_direct_params_to_ribbon(self):
+        rv = getattr(self, "ribbon_view", None)
+        if rv is None:
+            return
+        self._suspend_type1_param_validation = True
+        try:
+            rv.set_project_type("direct_qcfs", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
         finally:
             self._suspend_type1_param_validation = False
 
@@ -3128,6 +3172,8 @@ class GeoCanvasEditor(tk.Tk):
             qt_val = qt_raw * k_tot
             qs_val = max(0.0, qt_val - qc_val)  # Qs = Qt - Qc
             return qc_val, qs_val
+        if str(getattr(self, "project_type", "") or "") == "direct_qcfs":
+            return float(qc_del or 0), float(fs_del or 0)
         cal = self._current_calibration()
         return calc_qc_fs_from_del(
             qc_del,

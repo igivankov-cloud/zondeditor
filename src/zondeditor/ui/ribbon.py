@@ -234,22 +234,12 @@ class RibbonView(ttk.Frame):
         frm = ttk.LabelFrame(parent, text="Параметры — Прямой ввод qc/fs", padding=6)
         frm.pack(side="top", fill="x")
         self._common_param_entries = {}
-        ttk.Label(frm, text="Тип проекта: Прямой ввод — qc/fs без пересчёта").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
-        ttk.Label(frm, text="Название/тип установки").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=1)
-        ent_install = ttk.Entry(frm, textvariable=self.installation_name_var, width=26)
-        ent_install.grid(row=1, column=1, sticky="w", pady=1)
-        ent_install.bind("<FocusOut>", lambda _e: self._emit_common_params())
-        ent_install.bind("<Return>", lambda _e: self._emit_common_params())
-        self._common_param_entries["mode_installation_name"] = ent_install
-        ttk.Label(frm, text="Шаг по глубине, м").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=1)
+        ttk.Label(frm, text="Шаг зондирования, м").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=1)
         ent_step = ttk.Entry(frm, textvariable=self.step_depth_var, width=10)
-        ent_step.grid(row=2, column=1, sticky="w", pady=1)
+        ent_step.grid(row=0, column=1, sticky="w", pady=1)
         ent_step.bind("<FocusOut>", lambda _e: self._emit_common_params())
         ent_step.bind("<Return>", lambda _e: self._emit_common_params())
         self._common_param_entries["mode_step_depth"] = ent_step
-        ttk.Label(frm, text="Работа без коэффициентов пересчёта.\nДанные вводятся напрямую как qc и fs.", foreground="#555").grid(
-            row=3, column=0, columnspan=2, sticky="w", pady=(6, 0)
-        )
 
     def _render_params_by_project_type(self, project_type: str, *, emit: bool = True):
         self.project_type_mode = str(project_type or "type2_electric")
