@@ -200,7 +200,7 @@ class RibbonView(ttk.Frame):
             self._common_param_entries[key] = ent
 
         add_field(col_left, 0, "Шаг зондирования, м", self.step_depth_var, "mode_step_depth", width=6)
-        add_field(col_left, 1, "Тип контроллера", self.controller_type_var, "controller_type", width=12)
+        add_field(col_left, 1, "", self.controller_type_var, "controller_type", width=12)
         add_field(col_left, 2, "Тип зонда", self.probe_type_var, "probe_type", width=12)
         add_field(col_left, 3, "Шкала прибора", self.controller_scale_div_var, "controller_scale_div", width=4)
         add_field(col_right, 0, "Максимальная нагрузка на конус, кН", self.cone_kn_var, "cone_kn", width=4)

@@ -236,6 +236,7 @@ class GeoCanvasEditor(tk.Tk):
         self.project_mode_params: dict[str, str] = {}
         self._suspend_type1_param_validation = False
         self._skip_next_type1_error_popup = False
+        self._validation_error_popup_active = False
         self.project_path: Path | None = None
         self.project_ops: list[dict] = []
         self._marks_index: dict[tuple[int, float, str], dict] = {}
@@ -1983,7 +1984,8 @@ class GeoCanvasEditor(tk.Tk):
         self.ribbon_view = None
         # ========= LEGACY TOP BAR =========
         ribbon = ttk.Frame(self, padding=(10,8))
-        ribbon.pack(side="top", fill="x")
+        if not getattr(self, "use_ribbon_ui", False):
+            ribbon.pack(side="top", fill="x")
 
         # Win11-ish ttk styles
         s = ttk.Style()
@@ -2847,6 +2849,15 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
 
+    def _show_validation_error_once(self, message: str):
+        if bool(getattr(self, "_validation_error_popup_active", False)):
+            return
+        self._validation_error_popup_active = True
+        try:
+            messagebox.showerror("Ошибка", str(message or "Некорректные параметры."))
+        finally:
+            self._validation_error_popup_active = False
+
     def _apply_type1_params(self, mode_keys: dict[str, str]) -> bool:
         old_step = str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.20") or "0.20")
         old_lob = str(getattr(self, "project_mode_params", {}).get("mode_lob_coeff", "1.00") or "1.00")
@@ -2858,19 +2869,11 @@ class GeoCanvasEditor(tk.Tk):
         try:
             step_val = round(float(new_step), 3)
         except Exception:
-            if not self._skip_next_type1_error_popup:
-                messagebox.showerror("Ошибка", "Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
-                self._skip_next_type1_error_popup = True
-            else:
-                self._skip_next_type1_error_popup = False
+            self._show_validation_error_once("Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
             self._sync_type1_params_to_ribbon()
             return False
         if step_val not in {0.1, 0.2, 0.3, 0.4, 0.5}:
-            if not self._skip_next_type1_error_popup:
-                messagebox.showerror("Ошибка", "Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
-                self._skip_next_type1_error_popup = True
-            else:
-                self._skip_next_type1_error_popup = False
+            self._show_validation_error_once("Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
             self._sync_type1_params_to_ribbon()
             return False
 
@@ -2884,11 +2887,7 @@ class GeoCanvasEditor(tk.Tk):
         lob_val = _parse_coeff(new_lob)
         tot_val = _parse_coeff(new_tot)
         if lob_val is None or tot_val is None or not (0.01 <= lob_val <= 5.00) or not (0.01 <= tot_val <= 5.00):
-            if not self._skip_next_type1_error_popup:
-                messagebox.showerror("Ошибка", "Тарировочный коэффициент должен быть в диапазоне от 0.01 до 5.00.")
-                self._skip_next_type1_error_popup = True
-            else:
-                self._skip_next_type1_error_popup = False
+            self._show_validation_error_once("Тарировочный коэффициент должен быть в диапазоне от 0.01 до 5.00.")
             self._sync_type1_params_to_ribbon()
             return False
 
@@ -2919,19 +2918,11 @@ class GeoCanvasEditor(tk.Tk):
         try:
             step_val = round(float(new_step), 3)
         except Exception:
-            if not self._skip_next_type1_error_popup:
-                messagebox.showerror("Ошибка", "Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
-                self._skip_next_type1_error_popup = True
-            else:
-                self._skip_next_type1_error_popup = False
+            self._show_validation_error_once("Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
             self._sync_direct_params_to_ribbon()
             return False
         if step_val not in {0.1, 0.2, 0.3, 0.4, 0.5}:
-            if not self._skip_next_type1_error_popup:
-                messagebox.showerror("Ошибка", "Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
-                self._skip_next_type1_error_popup = True
-            else:
-                self._skip_next_type1_error_popup = False
+            self._show_validation_error_once("Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
             self._sync_direct_params_to_ribbon()
             return False
         if round(step_val, 3) != round(float(old_step), 3):
@@ -2948,19 +2939,11 @@ class GeoCanvasEditor(tk.Tk):
         try:
             step_val = round(float(new_step), 3)
         except Exception:
-            if not self._skip_next_type1_error_popup:
-                messagebox.showerror("Ошибка", "Недопустимый шаг зондирования. Для Типа 2 разрешены только значения: 0.05 и 0.10 м.")
-                self._skip_next_type1_error_popup = True
-            else:
-                self._skip_next_type1_error_popup = False
+            self._show_validation_error_once("Недопустимый шаг зондирования. Для Типа 2 разрешены только значения: 0.05 и 0.10 м.")
             self._sync_type2_params_to_ribbon()
             return False
         if step_val not in {0.05, 0.1}:
-            if not self._skip_next_type1_error_popup:
-                messagebox.showerror("Ошибка", "Недопустимый шаг зондирования. Для Типа 2 разрешены только значения: 0.05 и 0.10 м.")
-                self._skip_next_type1_error_popup = True
-            else:
-                self._skip_next_type1_error_popup = False
+            self._show_validation_error_once("Недопустимый шаг зондирования. Для Типа 2 разрешены только значения: 0.05 и 0.10 м.")
             self._sync_type2_params_to_ribbon()
             return False
         if round(step_val, 3) != round(float(old_step), 3):
