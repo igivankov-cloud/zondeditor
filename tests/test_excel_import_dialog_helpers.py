@@ -1,4 +1,4 @@
-from src.zondeditor.ui.import_excel_dialog import _expand_roles_right, col_to_label
+from src.zondeditor.ui.import_excel_dialog import _apply_row_bounds, _expand_roles_right, col_to_label
 
 
 def test_col_to_label_excel_letters():
@@ -21,3 +21,17 @@ def test_expand_roles_right_prefills_repeated_blocks():
     assert expanded[4] == "fs_kpa"
     assert expanded[5] == "qc_mpa"
     assert expanded[6] == "fs_kpa"
+
+
+def test_apply_row_bounds_masks_ignored_and_tail_rows():
+    rows = [
+        [1, "a"],
+        [2, "b"],
+        [3, "c"],
+        [4, "d"],
+    ]
+    out = _apply_row_bounds(rows, ignored_rows={2}, data_end_row=3)
+    assert out[0] == [1, "a"]
+    assert out[1] == [None, None]
+    assert out[2] == [3, "c"]
+    assert out[3] == [None, None]
