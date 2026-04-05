@@ -58,7 +58,7 @@ from src.zondeditor.export.selection import select_export_tests
 from src.zondeditor.io.geo_reader import load_geo, parse_geo_bytes, GeoParseError
 from src.zondeditor.io.gxl_reader import load_gxl, parse_gxl_file, GxlParseError
 from src.zondeditor.io.geo_writer import save_geo_as, save_k2_geo_from_template, build_k2_geo_from_template
-from src.zondeditor.io.excel_importer import ExcelImportError, make_unique_names
+from src.zondeditor.io.excel_importer import ExcelImportError
 from src.zondeditor.domain.models import TestData, GeoBlockInfo, TestFlags
 from src.zondeditor.ui.import_excel_dialog import ask_excel_import
 from src.zondeditor.calculations.ige_policy import build_ige_display_label, get_ige_profile
@@ -9948,21 +9948,42 @@ class GeoCanvasEditor(tk.Tk):
         if detected_type not in (1, 2, 3):
             messagebox.showerror("Импорт Excel", "Не удалось определить тип опыта (1/2/3).")
             return
-        role_set = set()
-        for _col, role in (cfg.column_roles or {}).items():
-            if role not in ("ignore", "depth"):
-                role_set.add(role)
+        role_set = {role for _col, role in (cfg.column_roles or {}).items() if role not in ("ignore", "depth")}
         if "depth" not in set((cfg.column_roles or {}).values()):
             messagebox.showerror("Импорт Excel", "Не найден столбец глубины.")
             return
-        if detected_type == 1 and not {"lob", "obshee"}.issubset(role_set):
-            messagebox.showerror("Импорт Excel", "Для типа 1 нужны столбцы «Лоб» и «Общее».")
+
+        type_roles = {
+            1: {"lob", "obshee"},
+            2: {"lob", "bok"},
+            3: {"qc_mpa", "fs_kpa"},
+        }
+        expected_roles = set(type_roles.get(detected_type, set()))
+        if not expected_roles.issubset(role_set):
+            if detected_type == 1:
+                messagebox.showerror("Импорт Excel", "Для типа 1 нужны столбцы «Лоб» и «Общее».")
+            elif detected_type == 2:
+                messagebox.showerror("Импорт Excel", "Для типа 2 нужны столбцы «Лоб» и «Бок».")
+            else:
+                messagebox.showerror("Импорт Excel", "Для типа 3 нужны столбцы «qc, МПа» и «fs, кПа».")
             return
-        if detected_type == 2 and not {"lob", "bok"}.issubset(role_set):
-            messagebox.showerror("Импорт Excel", "Для типа 2 нужны столбцы «Лоб» и «Бок».")
+        extra_roles = set(role_set) - expected_roles
+        if extra_roles:
+            messagebox.showerror(
+                "Импорт Excel",
+                "Нельзя смешивать типы столбцов в одном импорте.\n"
+                "Используйте единый набор ролей для всех зондировок.",
+            )
             return
-        if detected_type == 3 and not {"qc_mpa", "fs_kpa"}.issubset(role_set):
-            messagebox.showerror("Импорт Excel", "Для типа 3 нужны столбцы «qc, МПа» и «fs, кПа».")
+
+        proj_type_to_detected = {"type1_mech": 1, "type2_electric": 2, "direct_qcfs": 3}
+        current_type = int(proj_type_to_detected.get(str(getattr(self, "project_type", "") or ""), 0))
+        if getattr(self, "tests", None) and current_type in (1, 2, 3) and current_type != detected_type:
+            messagebox.showerror(
+                "Импорт Excel",
+                "Нельзя смешивать типы опытов в одном проекте.\n"
+                "Создайте новый проект или импортируйте совместимый тип.",
+            )
             return
 
         if detected_type == 1:
@@ -9975,9 +9996,7 @@ class GeoCanvasEditor(tk.Tk):
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_project_type(self.project_type, mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
 
-        existing = {str(getattr(t, "marker", "") or "").strip() for t in (getattr(self, "tests", []) or []) if str(getattr(t, "marker", "") or "").strip()}
-        desired = list(result.get("names") or [s.display_name for s in preview.soundings])
-        unique_names = make_unique_names(existing, desired)
+        requested_names = list(result.get("names") or [s.display_name for s in preview.soundings])
 
         next_tid = max([int(getattr(t, "tid", 0) or 0) for t in (getattr(self, "tests", []) or [])] + [0]) + 1
         imported_count = 0
@@ -10008,7 +10027,7 @@ class GeoCanvasEditor(tk.Tk):
                 qc=qc_vals,
                 fs=fs_vals,
                 incl=None,
-                marker=unique_names[idx] if idx < len(unique_names) else sounding.display_name,
+                marker=requested_names[idx] if idx < len(requested_names) else str(getattr(sounding, "source_name", "") or sounding.display_name),
                 header_pos=str(getattr(sounding, "source_name", "") or ""),
                 orig_id=None,
                 block=None,

@@ -350,6 +350,13 @@ class ExcelImportDialog(tk.Toplevel):
         super().__init__(master)
         self.title("Импорт Excel (БЕТА)")
         self.geometry("1280x820")
+        try:
+            self.state("zoomed")
+        except Exception:
+            try:
+                self.attributes("-zoomed", True)
+            except Exception:
+                pass
         self.transient(master)
         self.grab_set()
 
@@ -384,9 +391,7 @@ class ExcelImportDialog(tk.Toplevel):
         top.pack(fill="x")
 
         ttk.Label(top, text="Файл:").pack(side="left")
-        self.file_entry = ttk.Entry(top, textvariable=self.file_var, width=28, state="readonly")
-        self.file_entry.pack(side="left", padx=(4, 4))
-        ttk.Button(top, text="...", command=self._pick_file, width=4).pack(side="left", padx=(0, 10))
+        ttk.Label(top, textvariable=self.file_var, width=34).pack(side="left", padx=(4, 12))
 
         ttk.Label(top, text="Лист:").pack(side="left")
         self.sheet_combo = ttk.Combobox(top, textvariable=self.sheet_var, state="readonly", width=24)
@@ -398,7 +403,6 @@ class ExcelImportDialog(tk.Toplevel):
         ttk.Button(top, text="Сбросить", command=self._reset_markup).pack(side="left", padx=(0, 10))
 
         ttk.Button(top, text="Импорт", command=self._on_import).pack(side="right", padx=(6, 0))
-        ttk.Button(top, text="Отмена", command=self._on_cancel).pack(side="right")
 
         center = ttk.Frame(self, padding=(8, 0, 8, 0))
         center.pack(fill="both", expand=True)
