@@ -4936,6 +4936,15 @@ class GeoCanvasEditor(tk.Tk):
         # Для collapsed/locked опыта отключаем кнопки даты/копии/удаления.
         return (not self._is_test_collapsed(int(ti))) and (not self._is_test_locked(int(ti)))
 
+    def _can_show_add_test_button(self) -> bool:
+        ptype = str(getattr(self, "project_type", "") or "")
+        if ptype not in {"type1_mech", "type2_electric", "direct_qcfs"}:
+            return False
+        src = str(getattr(self, "loaded_path", "") or "").lower()
+        if src.endswith(".geo") or src.endswith(".ge0") or src.endswith(".gxl"):
+            return False
+        return True
+
     def _collapsed_header_bbox(self, row: int):
         x0 = 4
         x1 = int(x0 + self._collapsed_header_width())
@@ -6407,6 +6416,11 @@ class GeoCanvasEditor(tk.Tk):
                 return
             self._edit_header_title(ti)
             return
+        if kind == "add":
+            if not self._can_show_add_test_button():
+                return
+            self._add_test_dialog()
+            return
         if kind == "dup":
             if not self._header_action_buttons_enabled(int(ti)):
                 self._set_status("Кнопка недоступна для свёрнутого/заблокированного опыта")
@@ -7467,7 +7481,7 @@ class GeoCanvasEditor(tk.Tk):
             _set_cursor("")
             return
         kind, ti, row, field = hit
-        if kind in ("lock", "edit", "rename", "dup", "trash"):
+        if kind in ("add", "lock", "edit", "rename", "dup", "trash"):
             self._set_hover((kind, ti))
             _set_cursor("hand2")
         elif kind == "export":
@@ -7927,11 +7941,15 @@ class GeoCanvasEditor(tk.Tk):
             ico_font = _pick_icon_font(12)
 
             lock_on = bool(getattr(t, "locked", False))
+            add_enabled = bool(self._can_show_add_test_button())
             actions_enabled = bool(self._header_action_buttons_enabled(int(ti)))
-            lock_x, dup_x, trash_x = (x1 - 66), (x1 - 40), (x1 - 14)
+            add_x, lock_x, dup_x, trash_x = (x1 - 92), (x1 - 66), (x1 - 40), (x1 - 14)
             box_w, box_h = 22, 20
 
             # hover background (только для иконок, не для галочки)
+            if add_enabled and getattr(self, "_hover", None) == ("add", ti):
+                self.hcanvas.create_rectangle(add_x - box_w/2, ico_y - box_h/2, add_x + box_w/2, ico_y + box_h/2,
+                                              fill="#e9e9e9", outline="")
             if getattr(self, "_hover", None) == ("lock", ti):
                 self.hcanvas.create_rectangle(lock_x - box_w/2, ico_y - box_h/2, lock_x + box_w/2, ico_y + box_h/2,
                                               fill="#e9e9e9", outline="")
@@ -7941,6 +7959,8 @@ class GeoCanvasEditor(tk.Tk):
             if getattr(self, "_hover", None) == ("trash", ti):
                 self.hcanvas.create_rectangle(trash_x - box_w/2, ico_y - box_h/2, trash_x + box_w/2, ico_y + box_h/2,
                                               fill="#e9e9e9", outline="")
+            if add_enabled:
+                self.hcanvas.create_text(add_x, ico_y, text="+", font=("Segoe UI", 13, "bold"), fill=hdr_icon, anchor="center")
             self.hcanvas.create_text(lock_x, ico_y, text=("🔒" if lock_on else "🔓"), font=("Segoe UI", 10), fill=hdr_icon, anchor="center")
             self.hcanvas.create_text(dup_x, ico_y, text=ICON_COPY, font=ico_font, fill=(hdr_icon if actions_enabled else "#b6b6b6"), anchor="center")
             self.hcanvas.create_text(trash_x, ico_y, text=ICON_DELETE, font=ico_font, fill=(hdr_icon if actions_enabled else "#b6b6b6"), anchor="center")
@@ -8180,6 +8200,8 @@ class GeoCanvasEditor(tk.Tk):
                     if (x0 + 6) <= cx <= (x0 + 20) and (y0 + 8) <= cy <= (y0 + 22):
                         return ("export", ti, None, None)
                     # icons
+                    if self._can_show_add_test_button() and (x1 - 104) <= cx <= (x1 - 80) and y0 <= cy <= (y0 + 24):
+                        return ("add", ti, None, None)
                     if (x1 - 78) <= cx <= (x1 - 54) and y0 <= cy <= (y0 + 24):
                         return ("lock", ti, None, None)
                     actions_enabled = bool(self._header_action_buttons_enabled(int(ti)))
