@@ -3,7 +3,7 @@ from __future__ import annotations
 # === FILE MAP BEGIN ===
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
 # - _expand_roles_right: L99–L142 — предзаполнение повторяющихся блоков ролей вправо.
-# - ExcelImportGrid: L145–L345 — Excel-подобная сетка (буквы столбцов, номера строк, скроллы, клики, стабильный viewport при resize).
+# - ExcelImportGrid: L145–L365 — Excel-подобная сетка (буквы столбцов, номера строк, скроллы, клики, стабильный viewport при resize и redraw при scroll).
 # - ExcelImportDialog._build_ui: L314–L347 — компактный верхний toolbar + статусный блок.
 # - ExcelImportDialog._apply_autodetect/_apply_detected_settings: L379–L403 — автопредзаполнение разметки.
 # - ExcelImportDialog._on_column_click/_set_column_role: L405–L420 — назначение ролей по клику на букву столбца.
@@ -163,8 +163,8 @@ class ExcelImportGrid(ttk.Frame):
         self.state = GridState(rows=[], header_row=1, data_start_row=2, ignored_rows=set(), column_roles={})
 
         self.canvas = tk.Canvas(self, background="#ffffff", highlightthickness=0)
-        self.vsb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        self.hsb = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
+        self.vsb = ttk.Scrollbar(self, orient="vertical", command=self._yview_and_redraw)
+        self.hsb = ttk.Scrollbar(self, orient="horizontal", command=self._xview_and_redraw)
         self.canvas.configure(yscrollcommand=self.vsb.set, xscrollcommand=self.hsb.set)
 
         self.canvas.grid(row=0, column=0, sticky="nsew")
@@ -178,8 +178,8 @@ class ExcelImportGrid(ttk.Frame):
         self.canvas.bind("<Button-1>", self._handle_click)
         self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
         self.canvas.bind("<Shift-MouseWheel>", self._on_shift_mouse_wheel)
-        self.canvas.bind("<Button-4>", lambda _e: self.canvas.yview_scroll(-1, "units"))
-        self.canvas.bind("<Button-5>", lambda _e: self.canvas.yview_scroll(1, "units"))
+        self.canvas.bind("<Button-4>", lambda _e: self._scroll_y_units(-1))
+        self.canvas.bind("<Button-5>", lambda _e: self._scroll_y_units(1))
 
     def set_state(self, state: GridState):
         anchor_top_row = self._current_top_row()
@@ -252,11 +252,27 @@ class ExcelImportGrid(ttk.Frame):
 
     def _on_mouse_wheel(self, event):
         direction = -1 if int(getattr(event, "delta", 0)) > 0 else 1
-        self.canvas.yview_scroll(direction, "units")
+        self._scroll_y_units(direction)
 
     def _on_shift_mouse_wheel(self, event):
         direction = -1 if int(getattr(event, "delta", 0)) > 0 else 1
-        self.canvas.xview_scroll(direction, "units")
+        self._scroll_x_units(direction)
+
+    def _scroll_y_units(self, direction: int) -> None:
+        self.canvas.yview_scroll(int(direction), "units")
+        self._redraw()
+
+    def _scroll_x_units(self, direction: int) -> None:
+        self.canvas.xview_scroll(int(direction), "units")
+        self._redraw()
+
+    def _yview_and_redraw(self, *args):
+        self.canvas.yview(*args)
+        self._redraw()
+
+    def _xview_and_redraw(self, *args):
+        self.canvas.xview(*args)
+        self._redraw()
 
     def _redraw(self):
         self.canvas.delete("all")
