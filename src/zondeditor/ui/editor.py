@@ -6,7 +6,7 @@
 # - _next_free_ige_ordinal/_next_free_ige_id: L1341–L1376 — генерация ближайшего свободного базового имени ИГЭ.
 # - _add_unassigned_ige_from_ribbon: L1582–L1594 — добавление нового ИГЭ с пустым типом грунта.
 # - _rename_ige_from_ribbon: L1846–L1881 — переименование ИГЭ с проверкой уникальности и обновлением ссылок в слоях.
-# - open_excel_import_dialog: L9873–L9980 — импорт Excel (БЕТА): сначала выбор файла, затем диалог и добавление опытов в проект.
+# - open_excel_import_dialog: L9871–L9989 — импорт Excel (БЕТА): выбор файла, импорт, авто-подстановка шага и добавление опытов.
 # - hatching integration: _draw_layer_hatch/_draw_layers_overlay_for_test — применение встроенной библиотеки hatch-паттернов.
 # === FILE MAP END ===
 
@@ -2876,6 +2876,24 @@ class GeoCanvasEditor(tk.Tk):
         if rv is not None:
             rv.set_project_type("type2_electric", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
 
+    @staticmethod
+    def _allowed_step_values() -> tuple[float, ...]:
+        return (0.05, 0.1, 0.2, 0.3, 0.4, 0.5)
+
+    def _normalize_allowed_step(self, raw_value) -> float | None:
+        try:
+            step_raw = float(raw_value)
+        except Exception:
+            return None
+        for allowed in self._allowed_step_values():
+            if abs(float(step_raw) - float(allowed)) <= 1e-3:
+                return float(allowed)
+        return None
+
+    def _step_validation_message(self) -> str:
+        allowed = ", ".join(f"{x:g}" for x in self._allowed_step_values())
+        return f"Недопустимый шаг зондирования. Разрешены значения: {allowed} м."
+
     def _apply_type1_params(self, mode_keys: dict[str, str]) -> bool:
         old_step = str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.20") or "0.20")
         old_lob = str(getattr(self, "project_mode_params", {}).get("mode_lob_coeff", "1.00") or "1.00")
@@ -2884,14 +2902,9 @@ class GeoCanvasEditor(tk.Tk):
         new_lob = str(mode_keys.get("mode_lob_coeff", old_lob) or old_lob).replace(",", ".").strip()
         new_tot = str(mode_keys.get("mode_total_coeff", old_tot) or old_tot).replace(",", ".").strip()
 
-        try:
-            step_val = round(float(new_step), 3)
-        except Exception:
-            self._show_validation_error_once("Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
-            self._sync_type1_params_to_ribbon()
-            return False
-        if step_val not in {0.1, 0.2, 0.3, 0.4, 0.5}:
-            self._show_validation_error_once("Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
+        step_val = self._normalize_allowed_step(new_step)
+        if step_val is None:
+            self._show_validation_error_once(self._step_validation_message())
             self._sync_type1_params_to_ribbon()
             return False
 
@@ -2933,14 +2946,9 @@ class GeoCanvasEditor(tk.Tk):
     def _apply_direct_params(self, mode_keys: dict[str, str]) -> bool:
         old_step = str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.20") or "0.20")
         new_step = str(mode_keys.get("mode_step_depth", old_step) or old_step).replace(",", ".").strip()
-        try:
-            step_val = round(float(new_step), 3)
-        except Exception:
-            self._show_validation_error_once("Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
-            self._sync_direct_params_to_ribbon()
-            return False
-        if step_val not in {0.1, 0.2, 0.3, 0.4, 0.5}:
-            self._show_validation_error_once("Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
+        step_val = self._normalize_allowed_step(new_step)
+        if step_val is None:
+            self._show_validation_error_once(self._step_validation_message())
             self._sync_direct_params_to_ribbon()
             return False
         if round(step_val, 3) != round(float(old_step), 3):
@@ -2954,14 +2962,9 @@ class GeoCanvasEditor(tk.Tk):
     def _apply_type2_params(self, mode_keys: dict[str, str]) -> bool:
         old_step = str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.05") or "0.05")
         new_step = str(mode_keys.get("mode_step_depth", old_step) or old_step).replace(",", ".").strip()
-        try:
-            step_val = round(float(new_step), 3)
-        except Exception:
-            self._show_validation_error_once("Недопустимый шаг зондирования. Для Типа 2 разрешены только значения: 0.05 и 0.10 м.")
-            self._sync_type2_params_to_ribbon()
-            return False
-        if step_val not in {0.05, 0.1}:
-            self._show_validation_error_once("Недопустимый шаг зондирования. Для Типа 2 разрешены только значения: 0.05 и 0.10 м.")
+        step_val = self._normalize_allowed_step(new_step)
+        if step_val is None:
+            self._show_validation_error_once(self._step_validation_message())
             self._sync_type2_params_to_ribbon()
             return False
         is_k4 = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"
@@ -2970,10 +2973,6 @@ class GeoCanvasEditor(tk.Tk):
             old_step_val = round(float(old_step), 3)
         except Exception:
             old_step_val = 0.05
-        if is_k4 and old_step_val <= 0.05 and step_val > 0.05:
-            self._show_validation_error_once("Для K4 запрещено увеличивать шаг с 0.05 до 0.10. Разрешено только 0.10 → 0.05.")
-            self._sync_type2_params_to_ribbon()
-            return False
         if round(step_val, 3) != round(float(old_step), 3):
             if old_step_val >= 0.1 and step_val == 0.05 and (is_k4 or is_imported_k2):
                 self.convert_10_to_5()
@@ -9921,6 +9920,8 @@ class GeoCanvasEditor(tk.Tk):
 
         next_tid = max([int(getattr(t, "tid", 0) or 0) for t in (getattr(self, "tests", []) or [])] + [0]) + 1
         imported_count = 0
+        imported_tids: list[int] = []
+        step_candidates: list[float] = []
         for idx, sounding in enumerate(preview.soundings):
             depth: list[str] = []
             qc_vals: list[str] = []
@@ -9954,18 +9955,37 @@ class GeoCanvasEditor(tk.Tk):
             self.tests.append(test)
             self.flags[test.tid] = TestFlags(False, set(), set(), set(), set())
             self.depth0_by_tid[int(test.tid)] = float(_parse_depth_float(depth[0]) or 0.0)
+            imported_tids.append(int(test.tid))
+            try:
+                dnums = [float(x) for x in depth]
+                for a, b in zip(dnums, dnums[1:]):
+                    dd = float(b) - float(a)
+                    if dd > 1e-6:
+                        step_candidates.append(dd)
+            except Exception:
+                pass
             imported_count += 1
 
         if imported_count <= 0:
             messagebox.showwarning("Импорт Excel", "В выбранном листе не найдено валидных строк данных.")
             return
+        if step_candidates:
+            est_step = min(step_candidates)
+            snapped = self._normalize_allowed_step(est_step)
+            if snapped is not None:
+                self.step_m = float(snapped)
+                self.project_mode_params["mode_step_depth"] = f"{float(snapped):.2f}".rstrip("0").rstrip(".")
+                for tid in imported_tids:
+                    self.step_by_tid[int(tid)] = float(snapped)
+                if getattr(self, "ribbon_view", None):
+                    self.ribbon_view.set_project_type(self.project_type, mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
         self._ensure_layers_defaults_for_all_tests()
+        self._build_grid()
         self._active_test_idx = len(self.tests) - 1 if self.tests else None
         self._sync_layers_panel()
         self._redraw()
         self.schedule_graph_redraw()
-        warns = len(getattr(preview, "warnings", []) or [])
-        messagebox.showinfo("Импорт Excel", f"Импортировано опытов: {imported_count}\\nПредупреждений: {warns}")
+        messagebox.showinfo("Импорт Excel", f"Импортировано опытов: {imported_count}")
 
     def _ask_cpt_calc_settings(self) -> dict[str, object] | None:
         dlg = tk.Toplevel(self)
