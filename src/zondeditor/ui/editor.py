@@ -2535,11 +2535,12 @@ class GeoCanvasEditor(tk.Tk):
             fts = [("GEO/GE0", "*.geo *.ge0 *.GEO *.GE0"), ("Все файлы", "*.*")]
         elif forced_ext == ".gxl":
             title = "Открыть GXL"
-            fts = [("GXL", "*.gxl *.GXL"), ("Все файлы", "*.*")]
+            fts = [("GXL/GLX", "*.gxl *.GXL *.glx *.GLX"), ("Все файлы", "*.*")]
         else:
             title = "Выберите файл GEO/GE0 или GXL"
             fts = [
                 ("GeoExplorer GEO / GXL", "*.geo *.ge0 *.GEO *.GE0 *.gxl *.GXL"),
+                ("GeoExplorer GLX", "*.glx *.GLX"),
                 ("Все файлы", "*.*"),
             ]
         path = filedialog.askopenfilename(title=title, filetypes=fts)
@@ -2547,7 +2548,7 @@ class GeoCanvasEditor(tk.Tk):
             return
         self.geo_path = Path(path)
         self.file_var.set(str(self.geo_path))
-        self.is_gxl = (self.geo_path.suffix.lower() == ".gxl")
+        self.is_gxl = (self.geo_path.suffix.lower() in {".gxl", ".glx"})
         self.loaded_path = str(self.geo_path)
         self.project_path = None
         self.project_name = str(self.geo_path.stem or "Новый проект")
@@ -3955,11 +3956,22 @@ class GeoCanvasEditor(tk.Tk):
                 return
 
 
-            if getattr(self, "is_gxl", False) or self.geo_path.suffix.lower() == ".gxl":
+            gxl_by_ext = self.geo_path.suffix.lower() in {".gxl", ".glx"}
+            gxl_parsed_fallback: tuple[list[TestData], list[dict]] | None = None
+            if (not getattr(self, "is_gxl", False)) and (not gxl_by_ext):
+                try:
+                    gxl_parsed_fallback = parse_gxl_file(self.geo_path)
+                except Exception:
+                    gxl_parsed_fallback = None
+
+            if getattr(self, "is_gxl", False) or gxl_by_ext or (gxl_parsed_fallback is not None):
 
                 try:
 
-                    tests_list, meta_rows = parse_gxl_file(self.geo_path)
+                    if gxl_parsed_fallback is not None:
+                        tests_list, meta_rows = gxl_parsed_fallback
+                    else:
+                        tests_list, meta_rows = parse_gxl_file(self.geo_path)
                     self.loaded_path = str(self.geo_path)
                     self.is_gxl = True
                     self.geo_kind = "K4" if any(getattr(t, "incl", None) for t in tests_list) else "K2"
@@ -4974,7 +4986,7 @@ class GeoCanvasEditor(tk.Tk):
         if ptype not in {"type1_mech", "type2_electric", "direct_qcfs"}:
             return False
         src = str(getattr(self, "loaded_path", "") or "").lower()
-        if src.endswith(".geo") or src.endswith(".ge0") or src.endswith(".gxl"):
+        if src.endswith(".geo") or src.endswith(".ge0") or src.endswith(".gxl") or src.endswith(".glx"):
             return False
         return True
 
@@ -11309,13 +11321,13 @@ class GeoCanvasEditor(tk.Tk):
                 title="Сохранить как",
                 defaultextension=".geo",
                 initialfile=base_noext + ".geo",
-                filetypes=[("GEO/GE0", "*.geo *.ge0 *.GEO *.GE0"), ("GXL", "*.gxl *.GXL"), ("Все файлы", "*.*")],
+                filetypes=[("GEO/GE0", "*.geo *.ge0 *.GEO *.GE0"), ("GXL/GLX", "*.gxl *.GXL *.glx *.GLX"), ("Все файлы", "*.*")],
             )
             if not out_file:
                 return
 
             ext = os.path.splitext(out_file)[1].lower()
-            if ext == ".gxl":
+            if ext in {".gxl", ".glx"}:
                 self._save_geo_path_override = out_file
                 try:
                     return self.export_gxl_as()
