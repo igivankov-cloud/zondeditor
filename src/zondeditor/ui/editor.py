@@ -2,10 +2,11 @@
 # Auto-generated from tools/_ui_extract/GeoCanvasEditor.py (Step19)
 # === FILE MAP BEGIN ===
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
-# - _extract_base_ige_num/_used_base_ige_ordinals: L1120–L1139 — поиск базовых имён ИГЭ-N для выбора следующего свободного номера.
-# - _next_free_ige_ordinal/_next_free_ige_id: L1141–L1340 — генерация ближайшего свободного базового имени ИГЭ.
-# - _add_unassigned_ige_from_ribbon: L1371–L1383 — добавление нового ИГЭ с пустым типом грунта.
-# - _rename_ige_from_ribbon: L1635–L1670 — переименование ИГЭ с проверкой уникальности и обновлением ссылок в слоях.
+# - _extract_base_ige_num/_used_base_ige_ordinals: L1320–L1339 — поиск базовых имён ИГЭ-N для выбора следующего свободного номера.
+# - _next_free_ige_ordinal/_next_free_ige_id: L1341–L1376 — генерация ближайшего свободного базового имени ИГЭ.
+# - _add_unassigned_ige_from_ribbon: L1582–L1594 — добавление нового ИГЭ с пустым типом грунта.
+# - _rename_ige_from_ribbon: L1846–L1881 — переименование ИГЭ с проверкой уникальности и обновлением ссылок в слоях.
+# - open_excel_import_dialog: L9872–L9974 — импорт Excel (БЕТА) через отдельный диалог и добавление опытов в проект.
 # - hatching integration: _draw_layer_hatch/_draw_layers_overlay_for_test — применение встроенной библиотеки hatch-паттернов.
 # === FILE MAP END ===
 
@@ -54,7 +55,9 @@ from src.zondeditor.export.selection import select_export_tests
 from src.zondeditor.io.geo_reader import load_geo, parse_geo_bytes, GeoParseError
 from src.zondeditor.io.gxl_reader import load_gxl, parse_gxl_file, GxlParseError
 from src.zondeditor.io.geo_writer import save_geo_as, save_k2_geo_from_template, build_k2_geo_from_template
+from src.zondeditor.io.excel_importer import ExcelImportError, make_unique_names
 from src.zondeditor.domain.models import TestData, GeoBlockInfo, TestFlags
+from src.zondeditor.ui.import_excel_dialog import ask_excel_import
 from src.zondeditor.calculations.ige_policy import build_ige_display_label, get_ige_profile
 from src.zondeditor.domain.layer_store import LayerStore
 from src.zondeditor.domain.experience_column import (
@@ -2138,7 +2141,7 @@ class GeoCanvasEditor(tk.Tk):
                 "open_gxl": lambda: self.pick_file_and_load(forced_ext=".gxl"),
                 "export_geo": self.save_geo,
                 "export_gxl": self.save_gxl,
-                "export_excel": self.export_excel,
+                "export_excel": self.open_excel_import_dialog,
                 "export_credo": self.export_credo_zip,
                 "export_archive": self.export_bundle,
                 "export_dxf": self.export_dxf,
@@ -9866,6 +9869,98 @@ class GeoCanvasEditor(tk.Tk):
             messagebox.showinfo("Готово", f"Excel сохранён:\n{out}")
         except Exception as e:
             messagebox.showerror("Ошибка", str(e))
+
+    def open_excel_import_dialog(self):
+        existing_names = {str(getattr(t, "marker", "") or "").strip() for t in (getattr(self, "tests", []) or []) if str(getattr(t, "marker", "") or "").strip()}
+        result = ask_excel_import(self, existing_names=existing_names)
+        if not result:
+            return
+        preview = result.get("preview")
+        cfg = result.get("config")
+        if preview is None or cfg is None:
+            return
+        detected_type = int(preview.detected_type or 0)
+        if detected_type not in (1, 2, 3):
+            messagebox.showerror("Импорт Excel", "Не удалось определить тип опыта (1/2/3).")
+            return
+        role_set = set()
+        for _col, role in (cfg.column_roles or {}).items():
+            if role not in ("ignore", "depth"):
+                role_set.add(role)
+        if "depth" not in set((cfg.column_roles or {}).values()):
+            messagebox.showerror("Импорт Excel", "Не найден столбец глубины.")
+            return
+        if detected_type == 1 and not {"lob", "obshee"}.issubset(role_set):
+            messagebox.showerror("Импорт Excel", "Для типа 1 нужны столбцы «Лоб» и «Общее».")
+            return
+        if detected_type == 2 and not {"lob", "bok"}.issubset(role_set):
+            messagebox.showerror("Импорт Excel", "Для типа 2 нужны столбцы «Лоб» и «Бок».")
+            return
+        if detected_type == 3 and not {"qc_mpa", "fs_kpa"}.issubset(role_set):
+            messagebox.showerror("Импорт Excel", "Для типа 3 нужны столбцы «qc, МПа» и «fs, кПа».")
+            return
+
+        if detected_type == 1:
+            self.project_type = "type1_mech"
+        elif detected_type == 2:
+            self.project_type = "type2_electric"
+        else:
+            self.project_type = "direct_qcfs"
+        self._apply_visual_mode_for_project_type()
+        if getattr(self, "ribbon_view", None):
+            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+
+        existing = {str(getattr(t, "marker", "") or "").strip() for t in (getattr(self, "tests", []) or []) if str(getattr(t, "marker", "") or "").strip()}
+        desired = list(result.get("names") or [s.display_name for s in preview.soundings])
+        unique_names = make_unique_names(existing, desired)
+
+        next_tid = max([int(getattr(t, "tid", 0) or 0) for t in (getattr(self, "tests", []) or [])] + [0]) + 1
+        imported_count = 0
+        for idx, sounding in enumerate(preview.soundings):
+            depth: list[str] = []
+            qc_vals: list[str] = []
+            fs_vals: list[str] = []
+            for row in sounding.rows:
+                depth.append(f"{float(row.depth_m):g}")
+                values = dict(row.values or {})
+                if detected_type == 1:
+                    qc_vals.append("" if values.get("lob") is None else f"{float(values.get('lob')):g}")
+                    fs_vals.append("" if values.get("obshee") is None else f"{float(values.get('obshee')):g}")
+                elif detected_type == 2:
+                    qc_vals.append("" if values.get("lob") is None else f"{float(values.get('lob')):g}")
+                    fs_vals.append("" if values.get("bok") is None else f"{float(values.get('bok')):g}")
+                else:
+                    qc_vals.append("" if values.get("qc_mpa") is None else f"{float(values.get('qc_mpa')):g}")
+                    fs_vals.append("" if values.get("fs_kpa") is None else f"{float(values.get('fs_kpa')):g}")
+            if not depth:
+                continue
+            test = TestData(
+                tid=next_tid + idx,
+                dt=_dt.datetime.now().strftime("%d.%m.%Y %H:%M"),
+                depth=depth,
+                qc=qc_vals,
+                fs=fs_vals,
+                incl=None,
+                marker=unique_names[idx] if idx < len(unique_names) else sounding.display_name,
+                header_pos=str(getattr(sounding, "source_name", "") or ""),
+                orig_id=None,
+                block=None,
+            )
+            self.tests.append(test)
+            self.flags[test.tid] = TestFlags(False, set(), set(), set(), set())
+            self.depth0_by_tid[int(test.tid)] = float(_parse_depth_float(depth[0]) or 0.0)
+            imported_count += 1
+
+        if imported_count <= 0:
+            messagebox.showwarning("Импорт Excel", "В выбранном листе не найдено валидных строк данных.")
+            return
+        self._ensure_layers_defaults_for_all_tests()
+        self._active_test_idx = len(self.tests) - 1 if self.tests else None
+        self._sync_layers_panel()
+        self._redraw()
+        self.schedule_graph_redraw()
+        warns = len(getattr(preview, "warnings", []) or [])
+        messagebox.showinfo("Импорт Excel", f"Импортировано опытов: {imported_count}\\nПредупреждений: {warns}")
 
     def _ask_cpt_calc_settings(self) -> dict[str, object] | None:
         dlg = tk.Toplevel(self)
