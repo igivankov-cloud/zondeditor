@@ -6,6 +6,7 @@
 # - _next_free_ige_ordinal/_next_free_ige_id: L1341–L1376 — генерация ближайшего свободного базового имени ИГЭ.
 # - _add_unassigned_ige_from_ribbon: L1582–L1594 — добавление нового ИГЭ с пустым типом грунта.
 # - _rename_ige_from_ribbon: L1846–L1881 — переименование ИГЭ с проверкой уникальности и обновлением ссылок в слоях.
+# - _focus_params_tab_after_successful_import: L3910–L3926 — единый хук переключения на вкладку «Параметры» после успешного импорта.
 # - open_excel_import_dialog: L9871–L9989 — импорт Excel (БЕТА): выбор файла, импорт, авто-подстановка шага и добавление опытов.
 # - hatching integration: _draw_layer_hatch/_draw_layers_overlay_for_test — применение встроенной библиотеки hatch-паттернов.
 # === FILE MAP END ===
@@ -4005,6 +4006,7 @@ class GeoCanvasEditor(tk.Tk):
                 self._update_status_loaded(prefix=f"GXL: загружено опытов {len(self.tests)}")
 
                 self._auto_scan_after_load()
+                self._focus_params_tab_after_successful_import("GXL")
 
                 return
             # GEO/GE0: читаем и разбираем без требований к параметрам
@@ -4121,6 +4123,7 @@ class GeoCanvasEditor(tk.Tk):
             self._update_status_loaded(prefix=f"GEO: загружено опытов {len(self.tests)}")
 
             self._auto_scan_after_load()
+            self._focus_params_tab_after_successful_import("GEO")
             return
 
 
@@ -4170,6 +4173,20 @@ class GeoCanvasEditor(tk.Tk):
             self.redo_stack.clear()
 
             self._update_status_loaded(f"Загружено опытов {len(self.tests)} шт.")
+
+    def _focus_params_tab_after_successful_import(self, source: str = "") -> None:
+        """Единый post-import хук: переводим UI на вкладку «Параметры» только при успешном импорте."""
+        if not getattr(self, "tests", None):
+            return
+        try:
+            rv = getattr(self, "ribbon_view", None)
+            if rv is not None:
+                rv.select_tab("Параметры")
+                self._sync_workspace_visibility("Параметры")
+            if source:
+                self._set_status(f"{source}: открыта вкладка «Параметры»")
+        except Exception:
+            pass
 
 
     def _scan_by_algorithm(self, preview_mode: bool = True):
@@ -10029,6 +10046,7 @@ class GeoCanvasEditor(tk.Tk):
         self._sync_layers_panel()
         self._redraw()
         self.schedule_graph_redraw()
+        self._focus_params_tab_after_successful_import("Excel")
         messagebox.showinfo("Импорт Excel", f"Импортировано опытов: {imported_count}")
 
     def _ask_cpt_calc_settings(self) -> dict[str, object] | None:
