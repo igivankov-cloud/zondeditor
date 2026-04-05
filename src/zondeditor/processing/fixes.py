@@ -10,6 +10,7 @@ from src.zondeditor.processing.value_semantics import (
     max_zero_run,
     parse_measurement,
 )
+from src.zondeditor.processing.interpolation_precision import normalize_interpolated_value
 
 
 def _parse_cell_float(v: Any) -> Optional[float]:
@@ -79,6 +80,7 @@ def fix_tests_by_algorithm(
 
         _orig_qc = list(getattr(t, "qc", []) or [])
         _orig_fs = list(getattr(t, "fs", []) or [])
+        _series_src = {"qc": list(_orig_qc), "fs": list(_orig_fs)}
         algo_cells: set[tuple[int, str]] = set()
 
         if not hasattr(t, "qc") or not hasattr(t, "fs"):
@@ -124,19 +126,34 @@ def fix_tests_by_algorithm(
                         for k in range(gap_len):
                             tt = (k + 1) / (gap_len + 1)
                             if (i + k, kind) not in _prev_user_cells and (i + k, kind) not in interp_cells and (i + k, kind) not in force_cells:
-                                arr[i + k] = _interp_with_noise(a, b, tt)
+                                arr[i + k] = normalize_interpolated_value(
+                                    _interp_with_noise(a, b, tt),
+                                    local_samples=[a, b],
+                                    series_samples=_series_src.get(kind, []),
+                                    field_name=kind,
+                                )
                                 interp_cells.add((i + k, kind))
                     elif left >= 0 and (not is_effective_zero(arr[left])):
                         a = arr[left]
                         for k in range(gap_len):
                             if (i + k, kind) not in _prev_user_cells:
-                                arr[i + k] = _noise_around(a)
+                                arr[i + k] = normalize_interpolated_value(
+                                    _noise_around(a),
+                                    local_samples=[a],
+                                    series_samples=_series_src.get(kind, []),
+                                    field_name=kind,
+                                )
                                 interp_cells.add((i + k, kind))
                     elif right < n and (not is_effective_zero(arr[right])):
                         b = arr[right]
                         for k in range(gap_len):
                             if (i + k, kind) not in _prev_user_cells:
-                                arr[i + k] = _noise_around(b)
+                                arr[i + k] = normalize_interpolated_value(
+                                    _noise_around(b),
+                                    local_samples=[b],
+                                    series_samples=_series_src.get(kind, []),
+                                    field_name=kind,
+                                )
                                 interp_cells.add((i + k, kind))
                 i = j
 
@@ -154,11 +171,26 @@ def fix_tests_by_algorithm(
                 while right < n and is_effective_zero(arr[right]):
                     right += 1
                 if left >= 0 and right < n:
-                    arr[i] = _interp_with_noise(arr[left], arr[right], 0.5)
+                    arr[i] = normalize_interpolated_value(
+                        _interp_with_noise(arr[left], arr[right], 0.5),
+                        local_samples=[arr[left], arr[right]],
+                        series_samples=_series_src.get(kind, []),
+                        field_name=kind,
+                    )
                 elif left >= 0:
-                    arr[i] = _noise_around(arr[left])
+                    arr[i] = normalize_interpolated_value(
+                        _noise_around(arr[left]),
+                        local_samples=[arr[left]],
+                        series_samples=_series_src.get(kind, []),
+                        field_name=kind,
+                    )
                 elif right < n:
-                    arr[i] = _noise_around(arr[right])
+                    arr[i] = normalize_interpolated_value(
+                        _noise_around(arr[right]),
+                        local_samples=[arr[right]],
+                        series_samples=_series_src.get(kind, []),
+                        field_name=kind,
+                    )
                 else:
                     arr[i] = 0.0
                 interp_cells.add((i, kind))
