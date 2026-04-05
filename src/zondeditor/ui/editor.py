@@ -7799,9 +7799,12 @@ class GeoCanvasEditor(tk.Tk):
         cols = list(getattr(self, "expanded_cols", []) or [])
         if not cols:
             return None
-        _x0, y0, x1, y1 = self._header_bbox(len(cols) - 1)
+        last_col = len(cols) - 1
+        y0 = int(self.pad_y)
+        y1 = int(y0 + self.hdr_h)
+        x_right = int(self._column_x0(last_col) + self._column_block_width())
         bw = 18
-        return int(x1 + 6), int(y0), int(x1 + 6 + bw), int(y1)
+        return int(x_right + 6), int(y0), int(x_right + 6 + bw), int(y1)
 
 
     def _redraw(self):
