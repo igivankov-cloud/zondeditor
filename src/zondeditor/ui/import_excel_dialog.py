@@ -173,7 +173,7 @@ class ExcelImportGrid(ttk.Frame):
 
         self.row_h = 24
         self.col_w = 110
-        self.row_header_w = 56
+        self.row_header_w = 96
         self.header_h = 26
         self.state = GridState(rows=[], header_row=1, data_start_row=2, data_end_row=2, ignored_rows=set(), column_roles={})
 
@@ -251,7 +251,8 @@ class ExcelImportGrid(ttk.Frame):
             return
 
         if x <= self.row_header_w and y > (y_top + self.header_h):
-            row = int((y - (y_top + self.header_h)) // self.row_h) + 1
+            top_row = self._current_top_row()
+            row = top_row + int((y - (y_top + self.header_h)) // self.row_h) + 1
             self.on_row_click(row, event.x_root, event.y_root)
             return
 
@@ -326,9 +327,9 @@ class ExcelImportGrid(ttk.Frame):
                 title = f"{title} · {ROLE_LABELS.get(role, role)}"
             self.canvas.create_text(cx + 6, (header_y0 + header_y1) / 2, anchor="w", text=title, fill="#1f2d3d", font=("Segoe UI", 9, "bold"))
 
-        for row0 in range(row_start, row_end):
+        for vis_i, row0 in enumerate(range(row_start, row_end)):
             ridx = row0 + 1
-            ry = header_y1 + row0 * self.row_h
+            ry = header_y1 + vis_i * self.row_h
             role = ROW_ROLE_NORMAL
             if ridx == self.state.header_row:
                 role = ROW_ROLE_HEADER
@@ -352,7 +353,7 @@ class ExcelImportGrid(ttk.Frame):
 
             row_label = str(ridx)
             if role == ROW_ROLE_HEADER:
-                row_label += " [Заг]"
+                row_label += " [Заголовок]"
             elif role == ROW_ROLE_DATA:
                 row_label += " [Данные]"
             elif role == ROW_ROLE_DATA_END:
