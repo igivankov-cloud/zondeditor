@@ -2,10 +2,12 @@
 # Auto-generated from tools/_ui_extract/GeoCanvasEditor.py (Step19)
 # === FILE MAP BEGIN ===
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
-# - _extract_base_ige_num/_used_base_ige_ordinals: L1120–L1139 — поиск базовых имён ИГЭ-N для выбора следующего свободного номера.
-# - _next_free_ige_ordinal/_next_free_ige_id: L1141–L1340 — генерация ближайшего свободного базового имени ИГЭ.
-# - _add_unassigned_ige_from_ribbon: L1371–L1383 — добавление нового ИГЭ с пустым типом грунта.
-# - _rename_ige_from_ribbon: L1635–L1670 — переименование ИГЭ с проверкой уникальности и обновлением ссылок в слоях.
+# - _extract_base_ige_num/_used_base_ige_ordinals: L1320–L1339 — поиск базовых имён ИГЭ-N для выбора следующего свободного номера.
+# - _next_free_ige_ordinal/_next_free_ige_id: L1341–L1376 — генерация ближайшего свободного базового имени ИГЭ.
+# - _add_unassigned_ige_from_ribbon: L1582–L1594 — добавление нового ИГЭ с пустым типом грунта.
+# - _rename_ige_from_ribbon: L1846–L1881 — переименование ИГЭ с проверкой уникальности и обновлением ссылок в слоях.
+# - _focus_params_tab_after_successful_import: L3910–L3926 — единый хук переключения на вкладку «Параметры» после успешного импорта.
+# - open_excel_import_dialog: L9871–L9989 — импорт Excel (БЕТА): выбор файла, импорт, авто-подстановка шага и добавление опытов.
 # - hatching integration: _draw_layer_hatch/_draw_layers_overlay_for_test — применение встроенной библиотеки hatch-паттернов.
 # === FILE MAP END ===
 
@@ -19,6 +21,7 @@ import tkinter.font as tkfont
 import random
 import re
 import bisect
+from collections import Counter
 import os
 import sys
 import math
@@ -42,6 +45,8 @@ from src.zondeditor.processing.calibration import (
     calc_qc_fs_from_del,
     calibration_from_common_params,
 )
+from src.zondeditor.processing.value_semantics import is_effective_zero, is_missing_value, max_zero_run, parse_measurement
+from src.zondeditor.processing.interpolation_precision import normalize_interpolated_value
 try:
     from src.zondeditor.export.excel_export import export_excel as export_excel_file
 except Exception:
@@ -52,9 +57,11 @@ from src.zondeditor.export.geo_export import bundle_geo_filename, export_bundle_
 from src.zondeditor.export.gxl_export import export_gxl_generated
 from src.zondeditor.export.selection import select_export_tests
 from src.zondeditor.io.geo_reader import load_geo, parse_geo_bytes, GeoParseError
-from src.zondeditor.io.gxl_reader import load_gxl, parse_gxl_file, GxlParseError
+from src.zondeditor.io.gxl_reader import parse_gxl_file, GxlParseError
 from src.zondeditor.io.geo_writer import save_geo_as, save_k2_geo_from_template, build_k2_geo_from_template
+from src.zondeditor.io.excel_importer import ExcelImportError
 from src.zondeditor.domain.models import TestData, GeoBlockInfo, TestFlags
+from src.zondeditor.ui.import_excel_dialog import ask_excel_import
 from src.zondeditor.calculations.ige_policy import build_ige_display_label, get_ige_profile
 from src.zondeditor.domain.layer_store import LayerStore
 from src.zondeditor.domain.experience_column import (
@@ -91,7 +98,7 @@ from src.zondeditor.domain.layers import (
 )
 
 from src.zondeditor.ui.consts import *
-from src.zondeditor.ui.helpers import _apply_win11_style, _setup_shared_logger, _validate_nonneg_float_key, _check_license_or_exit, _parse_depth_float, _try_parse_dt, _pick_icon_font, _validate_tid_key, _validate_depth_0_4_key, _format_date_ru, _format_time_ru, _canvas_view_bbox, _validate_hh_key, _validate_mm_key, _parse_cell_int, _max_zero_run, _noise_around, _interp_with_noise, _resource_path, _open_logs_folder
+from src.zondeditor.ui.helpers import _apply_win11_style, _setup_shared_logger, _validate_nonneg_float_key, _check_license_or_exit, _parse_depth_float, _try_parse_dt, _pick_icon_font, _validate_tid_key, _validate_depth_0_4_key, _format_date_ru, _format_time_ru, _canvas_view_bbox, _validate_hh_key, _validate_mm_key, _parse_cell_int, _noise_around, _interp_with_noise, _resource_path, _open_logs_folder
 from src.zondeditor.domain.hatching import HATCH_USAGE_EDITOR_EXPANDED, load_registered_hatch
 from src.zondeditor.ui.render.hatch_renderer import render_hatch_pattern
 from src.zondeditor.ui.widgets import ToolTip, CalendarDialog
@@ -2138,7 +2145,7 @@ class GeoCanvasEditor(tk.Tk):
                 "open_gxl": lambda: self.pick_file_and_load(forced_ext=".gxl"),
                 "export_geo": self.save_geo,
                 "export_gxl": self.save_gxl,
-                "export_excel": self.export_excel,
+                "export_excel": self.open_excel_import_dialog,
                 "export_credo": self.export_credo_zip,
                 "export_archive": self.export_bundle,
                 "export_dxf": self.export_dxf,
@@ -2180,7 +2187,11 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view = RibbonView(self, commands=commands, icon_font=_pick_icon_font(11))
             self.ribbon_view.pack(side="top", fill="x")
             self.ribbon_view.set_object_name(self.object_name)
-            self.ribbon_view.set_project_type(str(getattr(self, "project_type", "type2_electric")), mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+            self.ribbon_view.set_project_type(
+                str(getattr(self, "project_type", "type2_electric")),
+                mode_params=dict(getattr(self, "project_mode_params", {}) or {}),
+                emit=False,
+            )
             self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
             self.ribbon_view.set_show_graphs(bool(getattr(self, "show_graphs", False)))
             self.ribbon_view.set_show_geology_column(bool(getattr(self, "show_geology_column", True)))
@@ -2552,7 +2563,11 @@ class GeoCanvasEditor(tk.Tk):
             pass
         self._ensure_object_code()
         if getattr(self, "ribbon_view", None):
-            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+            self.ribbon_view.set_project_type(
+                self.project_type,
+                mode_params=dict(getattr(self, "project_mode_params", {}) or {}),
+                emit=False,
+            )
         self._update_window_title()
 
     def _current_start_depth_for_test(self, t) -> float:
@@ -2728,6 +2743,41 @@ class GeoCanvasEditor(tk.Tk):
                         params.update(self._parse_probe_type_values(params["probe_type"]))
                 except Exception:
                     pass
+        else:
+            root = None
+            for enc in ("cp1251", "utf-8", "cp866", "latin1"):
+                try:
+                    txt = data.decode(enc, errors="ignore")
+                    root = ET.fromstring(txt)
+                    break
+                except Exception:
+                    continue
+            if root is not None:
+                obj = root.find("object") if str(root.tag).lower() == "exportfile" else root.find("object")
+                tests = list(obj.findall("test")) if obj is not None else []
+
+                def _pick_common(tag: str) -> str:
+                    vals: list[str] = []
+                    for tnode in tests:
+                        try:
+                            v = str(tnode.findtext(tag, default="") or "").strip()
+                        except Exception:
+                            v = ""
+                        if v:
+                            vals.append(v)
+                    if not vals:
+                        return ""
+                    return Counter(vals).most_common(1)[0][0]
+
+                scale_v = _pick_common("scale")
+                cone_v = _pick_common("scaleostria")
+                sleeve_v = _pick_common("scalemufta")
+                if scale_v:
+                    params["controller_scale_div"] = scale_v
+                if cone_v:
+                    params["cone_kn"] = cone_v
+                if sleeve_v:
+                    params["sleeve_kn"] = sleeve_v
         return params
 
     def _apply_sounding_params(self, params: dict[str, str] | None):
@@ -2870,7 +2920,29 @@ class GeoCanvasEditor(tk.Tk):
         self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
         rv = getattr(self, "ribbon_view", None)
         if rv is not None:
-            rv.set_project_type("type2_electric", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+            rv.set_project_type(
+                "type2_electric",
+                mode_params=dict(getattr(self, "project_mode_params", {}) or {}),
+                emit=False,
+            )
+
+    @staticmethod
+    def _allowed_step_values() -> tuple[float, ...]:
+        return (0.05, 0.1, 0.2, 0.3, 0.4, 0.5)
+
+    def _normalize_allowed_step(self, raw_value) -> float | None:
+        try:
+            step_raw = float(raw_value)
+        except Exception:
+            return None
+        for allowed in self._allowed_step_values():
+            if abs(float(step_raw) - float(allowed)) <= 1e-3:
+                return float(allowed)
+        return None
+
+    def _step_validation_message(self) -> str:
+        allowed = ", ".join(f"{x:g}" for x in self._allowed_step_values())
+        return f"Недопустимый шаг зондирования. Разрешены значения: {allowed} м."
 
     def _apply_type1_params(self, mode_keys: dict[str, str]) -> bool:
         old_step = str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.20") or "0.20")
@@ -2880,14 +2952,9 @@ class GeoCanvasEditor(tk.Tk):
         new_lob = str(mode_keys.get("mode_lob_coeff", old_lob) or old_lob).replace(",", ".").strip()
         new_tot = str(mode_keys.get("mode_total_coeff", old_tot) or old_tot).replace(",", ".").strip()
 
-        try:
-            step_val = round(float(new_step), 3)
-        except Exception:
-            self._show_validation_error_once("Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
-            self._sync_type1_params_to_ribbon()
-            return False
-        if step_val not in {0.1, 0.2, 0.3, 0.4, 0.5}:
-            self._show_validation_error_once("Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
+        step_val = self._normalize_allowed_step(new_step)
+        if step_val is None:
+            self._show_validation_error_once(self._step_validation_message())
             self._sync_type1_params_to_ribbon()
             return False
 
@@ -2922,21 +2989,16 @@ class GeoCanvasEditor(tk.Tk):
             return
         self._suspend_type1_param_validation = True
         try:
-            rv.set_project_type("type1_mech", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+            rv.set_project_type("type1_mech", mode_params=dict(getattr(self, "project_mode_params", {}) or {}), emit=False)
         finally:
             self._suspend_type1_param_validation = False
 
     def _apply_direct_params(self, mode_keys: dict[str, str]) -> bool:
         old_step = str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.20") or "0.20")
         new_step = str(mode_keys.get("mode_step_depth", old_step) or old_step).replace(",", ".").strip()
-        try:
-            step_val = round(float(new_step), 3)
-        except Exception:
-            self._show_validation_error_once("Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
-            self._sync_direct_params_to_ribbon()
-            return False
-        if step_val not in {0.1, 0.2, 0.3, 0.4, 0.5}:
-            self._show_validation_error_once("Недопустимый шаг зондирования. Разрешены только значения: 0.1, 0.2, 0.3, 0.4, 0.5 м.")
+        step_val = self._normalize_allowed_step(new_step)
+        if step_val is None:
+            self._show_validation_error_once(self._step_validation_message())
             self._sync_direct_params_to_ribbon()
             return False
         if round(step_val, 3) != round(float(old_step), 3):
@@ -2950,14 +3012,9 @@ class GeoCanvasEditor(tk.Tk):
     def _apply_type2_params(self, mode_keys: dict[str, str]) -> bool:
         old_step = str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.05") or "0.05")
         new_step = str(mode_keys.get("mode_step_depth", old_step) or old_step).replace(",", ".").strip()
-        try:
-            step_val = round(float(new_step), 3)
-        except Exception:
-            self._show_validation_error_once("Недопустимый шаг зондирования. Для Типа 2 разрешены только значения: 0.05 и 0.10 м.")
-            self._sync_type2_params_to_ribbon()
-            return False
-        if step_val not in {0.05, 0.1}:
-            self._show_validation_error_once("Недопустимый шаг зондирования. Для Типа 2 разрешены только значения: 0.05 и 0.10 м.")
+        step_val = self._normalize_allowed_step(new_step)
+        if step_val is None:
+            self._show_validation_error_once(self._step_validation_message())
             self._sync_type2_params_to_ribbon()
             return False
         is_k4 = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"
@@ -2966,10 +3023,6 @@ class GeoCanvasEditor(tk.Tk):
             old_step_val = round(float(old_step), 3)
         except Exception:
             old_step_val = 0.05
-        if is_k4 and old_step_val <= 0.05 and step_val > 0.05:
-            self._show_validation_error_once("Для K4 запрещено увеличивать шаг с 0.05 до 0.10. Разрешено только 0.10 → 0.05.")
-            self._sync_type2_params_to_ribbon()
-            return False
         if round(step_val, 3) != round(float(old_step), 3):
             if old_step_val >= 0.1 and step_val == 0.05 and (is_k4 or is_imported_k2):
                 self.convert_10_to_5()
@@ -2988,7 +3041,7 @@ class GeoCanvasEditor(tk.Tk):
             return
         self._suspend_type1_param_validation = True
         try:
-            rv.set_project_type("type2_electric", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+            rv.set_project_type("type2_electric", mode_params=dict(getattr(self, "project_mode_params", {}) or {}), emit=False)
         finally:
             self._suspend_type1_param_validation = False
 
@@ -2998,7 +3051,7 @@ class GeoCanvasEditor(tk.Tk):
             return
         self._suspend_type1_param_validation = True
         try:
-            rv.set_project_type("direct_qcfs", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+            rv.set_project_type("direct_qcfs", mode_params=dict(getattr(self, "project_mode_params", {}) or {}), emit=False)
         finally:
             self._suspend_type1_param_validation = False
 
@@ -3177,27 +3230,35 @@ class GeoCanvasEditor(tk.Tk):
         return t
 
 
-    def _apply_gxl_calibration_from_meta(self, meta_rows: list[dict]):
+    def _apply_calibration_from_meta(self, meta_rows: list[dict]):
         """Если в meta_rows есть шкала/тарировки — подставить в поля пересчёта."""
         if not meta_rows:
             return
-        kv = {}
+        kv_values: dict[str, list[str]] = {}
         for row in meta_rows:
             try:
                 k = str(row.get("key", "")).strip().lower()
                 v = str(row.get("value", "")).strip()
-                if k:
-                    kv[k] = v
+                if k and v:
+                    kv_values.setdefault(k, []).append(v)
             except Exception:
                 pass
 
+        kv: dict[str, str] = {}
+        for k, values in kv_values.items():
+            if values:
+                kv[k] = Counter(values).most_common(1)[0][0]
+
         upd = {}
-        if kv.get("scale"):
-            upd["controller_scale_div"] = kv["scale"]
-        if kv.get("scaleostria"):
-            upd["cone_kn"] = kv["scaleostria"]
-        if kv.get("scalemufta"):
-            upd["sleeve_kn"] = kv["scalemufta"]
+        scale_v = kv.get("scale") or kv.get("scalemax") or kv.get("scale_max")
+        cone_v = kv.get("scaleostria") or kv.get("conemax") or kv.get("cone_max")
+        sleeve_v = kv.get("scalemufta") or kv.get("sleevemax") or kv.get("sleeve_max")
+        if scale_v:
+            upd["controller_scale_div"] = scale_v
+        if cone_v:
+            upd["cone_kn"] = cone_v
+        if sleeve_v:
+            upd["sleeve_kn"] = sleeve_v
         if upd:
             self._set_common_params(upd, getattr(self, "geo_kind", "K2"))
 
@@ -3906,23 +3967,22 @@ class GeoCanvasEditor(tk.Tk):
                 return
 
 
-            if getattr(self, "is_gxl", False) or self.geo_path.suffix.lower() == ".gxl":
+            gxl_by_ext = self.geo_path.suffix.lower() == ".gxl"
+            gxl_parsed_fallback: tuple[list[TestData], list[dict]] | None = None
+            if (not getattr(self, "is_gxl", False)) and (not gxl_by_ext):
+                try:
+                    gxl_parsed_fallback = parse_gxl_file(self.geo_path)
+                except Exception:
+                    gxl_parsed_fallback = None
+
+            if getattr(self, "is_gxl", False) or gxl_by_ext or (gxl_parsed_fallback is not None):
 
                 try:
 
-                    series_list = load_gxl(self.geo_path)
-                    tests_list = [TestData(
-                        tid=s.test_id, dt=s.dt,
-                        depth=[f"{r.depth_m:g}" for r in s.rows],
-                        qc=[str(int(r.qc_raw)) for r in s.rows],
-                        fs=[str(int(r.fs_raw)) for r in s.rows],
-                        incl=[str(int(r.u_raw)) for r in s.rows] if any(int(r.u_raw) != 0 for r in s.rows) else None,
-                        marker=getattr(s, "marker", ""),
-                        header_pos=getattr(s, "header_pos", ""),
-                        orig_id=getattr(s, "orig_id", None),
-                        block=getattr(s, "block", None),
-                    ) for s in series_list]
-                    meta_rows = []
+                    if gxl_parsed_fallback is not None:
+                        tests_list, meta_rows = gxl_parsed_fallback
+                    else:
+                        tests_list, meta_rows = parse_gxl_file(self.geo_path)
                     self.loaded_path = str(self.geo_path)
                     self.is_gxl = True
                     self.geo_kind = "K4" if any(getattr(t, "incl", None) for t in tests_list) else "K2"
@@ -3993,7 +4053,7 @@ class GeoCanvasEditor(tk.Tk):
 
                 self.redo_stack.clear()
 
-                self._apply_gxl_calibration_from_meta(meta_rows)
+                self._apply_calibration_from_meta(meta_rows)
                 self._set_common_params(self._current_common_params(), self.geo_kind)
                 self._sync_mode_step_from_loaded_tests()
                 if getattr(self, "ribbon_view", None):
@@ -4001,6 +4061,7 @@ class GeoCanvasEditor(tk.Tk):
                 self._update_status_loaded(prefix=f"GXL: загружено опытов {len(self.tests)}")
 
                 self._auto_scan_after_load()
+                self._focus_params_tab_after_successful_import("GXL")
 
                 return
             # GEO/GE0: читаем и разбираем без требований к параметрам
@@ -4112,11 +4173,13 @@ class GeoCanvasEditor(tk.Tk):
             self._redraw()
             self.undo_stack.clear()
             self.redo_stack.clear()
+            self._apply_calibration_from_meta(meta_rows)
 
             self._sync_mode_step_from_loaded_tests()
             self._update_status_loaded(prefix=f"GEO: загружено опытов {len(self.tests)}")
 
             self._auto_scan_after_load()
+            self._focus_params_tab_after_successful_import("GEO")
             return
 
 
@@ -4167,6 +4230,20 @@ class GeoCanvasEditor(tk.Tk):
 
             self._update_status_loaded(f"Загружено опытов {len(self.tests)} шт.")
 
+    def _focus_params_tab_after_successful_import(self, source: str = "") -> None:
+        """Единый post-import хук: переводим UI на вкладку «Параметры» только при успешном импорте."""
+        if not getattr(self, "tests", None):
+            return
+        try:
+            rv = getattr(self, "ribbon_view", None)
+            if rv is not None:
+                rv.select_tab("Параметры")
+                self._sync_workspace_visibility("Параметры")
+            if source:
+                self._set_status(f"{source}: открыта вкладка «Параметры»")
+        except Exception:
+            pass
+
 
     def _scan_by_algorithm(self, preview_mode: bool = True):
         """Скан-проверка: подсветить, но не менять значения (qc/fs).
@@ -4195,19 +4272,19 @@ class GeoCanvasEditor(tk.Tk):
                 self.flags[tid] = TestFlags(False, interp_cells, force_cells, user_cells, set())
                 continue
 
-            qc = [(_parse_cell_int(v) or 0) for v in t.qc]
-            fs = [(_parse_cell_int(v) or 0) for v in t.fs]
+            qc = [parse_measurement(v) for v in t.qc]
+            fs = [parse_measurement(v) for v in t.fs]
 
             try:
                 for i0 in range(min(len(qc), len(fs))):
-                    if qc[i0] == 0 and (i0, "qc") not in user_cells:
+                    if is_missing_value(qc[i0]) and (i0, "qc") not in user_cells:
                         summary["cells_missing"] += 1
-                    if fs[i0] == 0 and (i0, "fs") not in user_cells:
+                    if is_missing_value(fs[i0]) and (i0, "fs") not in user_cells:
                         summary["cells_missing"] += 1
             except Exception:
                 pass
 
-            invalid = (_max_zero_run(qc) > 5) or (_max_zero_run(fs) > 5)
+            invalid = (max_zero_run(qc) > 5) or (max_zero_run(fs) > 5)
             if invalid:
                 self.flags[tid] = TestFlags(True, interp_cells, force_cells, user_cells, set())
                 summary["tests_invalid"] += 1
@@ -4217,11 +4294,11 @@ class GeoCanvasEditor(tk.Tk):
                 n = len(arr)
                 i = 0
                 while i < n:
-                    if arr[i] != 0:
+                    if not is_effective_zero(arr[i]):
                         i += 1
                         continue
                     j = i
-                    while j < n and arr[j] == 0:
+                    while j < n and is_effective_zero(arr[j]):
                         j += 1
                     gap = j - i
                     if 1 <= gap <= 5:
@@ -4829,9 +4906,9 @@ class GeoCanvasEditor(tk.Tk):
 
             # если после 10→5 появился критерий некорректности (>5 нулей подряд) — считаем опыт некорректным (красным)
             try:
-                qv = [(_parse_cell_int(v) or 0) for v in (t.qc or [])]
-                fv = [(_parse_cell_int(v) or 0) for v in (t.fs or [])]
-                invalid_now = bool(old_flags.invalid) or (_max_zero_run(qv) > 5) or (_max_zero_run(fv) > 5)
+                qv = [parse_measurement(v) for v in (t.qc or [])]
+                fv = [parse_measurement(v) for v in (t.fs or [])]
+                invalid_now = bool(old_flags.invalid) or (max_zero_run(qv) > 5) or (max_zero_run(fv) > 5)
             except Exception:
                 invalid_now = bool(old_flags.invalid)
 
@@ -4915,6 +4992,15 @@ class GeoCanvasEditor(tk.Tk):
         # Для collapsed/locked опыта отключаем кнопки даты/копии/удаления.
         return (not self._is_test_collapsed(int(ti))) and (not self._is_test_locked(int(ti)))
 
+    def _can_show_add_test_button(self) -> bool:
+        ptype = str(getattr(self, "project_type", "") or "")
+        if ptype not in {"type1_mech", "type2_electric", "direct_qcfs"}:
+            return False
+        src = str(getattr(self, "loaded_path", "") or "").lower()
+        if src.endswith(".geo") or src.endswith(".ge0") or src.endswith(".gxl"):
+            return False
+        return True
+
     def _collapsed_header_bbox(self, row: int):
         x0 = 4
         x1 = int(x0 + self._collapsed_header_width())
@@ -4943,14 +5029,20 @@ class GeoCanvasEditor(tk.Tk):
             widths = list(getattr(self, "_expanded_col_widths", []) or [])
             x_positions = list(getattr(self, "_expanded_col_x0", []) or [])
             if len(widths) == n_cols and len(x_positions) == n_cols:
-                return float(x_positions[-1] + widths[-1])
+                right = float(x_positions[-1] + widths[-1])
+                if self._can_show_add_test_button():
+                    right += 26.0
+                return right
         except Exception:
             pass
         # fallback: равные ширины (legacy)
         col_w = float(self._column_block_width())
         gap = float(self.col_gap)
         pad = float(self.pad_x)
-        return float(pad + (col_w + gap) * max(0, n_cols - 1) + col_w)
+        right = float(pad + (col_w + gap) * max(0, n_cols - 1) + col_w)
+        if self._can_show_add_test_button():
+            right += 26.0
+        return right
 
     def _graph_rect_for_test(self, ti: int, r: int | None = None):
         try:
@@ -4991,6 +5083,8 @@ class GeoCanvasEditor(tk.Tk):
             widths = [int(self._column_block_width())] * n_cols
         self._last_col_w = int(widths[-1]) if widths else int(self._column_block_width())
         total_w = self.pad_x * 2 + sum(widths) + (self.col_gap * max(0, n_cols - 1))
+        if self._can_show_add_test_button() and n_cols > 0:
+            total_w += 26
         body_h = self._total_body_height() if max_rows > 0 else 0
         header_h = int(self.pad_y + self.hdr_h)  # фиксированная область
         return total_w, body_h, header_h
@@ -6386,6 +6480,11 @@ class GeoCanvasEditor(tk.Tk):
                 return
             self._edit_header_title(ti)
             return
+        if kind == "add_new":
+            if not self._can_show_add_test_button():
+                return
+            self.add_test()
+            return
         if kind == "dup":
             if not self._header_action_buttons_enabled(int(ti)):
                 self._set_status("Кнопка недоступна для свёрнутого/заблокированного опыта")
@@ -7446,7 +7545,7 @@ class GeoCanvasEditor(tk.Tk):
             _set_cursor("")
             return
         kind, ti, row, field = hit
-        if kind in ("lock", "edit", "rename", "dup", "trash"):
+        if kind in ("add_new", "lock", "edit", "rename", "dup", "trash"):
             self._set_hover((kind, ti))
             _set_cursor("hand2")
         elif kind == "export":
@@ -7750,6 +7849,19 @@ class GeoCanvasEditor(tk.Tk):
         y1 = y0 + self.hdr_h
         return x0, y0, x1, y1
 
+    def _new_test_button_bbox(self) -> tuple[int, int, int, int] | None:
+        if not self._can_show_add_test_button():
+            return None
+        cols = list(getattr(self, "expanded_cols", []) or [])
+        if not cols:
+            return None
+        last_col = len(cols) - 1
+        y0 = int(self.pad_y)
+        y1 = int(y0 + self.hdr_h)
+        x_right = int(self._column_x0(last_col) + self._column_block_width())
+        bw = 18
+        return int(x_right + 6), int(y0), int(x_right + 6 + bw), int(y1)
+
 
     def _redraw(self):
         self._sync_view_ribbon_state()
@@ -8048,7 +8160,7 @@ class GeoCanvasEditor(tk.Tk):
                     try:
                         if has_row and kind in ("qc", "fs") and data_i is not None:
                             raw_val = (t.qc[data_i] if kind == "qc" else t.fs[data_i])
-                            if (_parse_cell_int(raw_val) or 0) == 0 and (data_i, kind) not in getattr(fl, "user_cells", set()):
+                            if is_missing_value(raw_val) and (data_i, kind) not in getattr(fl, "user_cells", set()):
                                 return (GUI_ORANGE_P if getattr(self, '_algo_preview_mode', False) else GUI_ORANGE)
                     except Exception:
                         pass
@@ -8108,6 +8220,13 @@ class GeoCanvasEditor(tk.Tk):
                     self.canvas.create_rectangle(x0, 0, x1, body_h, fill="#d0d0d0", outline="", stipple="gray50")
                 self.hcanvas.create_rectangle(x0, y0, x1, y1, fill="#d0d0d0", outline="", stipple="gray50")
 
+        add_btn_bbox = self._new_test_button_bbox()
+        if add_btn_bbox is not None:
+            bx0, by0, bx1, by1 = add_btn_bbox
+            fill = "#e9e9e9" if getattr(self, "_hover", None) == ("add_new", -1) else "#f2f2f2"
+            self.hcanvas.create_rectangle(bx0, by0, bx1, by1 - 1, fill=fill, outline=GUI_GRID)
+            self.hcanvas.create_text((bx0 + bx1) / 2, (by0 + by1 - 1) / 2, text="+", font=("Segoe UI", 14, "bold"), fill="#444")
+
         self._update_scrollregion()
         if self._is_graph_panel_visible():
             self._redraw_graphs_now()
@@ -8149,6 +8268,12 @@ class GeoCanvasEditor(tk.Tk):
         if w is getattr(self, "hcanvas", None):
             cx = self.hcanvas.canvasx(x)
             cy = self.hcanvas.canvasy(y)
+
+            add_btn_bbox = self._new_test_button_bbox()
+            if add_btn_bbox is not None:
+                bx0, by0, bx1, by1 = add_btn_bbox
+                if bx0 <= cx <= bx1 and by0 <= cy <= by1:
+                    return ("add_new", -1, None, None)
 
             self._refresh_display_order()
             y0 = self.pad_y
@@ -9640,6 +9765,7 @@ class GeoCanvasEditor(tk.Tk):
             _orig_qc = list(getattr(t, 'qc', []) or [])
             _orig_fs = list(getattr(t, 'fs', []) or [])
             _orig_depth = list(getattr(t, 'depth', []) or [])
+            _series_src = {"qc": list(_orig_qc), "fs": list(_orig_fs)}
             algo_cells: set[tuple[int, str]] = set()
             # Алгоритм не должен создавать новые строки: работаем только
             # по пересечению уже существующих пар qc/fs.
@@ -9649,10 +9775,10 @@ class GeoCanvasEditor(tk.Tk):
                 self.flags[tid] = TestFlags(False, set(), set(), _prev_user_cells, algo_cells)
                 continue
 
-            qc = [(_parse_cell_int(v) or 0) for v in t.qc]
-            fs = [(_parse_cell_int(v) or 0) for v in t.fs]
+            qc = [(pv if pv is not None else 0.0) for pv in (parse_measurement(v) for v in t.qc)]
+            fs = [(pv if pv is not None else 0.0) for pv in (parse_measurement(v) for v in t.fs)]
 
-            invalid = (_max_zero_run(qc) > 5) or (_max_zero_run(fs) > 5)
+            invalid = (max_zero_run(qc) > 5) or (max_zero_run(fs) > 5)
             interp_cells: set[tuple[int, str]] = set(getattr(prev_flags, 'interp_cells', set()) or set())
             force_cells: set[tuple[int, str]] = set(getattr(prev_flags, 'force_cells', set()) or set())
 
@@ -9663,32 +9789,53 @@ class GeoCanvasEditor(tk.Tk):
             def interp_in_place(arr: list[int], kind: str):
                 i = 0
                 while i < n:
-                    if arr[i] != 0:
+                    if not is_effective_zero(arr[i]):
                         i += 1
                         continue
                     j = i
-                    while j < n and arr[j] == 0:
+                    while j < n and is_effective_zero(arr[j]):
                         j += 1
                     gap_len = j - i
                     if gap_len <= 5:
                         left = i - 1
                         right = j
-                        if left >= 0 and right < n and arr[left] != 0 and arr[right] != 0:
+                        if left >= 0 and right < n and (not is_effective_zero(arr[left])) and (not is_effective_zero(arr[right])):
                             a = arr[left]; b = arr[right]
                             for k in range(gap_len):
                                 tt = (k + 1) / (gap_len + 1)
                                 if (i + k, kind) not in _prev_user_cells and (i + k, kind) not in interp_cells and (i + k, kind) not in force_cells:
-                                    arr[i + k] = int(round(_interp_with_noise(a, b, tt)))
+                                    arr[i + k] = float(
+                                        normalize_interpolated_value(
+                                            _interp_with_noise(a, b, tt),
+                                            local_samples=[a, b],
+                                            series_samples=_series_src.get(kind, []),
+                                            field_name=kind,
+                                        )
+                                    )
                                 interp_cells.add((i + k, kind))
-                        elif left >= 0 and arr[left] != 0:
+                        elif left >= 0 and (not is_effective_zero(arr[left])):
                             a = arr[left]
                             for k in range(gap_len):
-                                arr[i + k] = int(round(_noise_around(a)))
+                                arr[i + k] = float(
+                                    normalize_interpolated_value(
+                                        _noise_around(a),
+                                        local_samples=[a],
+                                        series_samples=_series_src.get(kind, []),
+                                        field_name=kind,
+                                    )
+                                )
                                 interp_cells.add((i + k, kind))
-                        elif right < n and arr[right] != 0:
+                        elif right < n and (not is_effective_zero(arr[right])):
                             b = arr[right]
                             for k in range(gap_len):
-                                arr[i + k] = int(round(_noise_around(b)))
+                                arr[i + k] = float(
+                                    normalize_interpolated_value(
+                                        _noise_around(b),
+                                        local_samples=[b],
+                                        series_samples=_series_src.get(kind, []),
+                                        field_name=kind,
+                                    )
+                                )
                                 interp_cells.add((i + k, kind))
                     i = j
 
@@ -9698,30 +9845,49 @@ class GeoCanvasEditor(tk.Tk):
             # ensure no zeros
             for arr, kind in ((qc, "qc"), (fs, "fs")):
                 for i in range(n):
-                    if arr[i] != 0:
+                    if not is_effective_zero(arr[i]):
                         continue
                     left = i - 1
-                    while left >= 0 and arr[left] == 0:
+                    while left >= 0 and is_effective_zero(arr[left]):
                         left -= 1
                     right = i + 1
-                    while right < n and arr[right] == 0:
+                    while right < n and is_effective_zero(arr[right]):
                         right += 1
                     if left >= 0 and right < n:
-                        arr[i] = int(round(_interp_with_noise(arr[left], arr[right], 0.5)))
+                        arr[i] = float(
+                            normalize_interpolated_value(
+                                _interp_with_noise(arr[left], arr[right], 0.5),
+                                local_samples=[arr[left], arr[right]],
+                                series_samples=_series_src.get(kind, []),
+                                field_name=kind,
+                            )
+                        )
                     elif left >= 0:
-                        arr[i] = int(round(_noise_around(arr[left])))
+                        arr[i] = float(
+                            normalize_interpolated_value(
+                                _noise_around(arr[left]),
+                                local_samples=[arr[left]],
+                                series_samples=_series_src.get(kind, []),
+                                field_name=kind,
+                            )
+                        )
                     elif right < n:
-                        arr[i] = int(round(_noise_around(arr[right])))
+                        arr[i] = float(
+                            normalize_interpolated_value(
+                                _noise_around(arr[right]),
+                                local_samples=[arr[right]],
+                                series_samples=_series_src.get(kind, []),
+                                field_name=kind,
+                            )
+                        )
                     else:
-                        arr[i] = 1
+                        arr[i] = 0.0
                     interp_cells.add((i, kind))
 
 # write back with markers (for user visibility)
             for i in range(n):
-                qv = int(max(1, round(qc[i])))
-                fv = int(max(1, round(fs[i])))
-                t.qc[i] = str(qv)
-                t.fs[i] = str(fv)
+                t.qc[i] = f"{float(qc[i]):g}"
+                t.fs[i] = f"{float(fs[i]):g}"
 
 
             # --- зелёная подсветка: что реально поменялось алгоритмом ---
@@ -9866,6 +10032,153 @@ class GeoCanvasEditor(tk.Tk):
             messagebox.showinfo("Готово", f"Excel сохранён:\n{out}")
         except Exception as e:
             messagebox.showerror("Ошибка", str(e))
+
+    def open_excel_import_dialog(self):
+        existing_names = {str(getattr(t, "marker", "") or "").strip() for t in (getattr(self, "tests", []) or []) if str(getattr(t, "marker", "") or "").strip()}
+        in_path = filedialog.askopenfilename(
+            title="Выберите Excel для импорта",
+            filetypes=[("Excel", "*.xlsx *.xls"), ("XLSX", "*.xlsx"), ("XLS", "*.xls")],
+        )
+        if not in_path:
+            return
+        result = ask_excel_import(self, existing_names=existing_names, initial_path=in_path)
+        if not result:
+            return
+        preview = result.get("preview")
+        cfg = result.get("config")
+        if preview is None or cfg is None:
+            return
+        detected_type = int(preview.detected_type or 0)
+        if detected_type not in (1, 2, 3):
+            messagebox.showerror("Импорт Excel", "Не удалось определить тип опыта (1/2/3).")
+            return
+        role_set = {role for _col, role in (cfg.column_roles or {}).items() if role not in ("ignore", "depth")}
+        if "depth" not in set((cfg.column_roles or {}).values()):
+            messagebox.showerror("Импорт Excel", "Не найден столбец глубины.")
+            return
+
+        type_roles = {
+            1: {"lob", "obshee"},
+            2: {"lob", "bok"},
+            3: {"qc_mpa", "fs_kpa"},
+        }
+        expected_roles = set(type_roles.get(detected_type, set()))
+        if not expected_roles.issubset(role_set):
+            if detected_type == 1:
+                messagebox.showerror("Импорт Excel", "Для типа 1 нужны столбцы «Лоб» и «Общее».")
+            elif detected_type == 2:
+                messagebox.showerror("Импорт Excel", "Для типа 2 нужны столбцы «Лоб» и «Бок».")
+            else:
+                messagebox.showerror("Импорт Excel", "Для типа 3 нужны столбцы «qc, МПа» и «fs, кПа».")
+            return
+        extra_roles = set(role_set) - expected_roles
+        if extra_roles:
+            messagebox.showerror(
+                "Импорт Excel",
+                "Нельзя смешивать типы столбцов в одном импорте.\n"
+                "Используйте единый набор ролей для всех зондировок.",
+            )
+            return
+
+        proj_type_to_detected = {"type1_mech": 1, "type2_electric": 2, "direct_qcfs": 3}
+        current_type = int(proj_type_to_detected.get(str(getattr(self, "project_type", "") or ""), 0))
+        if getattr(self, "tests", None) and current_type in (1, 2, 3) and current_type != detected_type:
+            messagebox.showerror(
+                "Импорт Excel",
+                "Нельзя смешивать типы опытов в одном проекте.\n"
+                "Создайте новый проект или импортируйте совместимый тип.",
+            )
+            return
+
+        if detected_type == 1:
+            self.project_type = "type1_mech"
+        elif detected_type == 2:
+            self.project_type = "type2_electric"
+        else:
+            self.project_type = "direct_qcfs"
+        self._apply_visual_mode_for_project_type()
+        if getattr(self, "ribbon_view", None):
+            self.ribbon_view.set_project_type(
+                self.project_type,
+                mode_params=dict(getattr(self, "project_mode_params", {}) or {}),
+                emit=False,
+            )
+
+        requested_names = list(result.get("names") or [s.display_name for s in preview.soundings])
+
+        next_tid = max([int(getattr(t, "tid", 0) or 0) for t in (getattr(self, "tests", []) or [])] + [0]) + 1
+        imported_count = 0
+        imported_tids: list[int] = []
+        step_candidates: list[float] = []
+        for idx, sounding in enumerate(preview.soundings):
+            depth: list[str] = []
+            qc_vals: list[str] = []
+            fs_vals: list[str] = []
+            for row in sounding.rows:
+                depth.append(f"{float(row.depth_m):g}")
+                values = dict(row.values or {})
+                if detected_type == 1:
+                    qc_vals.append("" if values.get("lob") is None else f"{float(values.get('lob')):g}")
+                    fs_vals.append("" if values.get("obshee") is None else f"{float(values.get('obshee')):g}")
+                elif detected_type == 2:
+                    qc_vals.append("" if values.get("lob") is None else f"{float(values.get('lob')):g}")
+                    fs_vals.append("" if values.get("bok") is None else f"{float(values.get('bok')):g}")
+                else:
+                    qc_vals.append("" if values.get("qc_mpa") is None else f"{float(values.get('qc_mpa')):g}")
+                    fs_vals.append("" if values.get("fs_kpa") is None else f"{float(values.get('fs_kpa')):g}")
+            if not depth:
+                continue
+            test = TestData(
+                tid=next_tid + idx,
+                dt=_dt.datetime.now().strftime("%d.%m.%Y %H:%M"),
+                depth=depth,
+                qc=qc_vals,
+                fs=fs_vals,
+                incl=None,
+                marker=requested_names[idx] if idx < len(requested_names) else str(getattr(sounding, "source_name", "") or sounding.display_name),
+                header_pos=str(getattr(sounding, "source_name", "") or ""),
+                orig_id=None,
+                block=None,
+            )
+            self.tests.append(test)
+            self.flags[test.tid] = TestFlags(False, set(), set(), set(), set())
+            self.depth0_by_tid[int(test.tid)] = float(_parse_depth_float(depth[0]) or 0.0)
+            imported_tids.append(int(test.tid))
+            try:
+                dnums = [float(x) for x in depth]
+                for a, b in zip(dnums, dnums[1:]):
+                    dd = float(b) - float(a)
+                    if dd > 1e-6:
+                        step_candidates.append(dd)
+            except Exception:
+                pass
+            imported_count += 1
+
+        if imported_count <= 0:
+            messagebox.showwarning("Импорт Excel", "В выбранном листе не найдено валидных строк данных.")
+            return
+        if step_candidates:
+            est_step = min(step_candidates)
+            snapped = self._normalize_allowed_step(est_step)
+            if snapped is not None:
+                self.step_m = float(snapped)
+                self.project_mode_params["mode_step_depth"] = f"{float(snapped):.2f}".rstrip("0").rstrip(".")
+                for tid in imported_tids:
+                    self.step_by_tid[int(tid)] = float(snapped)
+                if getattr(self, "ribbon_view", None):
+                    self.ribbon_view.set_project_type(
+                        self.project_type,
+                        mode_params=dict(getattr(self, "project_mode_params", {}) or {}),
+                        emit=False,
+                    )
+        self._ensure_layers_defaults_for_all_tests()
+        self._build_grid()
+        self._active_test_idx = len(self.tests) - 1 if self.tests else None
+        self._sync_layers_panel()
+        self._redraw()
+        self.schedule_graph_redraw()
+        self._focus_params_tab_after_successful_import("Excel")
+        messagebox.showinfo("Импорт Excel", f"Импортировано опытов: {imported_count}")
 
     def _ask_cpt_calc_settings(self) -> dict[str, object] | None:
         dlg = tk.Toplevel(self)
@@ -10623,7 +10936,7 @@ class GeoCanvasEditor(tk.Tk):
         self._apply_visual_mode_for_project_type()
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)
-            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(self.project_mode_params or {}))
+            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(self.project_mode_params or {}), emit=False)
             self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
         self.status.config(text=self._project_open_diagnostics(status_info))
         self._update_window_title()
@@ -10713,7 +11026,7 @@ class GeoCanvasEditor(tk.Tk):
         self._recompute_statuses_after_data_load(preview_mode=False)
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)
-            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(self.project_mode_params or {}))
+            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(self.project_mode_params or {}), emit=False)
             self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
             self.ribbon_view.select_tab("Параметры")
         self.status.config(text=f"Создан новый проект: {self.project_name}")

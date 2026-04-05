@@ -76,6 +76,7 @@ class RibbonView(ttk.Frame):
         qat.pack(side="top", fill="x")
         self._add_qat_btn(qat, "undo", ICON_UNDO, "Undo")
         self._add_qat_btn(qat, "redo", ICON_REDO, "Redo")
+        self._add_qat_btn(qat, "save_project", ICON_SAVE, "Сохранить проект")
 
         self.tabs = ttk.Notebook(self)
         self.tabs.pack(side="top", fill="x", padx=2, pady=(0, 2))
@@ -742,7 +743,7 @@ class RibbonView(ttk.Frame):
     def set_object_name(self, value: str):
         self.object_name_var.set(value or "")
 
-    def set_project_type(self, project_type: str, *, mode_params: dict[str, str] | None = None):
+    def set_project_type(self, project_type: str, *, mode_params: dict[str, str] | None = None, emit: bool = True):
         mp = dict(mode_params or {})
         ptype = str(project_type or "").strip()
         if not ptype:
@@ -760,7 +761,8 @@ class RibbonView(ttk.Frame):
             self.mech_calib_note_var.set(str(mp.get("mode_calibration_note", "") or ""))
         finally:
             self._suspend_common_emit = False
-        self._emit_common_params()
+        if emit:
+            self._emit_common_params()
 
     def set_common_params(self, params: dict[str, str] | None, *, geo_kind: str = "K2"):
         p = dict(params or {})

@@ -28,7 +28,7 @@ def test_diagnostics_uses_single_invalid_rule_and_aggregates_protocol_entry():
 
 def test_diagnostics_counts_missing_only_for_valid_exported_tests():
     tests = [
-        _test(1, ["1", "0"], ["1", "0"], export_on=True),
+        _test(1, ["1", ""], ["1", ""], export_on=True),
         _test(2, ["0", "0", "0", "0", "0", "0"], ["1", "1", "1", "1", "1", "1"], export_on=True),
         _test(3, ["0"], ["0"], export_on=False),
     ]
@@ -48,7 +48,7 @@ def test_diagnostics_counts_missing_only_for_valid_exported_tests():
 
 
 def test_diagnostics_protocol_contains_missing_and_invalid_other():
-    tests = [_test(1, ["1", "0"], ["1", "0"]), _test(2, ["1"], ["1"]) ]
+    tests = [_test(1, ["1", ""], ["1", ""]), _test(2, ["1"], ["1"]) ]
     report = evaluate_diagnostics(
         tests,
         {
