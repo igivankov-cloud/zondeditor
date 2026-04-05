@@ -4973,14 +4973,20 @@ class GeoCanvasEditor(tk.Tk):
             widths = list(getattr(self, "_expanded_col_widths", []) or [])
             x_positions = list(getattr(self, "_expanded_col_x0", []) or [])
             if len(widths) == n_cols and len(x_positions) == n_cols:
-                return float(x_positions[-1] + widths[-1])
+                right = float(x_positions[-1] + widths[-1])
+                if self._can_show_add_test_button():
+                    right += 26.0
+                return right
         except Exception:
             pass
         # fallback: равные ширины (legacy)
         col_w = float(self._column_block_width())
         gap = float(self.col_gap)
         pad = float(self.pad_x)
-        return float(pad + (col_w + gap) * max(0, n_cols - 1) + col_w)
+        right = float(pad + (col_w + gap) * max(0, n_cols - 1) + col_w)
+        if self._can_show_add_test_button():
+            right += 26.0
+        return right
 
     def _graph_rect_for_test(self, ti: int, r: int | None = None):
         try:
@@ -5021,6 +5027,8 @@ class GeoCanvasEditor(tk.Tk):
             widths = [int(self._column_block_width())] * n_cols
         self._last_col_w = int(widths[-1]) if widths else int(self._column_block_width())
         total_w = self.pad_x * 2 + sum(widths) + (self.col_gap * max(0, n_cols - 1))
+        if self._can_show_add_test_button() and n_cols > 0:
+            total_w += 26
         body_h = self._total_body_height() if max_rows > 0 else 0
         header_h = int(self.pad_y + self.hdr_h)  # фиксированная область
         return total_w, body_h, header_h
@@ -8157,8 +8165,8 @@ class GeoCanvasEditor(tk.Tk):
         if add_btn_bbox is not None:
             bx0, by0, bx1, by1 = add_btn_bbox
             fill = "#e9e9e9" if getattr(self, "_hover", None) == ("add_new", -1) else "#f2f2f2"
-            self.hcanvas.create_rectangle(bx0, by0, bx1, by1, fill=fill, outline=GUI_GRID)
-            self.hcanvas.create_text((bx0 + bx1) / 2, (by0 + by1) / 2, text="+", font=("Segoe UI", 14, "bold"), fill="#444")
+            self.hcanvas.create_rectangle(bx0, by0, bx1, by1 - 1, fill=fill, outline=GUI_GRID)
+            self.hcanvas.create_text((bx0 + bx1) / 2, (by0 + by1 - 1) / 2, text="+", font=("Segoe UI", 14, "bold"), fill="#444")
 
         self._update_scrollregion()
         if self._is_graph_panel_visible():
