@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
+from src.zondeditor.processing.value_semantics import (
+    is_missing_value,
+    parse_measurement,
+    scan_zero_runs,
+)
 
 @dataclass(frozen=True)
 class ProtocolEntry:
@@ -36,46 +41,6 @@ class DiagnosticsReport:
     protocol_entries: tuple[ProtocolEntry, ...]
 
 
-def _parse_cell_int(value: Any) -> int:
-    try:
-        text = str(value).strip()
-        if text == "":
-            return 0
-        return int(float(text.replace(",", ".")))
-    except Exception:
-        return 0
-
-
-def _max_zero_run(values: list[int]) -> int:
-    best = 0
-    cur = 0
-    for value in values:
-        if int(value or 0) == 0:
-            cur += 1
-            if cur > best:
-                best = cur
-        else:
-            cur = 0
-    return best
-
-
-def _scan_runs(values: list[int], *, min_len: int = 6) -> list[tuple[int, int]]:
-    out: list[tuple[int, int]] = []
-    i = 0
-    n = len(values)
-    while i < n:
-        if values[i] != 0:
-            i += 1
-            continue
-        j = i
-        while j < n and values[j] == 0:
-            j += 1
-        if (j - i) >= min_len:
-            out.append((i, j - 1))
-        i = j
-    return out
-
-
 def evaluate_diagnostics(
     tests: Iterable[Any],
     flags_by_tid: Mapping[int, Any] | None,
@@ -102,19 +67,19 @@ def evaluate_diagnostics(
         force_cells = set(getattr(fl, "force_cells", set()) or set()) if fl is not None else set()
         algo_cells = set(getattr(fl, "algo_cells", set()) or set()) if fl is not None else set()
 
-        qc = [(_parse_cell_int(v) or 0) for v in (getattr(t, "qc", []) or [])]
-        fs = [(_parse_cell_int(v) or 0) for v in (getattr(t, "fs", []) or [])]
+        qc = [parse_measurement(v) for v in (getattr(t, "qc", []) or [])]
+        fs = [parse_measurement(v) for v in (getattr(t, "fs", []) or [])]
 
-        zero_runs = _scan_runs(qc, min_len=6) + _scan_runs(fs, min_len=6)
+        zero_runs = scan_zero_runs(qc, min_len=6) + scan_zero_runs(fs, min_len=6)
         invalid_zero_run = bool(zero_runs)
         invalid_flag = bool(getattr(fl, "invalid", False)) if fl is not None else False
         invalid = bool(invalid_zero_run or invalid_flag)
 
         missing_rows: list[tuple[int, str]] = []
         for i0 in range(min(len(qc), len(fs))):
-            if qc[i0] == 0 and (i0, "qc") not in user_cells:
+            if is_missing_value(qc[i0]) and (i0, "qc") not in user_cells:
                 missing_rows.append((i0, "qc"))
-            if fs[i0] == 0 and (i0, "fs") not in user_cells:
+            if is_missing_value(fs[i0]) and (i0, "fs") not in user_cells:
                 missing_rows.append((i0, "fs"))
 
         if export_on:

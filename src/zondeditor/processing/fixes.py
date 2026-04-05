@@ -5,14 +5,15 @@ import random
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional, Mapping
 
-def _parse_cell_int(v: Any) -> Optional[int]:
-    try:
-        s = str(v).strip()
-        if s == "":
-            return None
-        return int(float(s.replace(",", ".")))
-    except Exception:
-        return None
+from src.zondeditor.processing.value_semantics import (
+    is_effective_zero,
+    max_zero_run,
+    parse_measurement,
+)
+
+
+def _parse_cell_float(v: Any) -> Optional[float]:
+    return parse_measurement(v)
 
 def _parse_depth_float(v: Any) -> Optional[float]:
     try:
@@ -21,29 +22,17 @@ def _parse_depth_float(v: Any) -> Optional[float]:
     except Exception:
         return None
 
-def _max_zero_run(arr: list[int]) -> int:
-    best = cur = 0
-    for x in arr:
-        if x == 0:
-            cur += 1
-            if cur > best:
-                best = cur
-        else:
-            cur = 0
-    return best
-
-def _noise_around(x: int) -> int:
+def _noise_around(x: float) -> float:
     # gentle noise ~ +-3%
     if x <= 0:
-        return 1
+        return 0.0
     k = 1.0 + random.uniform(-0.03, 0.03)
-    return max(1, int(round(x * k)))
+    return max(0.0, float(x) * k)
 
-def _interp_with_noise(a: int, b: int, t: float) -> int:
-    a = max(1, int(a))
-    b = max(1, int(b))
+def _interp_with_noise(a: float, b: float, t: float) -> float:
+    a = max(0.0, float(a))
+    b = max(0.0, float(b))
     v = a + (b - a) * float(t)
-    v = int(round(v))
     return _noise_around(v)
 
 def fix_tests_by_algorithm(
@@ -103,10 +92,10 @@ def fix_tests_by_algorithm(
             out.append(TestFlagsCls(False, set(), set(), _prev_user_cells, algo_cells))
             continue
 
-        qc = [(_parse_cell_int(v) or 0) for v in t.qc]
-        fs = [(_parse_cell_int(v) or 0) for v in t.fs]
+        qc = [(pv if pv is not None else 0.0) for pv in (_parse_cell_float(v) for v in t.qc)]
+        fs = [(pv if pv is not None else 0.0) for pv in (_parse_cell_float(v) for v in t.fs)]
 
-        invalid = (_max_zero_run(qc) > 5) or (_max_zero_run(fs) > 5)
+        invalid = (max_zero_run(qc) > 5) or (max_zero_run(fs) > 5)
 
         interp_cells: set[tuple[int, str]] = set(getattr(prev_flags, "interp_cells", set()) or set())
         force_cells: set[tuple[int, str]] = set(getattr(prev_flags, "force_cells", set()) or set())
@@ -115,21 +104,21 @@ def fix_tests_by_algorithm(
             out.append(TestFlagsCls(True, interp_cells, force_cells, _prev_user_cells, algo_cells))
             continue
 
-        def interp_in_place(arr: list[int], kind: str) -> None:
+        def interp_in_place(arr: list[float], kind: str) -> None:
             nonlocal n
             i = 0
             while i < n:
-                if arr[i] != 0:
+                if not is_effective_zero(arr[i]):
                     i += 1
                     continue
                 j = i
-                while j < n and arr[j] == 0:
+                while j < n and is_effective_zero(arr[j]):
                     j += 1
                 gap_len = j - i
                 if gap_len <= 5:
                     left = i - 1
                     right = j
-                    if left >= 0 and right < n and arr[left] != 0 and arr[right] != 0:
+                    if left >= 0 and right < n and (not is_effective_zero(arr[left])) and (not is_effective_zero(arr[right])):
                         a = arr[left]
                         b = arr[right]
                         for k in range(gap_len):
@@ -137,13 +126,13 @@ def fix_tests_by_algorithm(
                             if (i + k, kind) not in _prev_user_cells and (i + k, kind) not in interp_cells and (i + k, kind) not in force_cells:
                                 arr[i + k] = _interp_with_noise(a, b, tt)
                                 interp_cells.add((i + k, kind))
-                    elif left >= 0 and arr[left] != 0:
+                    elif left >= 0 and (not is_effective_zero(arr[left])):
                         a = arr[left]
                         for k in range(gap_len):
                             if (i + k, kind) not in _prev_user_cells:
                                 arr[i + k] = _noise_around(a)
                                 interp_cells.add((i + k, kind))
-                    elif right < n and arr[right] != 0:
+                    elif right < n and (not is_effective_zero(arr[right])):
                         b = arr[right]
                         for k in range(gap_len):
                             if (i + k, kind) not in _prev_user_cells:
@@ -156,13 +145,13 @@ def fix_tests_by_algorithm(
 
         for arr, kind in ((qc, "qc"), (fs, "fs")):
             for i in range(n):
-                if arr[i] != 0:
+                if not is_effective_zero(arr[i]):
                     continue
                 left = i - 1
-                while left >= 0 and arr[left] == 0:
+                while left >= 0 and is_effective_zero(arr[left]):
                     left -= 1
                 right = i + 1
-                while right < n and arr[right] == 0:
+                while right < n and is_effective_zero(arr[right]):
                     right += 1
                 if left >= 0 and right < n:
                     arr[i] = _interp_with_noise(arr[left], arr[right], 0.5)
@@ -171,14 +160,12 @@ def fix_tests_by_algorithm(
                 elif right < n:
                     arr[i] = _noise_around(arr[right])
                 else:
-                    arr[i] = 1
+                    arr[i] = 0.0
                 interp_cells.add((i, kind))
 
         for i in range(n):
-            qv = max(1, int(qc[i]))
-            fv = max(1, int(fs[i]))
-            t.qc[i] = str(qv)
-            t.fs[i] = str(fv)
+            t.qc[i] = f"{float(qc[i]):g}"
+            t.fs[i] = f"{float(fs[i]):g}"
 
         try:
             for i2 in range(len(t.qc)):

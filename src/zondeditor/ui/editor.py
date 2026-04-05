@@ -43,6 +43,7 @@ from src.zondeditor.processing.calibration import (
     calc_qc_fs_from_del,
     calibration_from_common_params,
 )
+from src.zondeditor.processing.value_semantics import is_effective_zero, is_missing_value, max_zero_run, parse_measurement
 try:
     from src.zondeditor.export.excel_export import export_excel as export_excel_file
 except Exception:
@@ -94,7 +95,7 @@ from src.zondeditor.domain.layers import (
 )
 
 from src.zondeditor.ui.consts import *
-from src.zondeditor.ui.helpers import _apply_win11_style, _setup_shared_logger, _validate_nonneg_float_key, _check_license_or_exit, _parse_depth_float, _try_parse_dt, _pick_icon_font, _validate_tid_key, _validate_depth_0_4_key, _format_date_ru, _format_time_ru, _canvas_view_bbox, _validate_hh_key, _validate_mm_key, _parse_cell_int, _max_zero_run, _noise_around, _interp_with_noise, _resource_path, _open_logs_folder
+from src.zondeditor.ui.helpers import _apply_win11_style, _setup_shared_logger, _validate_nonneg_float_key, _check_license_or_exit, _parse_depth_float, _try_parse_dt, _pick_icon_font, _validate_tid_key, _validate_depth_0_4_key, _format_date_ru, _format_time_ru, _canvas_view_bbox, _validate_hh_key, _validate_mm_key, _parse_cell_int, _noise_around, _interp_with_noise, _resource_path, _open_logs_folder
 from src.zondeditor.domain.hatching import HATCH_USAGE_EDITOR_EXPANDED, load_registered_hatch
 from src.zondeditor.ui.render.hatch_renderer import render_hatch_pattern
 from src.zondeditor.ui.widgets import ToolTip, CalendarDialog
@@ -4198,19 +4199,19 @@ class GeoCanvasEditor(tk.Tk):
                 self.flags[tid] = TestFlags(False, interp_cells, force_cells, user_cells, set())
                 continue
 
-            qc = [(_parse_cell_int(v) or 0) for v in t.qc]
-            fs = [(_parse_cell_int(v) or 0) for v in t.fs]
+            qc = [parse_measurement(v) for v in t.qc]
+            fs = [parse_measurement(v) for v in t.fs]
 
             try:
                 for i0 in range(min(len(qc), len(fs))):
-                    if qc[i0] == 0 and (i0, "qc") not in user_cells:
+                    if is_missing_value(qc[i0]) and (i0, "qc") not in user_cells:
                         summary["cells_missing"] += 1
-                    if fs[i0] == 0 and (i0, "fs") not in user_cells:
+                    if is_missing_value(fs[i0]) and (i0, "fs") not in user_cells:
                         summary["cells_missing"] += 1
             except Exception:
                 pass
 
-            invalid = (_max_zero_run(qc) > 5) or (_max_zero_run(fs) > 5)
+            invalid = (max_zero_run(qc) > 5) or (max_zero_run(fs) > 5)
             if invalid:
                 self.flags[tid] = TestFlags(True, interp_cells, force_cells, user_cells, set())
                 summary["tests_invalid"] += 1
@@ -4220,11 +4221,11 @@ class GeoCanvasEditor(tk.Tk):
                 n = len(arr)
                 i = 0
                 while i < n:
-                    if arr[i] != 0:
+                    if not is_effective_zero(arr[i]):
                         i += 1
                         continue
                     j = i
-                    while j < n and arr[j] == 0:
+                    while j < n and is_effective_zero(arr[j]):
                         j += 1
                     gap = j - i
                     if 1 <= gap <= 5:
@@ -4832,9 +4833,9 @@ class GeoCanvasEditor(tk.Tk):
 
             # если после 10→5 появился критерий некорректности (>5 нулей подряд) — считаем опыт некорректным (красным)
             try:
-                qv = [(_parse_cell_int(v) or 0) for v in (t.qc or [])]
-                fv = [(_parse_cell_int(v) or 0) for v in (t.fs or [])]
-                invalid_now = bool(old_flags.invalid) or (_max_zero_run(qv) > 5) or (_max_zero_run(fv) > 5)
+                qv = [parse_measurement(v) for v in (t.qc or [])]
+                fv = [parse_measurement(v) for v in (t.fs or [])]
+                invalid_now = bool(old_flags.invalid) or (max_zero_run(qv) > 5) or (max_zero_run(fv) > 5)
             except Exception:
                 invalid_now = bool(old_flags.invalid)
 
@@ -8051,7 +8052,7 @@ class GeoCanvasEditor(tk.Tk):
                     try:
                         if has_row and kind in ("qc", "fs") and data_i is not None:
                             raw_val = (t.qc[data_i] if kind == "qc" else t.fs[data_i])
-                            if (_parse_cell_int(raw_val) or 0) == 0 and (data_i, kind) not in getattr(fl, "user_cells", set()):
+                            if is_missing_value(raw_val) and (data_i, kind) not in getattr(fl, "user_cells", set()):
                                 return (GUI_ORANGE_P if getattr(self, '_algo_preview_mode', False) else GUI_ORANGE)
                     except Exception:
                         pass
@@ -9652,10 +9653,10 @@ class GeoCanvasEditor(tk.Tk):
                 self.flags[tid] = TestFlags(False, set(), set(), _prev_user_cells, algo_cells)
                 continue
 
-            qc = [(_parse_cell_int(v) or 0) for v in t.qc]
-            fs = [(_parse_cell_int(v) or 0) for v in t.fs]
+            qc = [(pv if pv is not None else 0.0) for pv in (parse_measurement(v) for v in t.qc)]
+            fs = [(pv if pv is not None else 0.0) for pv in (parse_measurement(v) for v in t.fs)]
 
-            invalid = (_max_zero_run(qc) > 5) or (_max_zero_run(fs) > 5)
+            invalid = (max_zero_run(qc) > 5) or (max_zero_run(fs) > 5)
             interp_cells: set[tuple[int, str]] = set(getattr(prev_flags, 'interp_cells', set()) or set())
             force_cells: set[tuple[int, str]] = set(getattr(prev_flags, 'force_cells', set()) or set())
 
@@ -9666,32 +9667,32 @@ class GeoCanvasEditor(tk.Tk):
             def interp_in_place(arr: list[int], kind: str):
                 i = 0
                 while i < n:
-                    if arr[i] != 0:
+                    if not is_effective_zero(arr[i]):
                         i += 1
                         continue
                     j = i
-                    while j < n and arr[j] == 0:
+                    while j < n and is_effective_zero(arr[j]):
                         j += 1
                     gap_len = j - i
                     if gap_len <= 5:
                         left = i - 1
                         right = j
-                        if left >= 0 and right < n and arr[left] != 0 and arr[right] != 0:
+                        if left >= 0 and right < n and (not is_effective_zero(arr[left])) and (not is_effective_zero(arr[right])):
                             a = arr[left]; b = arr[right]
                             for k in range(gap_len):
                                 tt = (k + 1) / (gap_len + 1)
                                 if (i + k, kind) not in _prev_user_cells and (i + k, kind) not in interp_cells and (i + k, kind) not in force_cells:
-                                    arr[i + k] = int(round(_interp_with_noise(a, b, tt)))
+                                    arr[i + k] = float(_interp_with_noise(a, b, tt))
                                 interp_cells.add((i + k, kind))
-                        elif left >= 0 and arr[left] != 0:
+                        elif left >= 0 and (not is_effective_zero(arr[left])):
                             a = arr[left]
                             for k in range(gap_len):
-                                arr[i + k] = int(round(_noise_around(a)))
+                                arr[i + k] = float(_noise_around(a))
                                 interp_cells.add((i + k, kind))
-                        elif right < n and arr[right] != 0:
+                        elif right < n and (not is_effective_zero(arr[right])):
                             b = arr[right]
                             for k in range(gap_len):
-                                arr[i + k] = int(round(_noise_around(b)))
+                                arr[i + k] = float(_noise_around(b))
                                 interp_cells.add((i + k, kind))
                     i = j
 
@@ -9701,30 +9702,28 @@ class GeoCanvasEditor(tk.Tk):
             # ensure no zeros
             for arr, kind in ((qc, "qc"), (fs, "fs")):
                 for i in range(n):
-                    if arr[i] != 0:
+                    if not is_effective_zero(arr[i]):
                         continue
                     left = i - 1
-                    while left >= 0 and arr[left] == 0:
+                    while left >= 0 and is_effective_zero(arr[left]):
                         left -= 1
                     right = i + 1
-                    while right < n and arr[right] == 0:
+                    while right < n and is_effective_zero(arr[right]):
                         right += 1
                     if left >= 0 and right < n:
-                        arr[i] = int(round(_interp_with_noise(arr[left], arr[right], 0.5)))
+                        arr[i] = float(_interp_with_noise(arr[left], arr[right], 0.5))
                     elif left >= 0:
-                        arr[i] = int(round(_noise_around(arr[left])))
+                        arr[i] = float(_noise_around(arr[left]))
                     elif right < n:
-                        arr[i] = int(round(_noise_around(arr[right])))
+                        arr[i] = float(_noise_around(arr[right]))
                     else:
-                        arr[i] = 1
+                        arr[i] = 0.0
                     interp_cells.add((i, kind))
 
 # write back with markers (for user visibility)
             for i in range(n):
-                qv = int(max(1, round(qc[i])))
-                fv = int(max(1, round(fs[i])))
-                t.qc[i] = str(qv)
-                t.fs[i] = str(fv)
+                t.qc[i] = f"{float(qc[i]):g}"
+                t.fs[i] = f"{float(fs[i]):g}"
 
 
             # --- зелёная подсветка: что реально поменялось алгоритмом ---
