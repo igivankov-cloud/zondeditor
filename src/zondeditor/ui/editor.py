@@ -2187,7 +2187,11 @@ class GeoCanvasEditor(tk.Tk):
             self.ribbon_view = RibbonView(self, commands=commands, icon_font=_pick_icon_font(11))
             self.ribbon_view.pack(side="top", fill="x")
             self.ribbon_view.set_object_name(self.object_name)
-            self.ribbon_view.set_project_type(str(getattr(self, "project_type", "type2_electric")), mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+            self.ribbon_view.set_project_type(
+                str(getattr(self, "project_type", "type2_electric")),
+                mode_params=dict(getattr(self, "project_mode_params", {}) or {}),
+                emit=False,
+            )
             self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
             self.ribbon_view.set_show_graphs(bool(getattr(self, "show_graphs", False)))
             self.ribbon_view.set_show_geology_column(bool(getattr(self, "show_geology_column", True)))
@@ -2559,7 +2563,11 @@ class GeoCanvasEditor(tk.Tk):
             pass
         self._ensure_object_code()
         if getattr(self, "ribbon_view", None):
-            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+            self.ribbon_view.set_project_type(
+                self.project_type,
+                mode_params=dict(getattr(self, "project_mode_params", {}) or {}),
+                emit=False,
+            )
         self._update_window_title()
 
     def _current_start_depth_for_test(self, t) -> float:
@@ -2912,7 +2920,11 @@ class GeoCanvasEditor(tk.Tk):
         self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
         rv = getattr(self, "ribbon_view", None)
         if rv is not None:
-            rv.set_project_type("type2_electric", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+            rv.set_project_type(
+                "type2_electric",
+                mode_params=dict(getattr(self, "project_mode_params", {}) or {}),
+                emit=False,
+            )
 
     @staticmethod
     def _allowed_step_values() -> tuple[float, ...]:
@@ -2977,7 +2989,7 @@ class GeoCanvasEditor(tk.Tk):
             return
         self._suspend_type1_param_validation = True
         try:
-            rv.set_project_type("type1_mech", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+            rv.set_project_type("type1_mech", mode_params=dict(getattr(self, "project_mode_params", {}) or {}), emit=False)
         finally:
             self._suspend_type1_param_validation = False
 
@@ -3029,7 +3041,7 @@ class GeoCanvasEditor(tk.Tk):
             return
         self._suspend_type1_param_validation = True
         try:
-            rv.set_project_type("type2_electric", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+            rv.set_project_type("type2_electric", mode_params=dict(getattr(self, "project_mode_params", {}) or {}), emit=False)
         finally:
             self._suspend_type1_param_validation = False
 
@@ -3039,7 +3051,7 @@ class GeoCanvasEditor(tk.Tk):
             return
         self._suspend_type1_param_validation = True
         try:
-            rv.set_project_type("direct_qcfs", mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+            rv.set_project_type("direct_qcfs", mode_params=dict(getattr(self, "project_mode_params", {}) or {}), emit=False)
         finally:
             self._suspend_type1_param_validation = False
 
@@ -10086,7 +10098,11 @@ class GeoCanvasEditor(tk.Tk):
             self.project_type = "direct_qcfs"
         self._apply_visual_mode_for_project_type()
         if getattr(self, "ribbon_view", None):
-            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+            self.ribbon_view.set_project_type(
+                self.project_type,
+                mode_params=dict(getattr(self, "project_mode_params", {}) or {}),
+                emit=False,
+            )
 
         requested_names = list(result.get("names") or [s.display_name for s in preview.soundings])
 
@@ -10150,7 +10166,11 @@ class GeoCanvasEditor(tk.Tk):
                 for tid in imported_tids:
                     self.step_by_tid[int(tid)] = float(snapped)
                 if getattr(self, "ribbon_view", None):
-                    self.ribbon_view.set_project_type(self.project_type, mode_params=dict(getattr(self, "project_mode_params", {}) or {}))
+                    self.ribbon_view.set_project_type(
+                        self.project_type,
+                        mode_params=dict(getattr(self, "project_mode_params", {}) or {}),
+                        emit=False,
+                    )
         self._ensure_layers_defaults_for_all_tests()
         self._build_grid()
         self._active_test_idx = len(self.tests) - 1 if self.tests else None
@@ -10916,7 +10936,7 @@ class GeoCanvasEditor(tk.Tk):
         self._apply_visual_mode_for_project_type()
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)
-            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(self.project_mode_params or {}))
+            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(self.project_mode_params or {}), emit=False)
             self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
         self.status.config(text=self._project_open_diagnostics(status_info))
         self._update_window_title()
@@ -11006,7 +11026,7 @@ class GeoCanvasEditor(tk.Tk):
         self._recompute_statuses_after_data_load(preview_mode=False)
         if getattr(self, "ribbon_view", None):
             self.ribbon_view.set_object_name(self.object_name)
-            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(self.project_mode_params or {}))
+            self.ribbon_view.set_project_type(self.project_type, mode_params=dict(self.project_mode_params or {}), emit=False)
             self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
             self.ribbon_view.select_tab("Параметры")
         self.status.config(text=f"Создан новый проект: {self.project_name}")

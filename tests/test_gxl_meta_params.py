@@ -82,3 +82,25 @@ def test_parse_gxl_file_collects_zond_max_meta(tmp_path):
     assert ("scalemax", "1000") in kv
     assert ("conemax", "50") in kv
     assert ("sleevemax", "20") in kv
+
+
+def test_sync_mode_step_to_ribbon_does_not_emit_common_params():
+    editor = object.__new__(GeoCanvasEditor)
+    editor.project_type = "type2_electric"
+    editor.step_m = 0.05
+    editor.project_mode_params = {}
+
+    class _DummyRibbon:
+        def __init__(self):
+            self.emit_calls = []
+
+        def set_project_type(self, _project_type, *, mode_params=None, emit=True):
+            self.emit_calls.append(bool(emit))
+
+    dummy = _DummyRibbon()
+    editor.ribbon_view = dummy
+
+    GeoCanvasEditor._sync_mode_step_from_loaded_tests(editor)
+
+    assert editor.project_mode_params["mode_step_depth"] == "0.05"
+    assert dummy.emit_calls == [False]
