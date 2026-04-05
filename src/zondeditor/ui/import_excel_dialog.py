@@ -8,7 +8,8 @@ from __future__ import annotations
 # - ExcelImportDialog._apply_autodetect/_apply_detected_settings: L379–L403 — автопредзаполнение разметки.
 # - ExcelImportDialog._on_column_click/_set_column_role: L405–L420 — назначение ролей по клику на букву столбца.
 # - ExcelImportDialog._on_row_click/_set_row_role: L422–L446 — назначение спец-ролей строки по клику на номер.
-# - ExcelImportDialog._refresh_preview: L477–L540 — пересчёт превью, диапазона отображения и списка имён.
+# - ExcelImportDialog._refresh_preview: L482–L546 — пересчёт превью, диапазона отображения и списка имён.
+# - ExcelImportGrid.reset_viewport: L189–L194 — сброс viewport в начало после auto/reset.
 # === FILE MAP END ===
 
 import tkinter as tk
@@ -184,6 +185,11 @@ class ExcelImportGrid(ttk.Frame):
         total_w = self.row_header_w + max(1, min(MAX_PREVIEW_COLS, max((len(r) for r in state.rows), default=0))) * self.col_w
         total_h = self.header_h + max(1, min(MAX_PREVIEW_ROWS, len(state.rows))) * self.row_h
         self.canvas.configure(scrollregion=(0, 0, total_w, total_h))
+        self._redraw()
+
+    def reset_viewport(self):
+        self.canvas.xview_moveto(0.0)
+        self.canvas.yview_moveto(0.0)
         self._redraw()
 
     def _handle_click(self, event):
@@ -395,7 +401,7 @@ class ExcelImportDialog(tk.Toplevel):
         detected = autodetect_settings(self.current_sheet.rows)
         self._apply_detected_settings(detected)
         self.status_var.set("Автоопределение выполнено")
-        self._refresh_preview()
+        self._refresh_preview(reset_view=True)
 
     def _reset_markup(self):
         if not self.current_sheet:
@@ -407,7 +413,7 @@ class ExcelImportDialog(tk.Toplevel):
         self.repeat_blocks_var.set(False)
         self.autodetected_mode = MODE_VERTICAL
         self.status_var.set("Разметка сброшена")
-        self._refresh_preview()
+        self._refresh_preview(reset_view=True)
 
     def _apply_detected_settings(self, detected: DetectedImportSettings):
         self.autodetected_mode = str(detected.mode or MODE_VERTICAL)
@@ -512,10 +518,12 @@ class ExcelImportDialog(tk.Toplevel):
             sounding_names=list(self.name_overrides),
         )
 
-    def _refresh_preview(self):
+    def _refresh_preview(self, *, reset_view: bool = False):
         sheet = self._build_sheet_with_ignored_rows()
         if not sheet:
             self.grid_view.set_state(GridState(rows=[], header_row=1, data_start_row=2, ignored_rows=set(), column_roles={}))
+            if reset_view:
+                self.grid_view.reset_viewport()
             self.preview_var.set("Тип опыта: —   |   Найдено опытов: 0   |   Диапазон глубин: —")
             self.names_label.configure(text="Имена: —")
             return
@@ -531,6 +539,8 @@ class ExcelImportDialog(tk.Toplevel):
                 column_roles=visual_roles,
             )
         )
+        if reset_view:
+            self.grid_view.reset_viewport()
 
         try:
             self.preview = build_import_preview(
