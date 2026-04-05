@@ -57,7 +57,7 @@ from src.zondeditor.export.geo_export import bundle_geo_filename, export_bundle_
 from src.zondeditor.export.gxl_export import export_gxl_generated
 from src.zondeditor.export.selection import select_export_tests
 from src.zondeditor.io.geo_reader import load_geo, parse_geo_bytes, GeoParseError
-from src.zondeditor.io.gxl_reader import load_gxl, parse_gxl_file, GxlParseError
+from src.zondeditor.io.gxl_reader import parse_gxl_file, GxlParseError
 from src.zondeditor.io.geo_writer import save_geo_as, save_k2_geo_from_template, build_k2_geo_from_template
 from src.zondeditor.io.excel_importer import ExcelImportError
 from src.zondeditor.domain.models import TestData, GeoBlockInfo, TestFlags
@@ -3956,19 +3956,7 @@ class GeoCanvasEditor(tk.Tk):
 
                 try:
 
-                    series_list = load_gxl(self.geo_path)
-                    tests_list = [TestData(
-                        tid=s.test_id, dt=s.dt,
-                        depth=[f"{r.depth_m:g}" for r in s.rows],
-                        qc=[str(int(r.qc_raw)) for r in s.rows],
-                        fs=[str(int(r.fs_raw)) for r in s.rows],
-                        incl=[str(int(r.u_raw)) for r in s.rows] if any(int(r.u_raw) != 0 for r in s.rows) else None,
-                        marker=getattr(s, "marker", ""),
-                        header_pos=getattr(s, "header_pos", ""),
-                        orig_id=getattr(s, "orig_id", None),
-                        block=getattr(s, "block", None),
-                    ) for s in series_list]
-                    meta_rows = []
+                    tests_list, meta_rows = parse_gxl_file(self.geo_path)
                     self.loaded_path = str(self.geo_path)
                     self.is_gxl = True
                     self.geo_kind = "K4" if any(getattr(t, "incl", None) for t in tests_list) else "K2"
