@@ -21,6 +21,7 @@ import tkinter.font as tkfont
 import random
 import re
 import bisect
+from collections import Counter
 import os
 import sys
 import math
@@ -2734,6 +2735,41 @@ class GeoCanvasEditor(tk.Tk):
                         params.update(self._parse_probe_type_values(params["probe_type"]))
                 except Exception:
                     pass
+        else:
+            root = None
+            for enc in ("cp1251", "utf-8", "cp866", "latin1"):
+                try:
+                    txt = data.decode(enc, errors="ignore")
+                    root = ET.fromstring(txt)
+                    break
+                except Exception:
+                    continue
+            if root is not None:
+                obj = root.find("object") if str(root.tag).lower() == "exportfile" else root.find("object")
+                tests = list(obj.findall("test")) if obj is not None else []
+
+                def _pick_common(tag: str) -> str:
+                    vals: list[str] = []
+                    for tnode in tests:
+                        try:
+                            v = str(tnode.findtext(tag, default="") or "").strip()
+                        except Exception:
+                            v = ""
+                        if v:
+                            vals.append(v)
+                    if not vals:
+                        return ""
+                    return Counter(vals).most_common(1)[0][0]
+
+                scale_v = _pick_common("scale")
+                cone_v = _pick_common("scaleostria")
+                sleeve_v = _pick_common("scalemufta")
+                if scale_v:
+                    params["controller_scale_div"] = scale_v
+                if cone_v:
+                    params["cone_kn"] = cone_v
+                if sleeve_v:
+                    params["sleeve_kn"] = sleeve_v
         return params
 
     def _apply_sounding_params(self, params: dict[str, str] | None):
@@ -3186,15 +3222,20 @@ class GeoCanvasEditor(tk.Tk):
         """Если в meta_rows есть шкала/тарировки — подставить в поля пересчёта."""
         if not meta_rows:
             return
-        kv = {}
+        kv_values: dict[str, list[str]] = {}
         for row in meta_rows:
             try:
                 k = str(row.get("key", "")).strip().lower()
                 v = str(row.get("value", "")).strip()
-                if k:
-                    kv[k] = v
+                if k and v:
+                    kv_values.setdefault(k, []).append(v)
             except Exception:
                 pass
+
+        kv: dict[str, str] = {}
+        for k, values in kv_values.items():
+            if values:
+                kv[k] = Counter(values).most_common(1)[0][0]
 
         upd = {}
         if kv.get("scale"):
