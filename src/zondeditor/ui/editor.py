@@ -6416,10 +6416,10 @@ class GeoCanvasEditor(tk.Tk):
                 return
             self._edit_header_title(ti)
             return
-        if kind == "add":
+        if kind == "add_new":
             if not self._can_show_add_test_button():
                 return
-            self._add_test_dialog()
+            self.add_test()
             return
         if kind == "dup":
             if not self._header_action_buttons_enabled(int(ti)):
@@ -7481,7 +7481,7 @@ class GeoCanvasEditor(tk.Tk):
             _set_cursor("")
             return
         kind, ti, row, field = hit
-        if kind in ("add", "lock", "edit", "rename", "dup", "trash"):
+        if kind in ("add_new", "lock", "edit", "rename", "dup", "trash"):
             self._set_hover((kind, ti))
             _set_cursor("hand2")
         elif kind == "export":
@@ -7785,6 +7785,16 @@ class GeoCanvasEditor(tk.Tk):
         y1 = y0 + self.hdr_h
         return x0, y0, x1, y1
 
+    def _new_test_button_bbox(self) -> tuple[int, int, int, int] | None:
+        if not self._can_show_add_test_button():
+            return None
+        cols = list(getattr(self, "expanded_cols", []) or [])
+        if not cols:
+            return None
+        _x0, y0, x1, y1 = self._header_bbox(len(cols) - 1)
+        bw = 18
+        return int(x1 + 6), int(y0), int(x1 + 6 + bw), int(y1)
+
 
     def _redraw(self):
         self._sync_view_ribbon_state()
@@ -7941,15 +7951,11 @@ class GeoCanvasEditor(tk.Tk):
             ico_font = _pick_icon_font(12)
 
             lock_on = bool(getattr(t, "locked", False))
-            add_enabled = bool(self._can_show_add_test_button())
             actions_enabled = bool(self._header_action_buttons_enabled(int(ti)))
-            add_x, lock_x, dup_x, trash_x = (x1 - 92), (x1 - 66), (x1 - 40), (x1 - 14)
+            lock_x, dup_x, trash_x = (x1 - 66), (x1 - 40), (x1 - 14)
             box_w, box_h = 22, 20
 
             # hover background (только для иконок, не для галочки)
-            if add_enabled and getattr(self, "_hover", None) == ("add", ti):
-                self.hcanvas.create_rectangle(add_x - box_w/2, ico_y - box_h/2, add_x + box_w/2, ico_y + box_h/2,
-                                              fill="#e9e9e9", outline="")
             if getattr(self, "_hover", None) == ("lock", ti):
                 self.hcanvas.create_rectangle(lock_x - box_w/2, ico_y - box_h/2, lock_x + box_w/2, ico_y + box_h/2,
                                               fill="#e9e9e9", outline="")
@@ -7959,8 +7965,6 @@ class GeoCanvasEditor(tk.Tk):
             if getattr(self, "_hover", None) == ("trash", ti):
                 self.hcanvas.create_rectangle(trash_x - box_w/2, ico_y - box_h/2, trash_x + box_w/2, ico_y + box_h/2,
                                               fill="#e9e9e9", outline="")
-            if add_enabled:
-                self.hcanvas.create_text(add_x, ico_y, text="+", font=("Segoe UI", 13, "bold"), fill=hdr_icon, anchor="center")
             self.hcanvas.create_text(lock_x, ico_y, text=("🔒" if lock_on else "🔓"), font=("Segoe UI", 10), fill=hdr_icon, anchor="center")
             self.hcanvas.create_text(dup_x, ico_y, text=ICON_COPY, font=ico_font, fill=(hdr_icon if actions_enabled else "#b6b6b6"), anchor="center")
             self.hcanvas.create_text(trash_x, ico_y, text=ICON_DELETE, font=ico_font, fill=(hdr_icon if actions_enabled else "#b6b6b6"), anchor="center")
@@ -8149,6 +8153,13 @@ class GeoCanvasEditor(tk.Tk):
                     self.canvas.create_rectangle(x0, 0, x1, body_h, fill="#d0d0d0", outline="", stipple="gray50")
                 self.hcanvas.create_rectangle(x0, y0, x1, y1, fill="#d0d0d0", outline="", stipple="gray50")
 
+        add_btn_bbox = self._new_test_button_bbox()
+        if add_btn_bbox is not None:
+            bx0, by0, bx1, by1 = add_btn_bbox
+            fill = "#e9e9e9" if getattr(self, "_hover", None) == ("add_new", -1) else "#f2f2f2"
+            self.hcanvas.create_rectangle(bx0, by0, bx1, by1, fill=fill, outline=GUI_GRID)
+            self.hcanvas.create_text((bx0 + bx1) / 2, (by0 + by1) / 2, text="+", font=("Segoe UI", 14, "bold"), fill="#444")
+
         self._update_scrollregion()
         if self._is_graph_panel_visible():
             self._redraw_graphs_now()
@@ -8191,6 +8202,12 @@ class GeoCanvasEditor(tk.Tk):
             cx = self.hcanvas.canvasx(x)
             cy = self.hcanvas.canvasy(y)
 
+            add_btn_bbox = self._new_test_button_bbox()
+            if add_btn_bbox is not None:
+                bx0, by0, bx1, by1 = add_btn_bbox
+                if bx0 <= cx <= bx1 and by0 <= cy <= by1:
+                    return ("add_new", -1, None, None)
+
             self._refresh_display_order()
             y0 = self.pad_y
             for col, ti in enumerate(getattr(self, "expanded_cols", []) or []):
@@ -8200,8 +8217,6 @@ class GeoCanvasEditor(tk.Tk):
                     if (x0 + 6) <= cx <= (x0 + 20) and (y0 + 8) <= cy <= (y0 + 22):
                         return ("export", ti, None, None)
                     # icons
-                    if self._can_show_add_test_button() and (x1 - 104) <= cx <= (x1 - 80) and y0 <= cy <= (y0 + 24):
-                        return ("add", ti, None, None)
                     if (x1 - 78) <= cx <= (x1 - 54) and y0 <= cy <= (y0 + 24):
                         return ("lock", ti, None, None)
                     actions_enabled = bool(self._header_action_buttons_enabled(int(ti)))
