@@ -76,6 +76,7 @@ class RibbonView(ttk.Frame):
         qat.pack(side="top", fill="x")
         self._add_qat_btn(qat, "undo", ICON_UNDO, "Undo")
         self._add_qat_btn(qat, "redo", ICON_REDO, "Redo")
+        self._add_qat_btn(qat, "save_project", ICON_SAVE, "Сохранить проект")
 
         self.tabs = ttk.Notebook(self)
         self.tabs.pack(side="top", fill="x", padx=2, pady=(0, 2))
