@@ -46,3 +46,23 @@ def test_fs_field_fallback_is_integer():
         field_name="fs",
     )
     assert out == 5.0
+
+
+def test_fs_series_integer_majority_forces_integer_precision():
+    out = normalize_interpolated_value(
+        27.6,
+        local_samples=[],
+        series_samples=[25, 27, 28, 31, 30.5],
+        field_name="fs",
+    )
+    assert out == 28.0
+
+
+def test_qc_keeps_fractional_precision_when_series_fractional():
+    out = normalize_interpolated_value(
+        3.149,
+        local_samples=[],
+        series_samples=[2.7, 2.8, 3.1, 3.4],
+        field_name="qc",
+    )
+    assert out == 3.1

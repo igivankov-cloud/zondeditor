@@ -3,7 +3,7 @@ from __future__ import annotations
 # === FILE MAP BEGIN ===
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
 # - _expand_roles_right: L99–L142 — предзаполнение повторяющихся блоков ролей вправо.
-# - ExcelImportGrid: L145–L282 — Excel-подобная сетка (буквы столбцов, номера строк, скроллы, клики).
+# - ExcelImportGrid: L145–L345 — Excel-подобная сетка (буквы столбцов, номера строк, скроллы, клики, стабильный viewport при resize).
 # - ExcelImportDialog._build_ui: L314–L347 — компактный верхний toolbar + статусный блок.
 # - ExcelImportDialog._apply_autodetect/_apply_detected_settings: L379–L403 — автопредзаполнение разметки.
 # - ExcelImportDialog._on_column_click/_set_column_role: L405–L420 — назначение ролей по клику на букву столбца.
@@ -40,6 +40,7 @@ from src.zondeditor.io.excel_importer import (
     make_unique_names,
     read_excel_workbook,
 )
+from src.zondeditor.ui.preview_viewport import clamp_top_row, compute_visible_row_range
 
 MAX_PREVIEW_ROWS = 140
 MAX_PREVIEW_COLS = 40
@@ -173,7 +174,7 @@ class ExcelImportGrid(ttk.Frame):
         self.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
 
-        self.canvas.bind("<Configure>", lambda _e: self._redraw())
+        self.canvas.bind("<Configure>", self._on_configure)
         self.canvas.bind("<Button-1>", self._handle_click)
         self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
         self.canvas.bind("<Shift-MouseWheel>", self._on_shift_mouse_wheel)
@@ -181,15 +182,47 @@ class ExcelImportGrid(ttk.Frame):
         self.canvas.bind("<Button-5>", lambda _e: self.canvas.yview_scroll(1, "units"))
 
     def set_state(self, state: GridState):
+        anchor_top_row = self._current_top_row()
         self.state = state
         total_w = self.row_header_w + max(1, min(MAX_PREVIEW_COLS, max((len(r) for r in state.rows), default=0))) * self.col_w
         total_h = self.header_h + max(1, min(MAX_PREVIEW_ROWS, len(state.rows))) * self.row_h
         self.canvas.configure(scrollregion=(0, 0, total_w, total_h))
+        self._moveto_top_row(anchor_top_row)
         self._redraw()
 
     def reset_viewport(self):
+        self._moveto_top_row(0)
         self.canvas.xview_moveto(0.0)
-        self.canvas.yview_moveto(0.0)
+        self._redraw()
+
+    def _rows_viewport_height(self) -> int:
+        return max(1, int(self.canvas.winfo_height() - self.header_h))
+
+    def _rows_total(self) -> int:
+        return min(MAX_PREVIEW_ROWS, len(self.state.rows))
+
+    def _current_top_row(self) -> int:
+        rows_total = self._rows_total()
+        if rows_total <= 0:
+            return 0
+        y0 = self.canvas.canvasy(0)
+        raw = int((y0 - self.header_h) // self.row_h)
+        return clamp_top_row(rows_total, raw, self._rows_viewport_height(), self.row_h)
+
+    def _moveto_top_row(self, top_row: int) -> None:
+        rows_total = self._rows_total()
+        if rows_total <= 0:
+            self.canvas.yview_moveto(0.0)
+            return
+        safe_top = clamp_top_row(rows_total, int(top_row), self._rows_viewport_height(), self.row_h)
+        target_px = self.header_h + safe_top * self.row_h
+        total_h = self.header_h + max(1, rows_total) * self.row_h
+        frac = 0.0 if total_h <= 1 else (target_px / total_h)
+        self.canvas.yview_moveto(max(0.0, min(1.0, frac)))
+
+    def _on_configure(self, _event):
+        anchor_top = self._current_top_row()
+        self._moveto_top_row(anchor_top)
         self._redraw()
 
     def _handle_click(self, event):
@@ -234,14 +267,17 @@ class ExcelImportGrid(ttk.Frame):
             return
 
         x0 = self.canvas.canvasx(0)
-        y0 = self.canvas.canvasy(0)
         x1 = x0 + self.canvas.winfo_width()
-        y1 = y0 + self.canvas.winfo_height()
 
         col_start = max(0, int((x0 - self.row_header_w) // self.col_w))
         col_end = min(n_cols, int((x1 - self.row_header_w) // self.col_w) + 2)
-        row_start = max(0, int((y0 - self.header_h) // self.row_h))
-        row_end = min(len(rows), int((y1 - self.header_h) // self.row_h) + 2)
+        row_start, row_end = compute_visible_row_range(
+            len(rows),
+            self._current_top_row(),
+            self._rows_viewport_height(),
+            self.row_h,
+            overscan=2,
+        )
 
         self.canvas.create_rectangle(0, 0, self.row_header_w, self.header_h, fill="#f5f5f5", outline="#d0d0d0")
 
