@@ -124,6 +124,12 @@ def parse_gxl_file(path: str | Path) -> tuple[list[TestData], list[dict]]:
             val = _txt(test_node, key, "")
             if val:
                 meta_rows.append({"key": key, "value": val})
+        zond_node = test_node.find("zond")
+        if zond_node is not None:
+            for key in ("scalemax", "conemax", "sleevemax"):
+                val = _txt(zond_node, key, "")
+                if val:
+                    meta_rows.append({"key": key, "value": val})
 
     if not tests:
         raise GxlParseError(

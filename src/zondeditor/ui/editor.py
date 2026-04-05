@@ -3218,7 +3218,7 @@ class GeoCanvasEditor(tk.Tk):
         return t
 
 
-    def _apply_gxl_calibration_from_meta(self, meta_rows: list[dict]):
+    def _apply_calibration_from_meta(self, meta_rows: list[dict]):
         """Если в meta_rows есть шкала/тарировки — подставить в поля пересчёта."""
         if not meta_rows:
             return
@@ -3238,12 +3238,15 @@ class GeoCanvasEditor(tk.Tk):
                 kv[k] = Counter(values).most_common(1)[0][0]
 
         upd = {}
-        if kv.get("scale"):
-            upd["controller_scale_div"] = kv["scale"]
-        if kv.get("scaleostria"):
-            upd["cone_kn"] = kv["scaleostria"]
-        if kv.get("scalemufta"):
-            upd["sleeve_kn"] = kv["scalemufta"]
+        scale_v = kv.get("scale") or kv.get("scalemax") or kv.get("scale_max")
+        cone_v = kv.get("scaleostria") or kv.get("conemax") or kv.get("cone_max")
+        sleeve_v = kv.get("scalemufta") or kv.get("sleevemax") or kv.get("sleeve_max")
+        if scale_v:
+            upd["controller_scale_div"] = scale_v
+        if cone_v:
+            upd["cone_kn"] = cone_v
+        if sleeve_v:
+            upd["sleeve_kn"] = sleeve_v
         if upd:
             self._set_common_params(upd, getattr(self, "geo_kind", "K2"))
 
@@ -4027,7 +4030,7 @@ class GeoCanvasEditor(tk.Tk):
 
                 self.redo_stack.clear()
 
-                self._apply_gxl_calibration_from_meta(meta_rows)
+                self._apply_calibration_from_meta(meta_rows)
                 self._set_common_params(self._current_common_params(), self.geo_kind)
                 self._sync_mode_step_from_loaded_tests()
                 if getattr(self, "ribbon_view", None):
@@ -4147,6 +4150,7 @@ class GeoCanvasEditor(tk.Tk):
             self._redraw()
             self.undo_stack.clear()
             self.redo_stack.clear()
+            self._apply_calibration_from_meta(meta_rows)
 
             self._sync_mode_step_from_loaded_tests()
             self._update_status_loaded(prefix=f"GEO: загружено опытов {len(self.tests)}")
