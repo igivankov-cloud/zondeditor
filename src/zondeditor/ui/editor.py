@@ -2535,12 +2535,11 @@ class GeoCanvasEditor(tk.Tk):
             fts = [("GEO/GE0", "*.geo *.ge0 *.GEO *.GE0"), ("Все файлы", "*.*")]
         elif forced_ext == ".gxl":
             title = "Открыть GXL"
-            fts = [("GXL/GLX", "*.gxl *.GXL *.glx *.GLX"), ("Все файлы", "*.*")]
+            fts = [("GXL", "*.gxl *.GXL"), ("Все файлы", "*.*")]
         else:
             title = "Выберите файл GEO/GE0 или GXL"
             fts = [
                 ("GeoExplorer GEO / GXL", "*.geo *.ge0 *.GEO *.GE0 *.gxl *.GXL"),
-                ("GeoExplorer GLX", "*.glx *.GLX"),
                 ("Все файлы", "*.*"),
             ]
         path = filedialog.askopenfilename(title=title, filetypes=fts)
@@ -2548,7 +2547,7 @@ class GeoCanvasEditor(tk.Tk):
             return
         self.geo_path = Path(path)
         self.file_var.set(str(self.geo_path))
-        self.is_gxl = (self.geo_path.suffix.lower() in {".gxl", ".glx"})
+        self.is_gxl = (self.geo_path.suffix.lower() == ".gxl")
         self.loaded_path = str(self.geo_path)
         self.project_path = None
         self.project_name = str(self.geo_path.stem or "Новый проект")
@@ -3956,7 +3955,7 @@ class GeoCanvasEditor(tk.Tk):
                 return
 
 
-            gxl_by_ext = self.geo_path.suffix.lower() in {".gxl", ".glx"}
+            gxl_by_ext = self.geo_path.suffix.lower() == ".gxl"
             gxl_parsed_fallback: tuple[list[TestData], list[dict]] | None = None
             if (not getattr(self, "is_gxl", False)) and (not gxl_by_ext):
                 try:
@@ -4986,7 +4985,7 @@ class GeoCanvasEditor(tk.Tk):
         if ptype not in {"type1_mech", "type2_electric", "direct_qcfs"}:
             return False
         src = str(getattr(self, "loaded_path", "") or "").lower()
-        if src.endswith(".geo") or src.endswith(".ge0") or src.endswith(".gxl") or src.endswith(".glx"):
+        if src.endswith(".geo") or src.endswith(".ge0") or src.endswith(".gxl"):
             return False
         return True
 
@@ -11321,13 +11320,13 @@ class GeoCanvasEditor(tk.Tk):
                 title="Сохранить как",
                 defaultextension=".geo",
                 initialfile=base_noext + ".geo",
-                filetypes=[("GEO/GE0", "*.geo *.ge0 *.GEO *.GE0"), ("GXL/GLX", "*.gxl *.GXL *.glx *.GLX"), ("Все файлы", "*.*")],
+                filetypes=[("GEO/GE0", "*.geo *.ge0 *.GEO *.GE0"), ("GXL", "*.gxl *.GXL"), ("Все файлы", "*.*")],
             )
             if not out_file:
                 return
 
             ext = os.path.splitext(out_file)[1].lower()
-            if ext in {".gxl", ".glx"}:
+            if ext == ".gxl":
                 self._save_geo_path_override = out_file
                 try:
                     return self.export_gxl_as()
