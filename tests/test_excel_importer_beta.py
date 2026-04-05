@@ -46,6 +46,25 @@ def test_blocks_right_qc_fs_multiple_soundings():
     assert len(preview.soundings) == 2
 
 
+def test_blocks_right_qc_fs_with_gaps_between_blocks():
+    rows = [
+        ["Глубина", "", "qc", "fs", "", "", "qc", "fs", "", "", "qc", "fs"],
+        [0.0, None, 1.0, 2.0, None, None, 10.0, 20.0, None, None, 100.0, 200.0],
+        [0.1, None, 1.1, 2.1, None, None, 10.1, 20.1, None, None, 100.1, 200.1],
+    ]
+    sheet = WorkbookSheet(name="Sheet", rows=rows)
+    cfg = ExcelImportConfig(
+        mode=MODE_BLOCKS_RIGHT,
+        header_row=1,
+        data_start_row=2,
+        column_roles={0: "depth", 2: "qc_mpa", 3: "fs_kpa"},
+        repeat_first_block=True,
+    )
+    preview = build_import_preview(sheet, cfg, fallback_name="demo")
+    assert preview.detected_type == 3
+    assert len(preview.soundings) >= 3
+
+
 def test_empty_cells_preserved_as_none():
     rows = [["Глубина", "Лоб", "Общее"], [0.0, 1, None], [0.2, None, 3]]
     sheet = WorkbookSheet(name="Sheet", rows=rows)

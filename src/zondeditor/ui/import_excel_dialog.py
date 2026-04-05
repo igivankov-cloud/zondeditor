@@ -2,12 +2,13 @@ from __future__ import annotations
 
 # === FILE MAP BEGIN ===
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
-# - _expand_roles_right: L93–L136 — предзаполнение повторяющихся блоков ролей вправо.
-# - ExcelImportGrid: L139–L264 — Excel-подобная сетка (буквы столбцов, номера строк, скроллы, клики).
-# - ExcelImportDialog._apply_autodetect/_apply_detected_settings: L361–L389 — автопредзаполнение разметки.
-# - ExcelImportDialog._on_column_click/_set_column_role: L391–L406 — назначение ролей по клику на букву столбца.
-# - ExcelImportDialog._on_row_click/_set_row_role: L408–L432 — назначение спец-ролей строки по клику на номер.
-# - ExcelImportDialog._refresh_preview: L453–L502 — пересчёт превью, статуса и списка имён.
+# - _expand_roles_right: L99–L142 — предзаполнение повторяющихся блоков ролей вправо.
+# - ExcelImportGrid: L145–L282 — Excel-подобная сетка (буквы столбцов, номера строк, скроллы, клики).
+# - ExcelImportDialog._build_ui: L314–L347 — компактный верхний toolbar + статусный блок.
+# - ExcelImportDialog._apply_autodetect/_apply_detected_settings: L379–L403 — автопредзаполнение разметки.
+# - ExcelImportDialog._on_column_click/_set_column_role: L405–L420 — назначение ролей по клику на букву столбца.
+# - ExcelImportDialog._on_row_click/_set_row_role: L422–L446 — назначение спец-ролей строки по клику на номер.
+# - ExcelImportDialog._refresh_preview: L477–L540 — пересчёт превью, диапазона отображения и списка имён.
 # === FILE MAP END ===
 
 import tkinter as tk
@@ -94,6 +95,13 @@ def _cell_text(value: object) -> str:
     return txt if len(txt) <= 64 else (txt[:61] + "...")
 
 
+def _compact_path(value: str, max_chars: int = 42) -> str:
+    txt = str(value or "").strip()
+    if len(txt) <= max_chars:
+        return txt
+    return "…" + txt[-max(8, max_chars - 1) :]
+
+
 def _expand_roles_right(rows: list[list[object]], base_roles: dict[int, str], repeat_enabled: bool) -> dict[int, str]:
     if not repeat_enabled:
         return dict(base_roles)
@@ -166,6 +174,10 @@ class ExcelImportGrid(ttk.Frame):
 
         self.canvas.bind("<Configure>", lambda _e: self._redraw())
         self.canvas.bind("<Button-1>", self._handle_click)
+        self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
+        self.canvas.bind("<Shift-MouseWheel>", self._on_shift_mouse_wheel)
+        self.canvas.bind("<Button-4>", lambda _e: self.canvas.yview_scroll(-1, "units"))
+        self.canvas.bind("<Button-5>", lambda _e: self.canvas.yview_scroll(1, "units"))
 
     def set_state(self, state: GridState):
         self.state = state
@@ -198,6 +210,14 @@ class ExcelImportGrid(ttk.Frame):
         if row_idx_1 == self.state.data_start_row:
             return "#fff9e6"
         return base
+
+    def _on_mouse_wheel(self, event):
+        direction = -1 if int(getattr(event, "delta", 0)) > 0 else 1
+        self.canvas.yview_scroll(direction, "units")
+
+    def _on_shift_mouse_wheel(self, event):
+        direction = -1 if int(getattr(event, "delta", 0)) > 0 else 1
+        self.canvas.xview_scroll(direction, "units")
 
     def _redraw(self):
         self.canvas.delete("all")
@@ -251,9 +271,9 @@ class ExcelImportGrid(ttk.Frame):
 
             row_label = str(ridx)
             if role == ROW_ROLE_HEADER:
-                row_label += " [H]"
+                row_label += " [Заг]"
             elif role == ROW_ROLE_DATA:
-                row_label += " [D]"
+                row_label += " [Данные]"
             elif role == ROW_ROLE_IGNORE:
                 row_label += " [X]"
             self.canvas.create_text(6, ry + self.row_h / 2, anchor="w", text=row_label, fill="#34495e")
@@ -268,7 +288,7 @@ class ExcelImportGrid(ttk.Frame):
 
 
 class ExcelImportDialog(tk.Toplevel):
-    def __init__(self, master, existing_names: set[str] | None = None):
+    def __init__(self, master, existing_names: set[str] | None = None, initial_path: str | None = None):
         super().__init__(master)
         self.title("Импорт Excel (БЕТА)")
         self.geometry("1280x820")
@@ -285,6 +305,7 @@ class ExcelImportDialog(tk.Toplevel):
         self.ignored_rows: set[int] = set()
         self.preview: ImportPreview | None = None
         self.name_overrides: list[str] = []
+        self.loaded_file_path: str = ""
         self.result: dict | None = None
 
         self.file_var = tk.StringVar()
@@ -295,13 +316,18 @@ class ExcelImportDialog(tk.Toplevel):
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
+        if initial_path:
+            self.loaded_file_path = str(initial_path)
+            self.file_var.set(_compact_path(str(initial_path)))
+            self._load_file(str(initial_path))
 
     def _build_ui(self):
         top = ttk.Frame(self, padding=8)
         top.pack(fill="x")
 
         ttk.Label(top, text="Файл:").pack(side="left")
-        ttk.Entry(top, textvariable=self.file_var, width=56).pack(side="left", padx=(4, 4))
+        self.file_entry = ttk.Entry(top, textvariable=self.file_var, width=28, state="readonly")
+        self.file_entry.pack(side="left", padx=(4, 4))
         ttk.Button(top, text="...", command=self._pick_file, width=4).pack(side="left", padx=(0, 10))
 
         ttk.Label(top, text="Лист:").pack(side="left")
@@ -327,7 +353,7 @@ class ExcelImportDialog(tk.Toplevel):
         ttk.Label(bottom, textvariable=self.preview_var).pack(anchor="w", pady=(4, 2))
         meta = ttk.Frame(bottom)
         meta.pack(fill="x")
-        self.names_label = ttk.Label(meta, text="Имена: —")
+        self.names_label = ttk.Label(meta, text="Имена: —", wraplength=1120, justify="left")
         self.names_label.pack(side="left")
         ttk.Button(meta, text="Редактировать имена", command=self._open_names_editor).pack(side="left", padx=(8, 0))
 
@@ -338,7 +364,8 @@ class ExcelImportDialog(tk.Toplevel):
         )
         if not path:
             return
-        self.file_var.set(path)
+        self.loaded_file_path = path
+        self.file_var.set(_compact_path(path))
         self._load_file(path)
 
     def _load_file(self, path: str):
@@ -439,6 +466,28 @@ class ExcelImportDialog(tk.Toplevel):
             return MODE_BLOCKS_RIGHT
         return MODE_BLOCKS_RIGHT if self.autodetected_mode == MODE_BLOCKS_RIGHT else MODE_VERTICAL
 
+    def _roles_for_config(self) -> dict[int, str]:
+        roles = dict(self.column_roles or {})
+        if not bool(self.repeat_blocks_var.get()):
+            return roles
+
+        depth_cols = sorted(c for c, role in roles.items() if role == ROLE_DEPTH)
+        data_cols = sorted(c for c, role in roles.items() if role not in (ROLE_IGNORE, ROLE_DEPTH))
+        if not depth_cols or not data_cols:
+            return roles
+
+        first_by_role: dict[str, int] = {}
+        for col in data_cols:
+            role = roles.get(col, ROLE_IGNORE)
+            if role in (ROLE_IGNORE, ROLE_DEPTH):
+                continue
+            if role not in first_by_role:
+                first_by_role[role] = col
+        cfg_roles: dict[int, str] = {depth_cols[0]: ROLE_DEPTH}
+        for role, col in first_by_role.items():
+            cfg_roles[col] = role
+        return cfg_roles
+
     def _build_sheet_with_ignored_rows(self) -> WorkbookSheet | None:
         if not self.current_sheet:
             return None
@@ -453,7 +502,7 @@ class ExcelImportDialog(tk.Toplevel):
         return WorkbookSheet(name=self.current_sheet.name, rows=rows)
 
     def _current_config(self) -> ExcelImportConfig:
-        roles = _expand_roles_right(self.current_sheet.rows if self.current_sheet else [], dict(self.column_roles), bool(self.repeat_blocks_var.get()))
+        roles = self._roles_for_config()
         return ExcelImportConfig(
             mode=self._effective_mode(),
             header_row=max(1, int(self.header_row)),
@@ -472,14 +521,14 @@ class ExcelImportDialog(tk.Toplevel):
             return
 
         cfg = self._current_config()
-        self.column_roles = dict(cfg.column_roles or {})
+        visual_roles = _expand_roles_right(sheet.rows, dict(self.column_roles or {}), bool(self.repeat_blocks_var.get()))
         self.grid_view.set_state(
             GridState(
                 rows=sheet.rows,
                 header_row=self.header_row,
                 data_start_row=self.data_start_row,
                 ignored_rows=set(self.ignored_rows),
-                column_roles=dict(self.column_roles),
+                column_roles=visual_roles,
             )
         )
 
@@ -496,12 +545,15 @@ class ExcelImportDialog(tk.Toplevel):
             type_text = str(self.preview.detected_type) if self.preview.detected_type else "не определён"
             warn_count = len(self.preview.warnings)
             warn_suffix = "" if warn_count <= 0 else f"   |   Предупреждения: {warn_count}"
+            shown_rows = min(MAX_PREVIEW_ROWS, len(sheet.rows))
+            total_rows = len(sheet.rows)
+            shown_cols = min(MAX_PREVIEW_COLS, max((len(r) for r in sheet.rows), default=0))
+            total_cols = max((len(r) for r in sheet.rows), default=0)
             self.preview_var.set(
-                f"Тип опыта: {type_text}   |   Найдено опытов: {len(self.preview.soundings)}   |   Диапазон глубин: {self.preview.min_depth}–{self.preview.max_depth}{warn_suffix}"
+                f"Тип опыта: {type_text}   |   Найдено опытов: {len(self.preview.soundings)}   |   Диапазон глубин: {self.preview.min_depth}–{self.preview.max_depth}{warn_suffix}\n"
+                f"Показаны первые {shown_rows} строк из {total_rows}; столбцы {shown_cols} из {total_cols}"
             )
-            names_text = ", ".join(self.name_overrides[:5])
-            if len(self.name_overrides) > 5:
-                names_text += f" ... (+{len(self.name_overrides)-5})"
+            names_text = ", ".join(self.name_overrides)
             self.names_label.configure(text=f"Имена: {names_text or '—'}")
             if self.preview.detected_type is None:
                 self.status_var.set("Не удалось полностью определить структуру, проверьте разметку вручную")
@@ -549,7 +601,7 @@ class ExcelImportDialog(tk.Toplevel):
         cfg = self._current_config()
         names = list(self.name_overrides or [s.display_name for s in self.preview.soundings])
         self.result = {
-            "workbook_path": self.file_var.get(),
+            "workbook_path": self.loaded_file_path or self.file_var.get(),
             "sheet_name": self.current_sheet.name,
             "config": cfg,
             "preview": self.preview,
@@ -562,7 +614,7 @@ class ExcelImportDialog(tk.Toplevel):
         self.destroy()
 
 
-def ask_excel_import(master, existing_names: set[str] | None = None) -> dict | None:
-    dlg = ExcelImportDialog(master, existing_names=existing_names)
+def ask_excel_import(master, existing_names: set[str] | None = None, initial_path: str | None = None) -> dict | None:
+    dlg = ExcelImportDialog(master, existing_names=existing_names, initial_path=initial_path)
     master.wait_window(dlg)
     return dlg.result

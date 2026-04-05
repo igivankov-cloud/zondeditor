@@ -204,13 +204,51 @@ def _parse_blocks_right(sheet: WorkbookSheet, config: ExcelImportConfig, fallbac
 
     width, rel_roles = _block_signature(config, depth_col)
     base_col = min(c for c, r in config.column_roles.items() if r not in (ROLE_IGNORE, ROLE_DEPTH))
+    min_rel = min(rel_roles.keys())
+    max_rel = max(rel_roles.keys())
+    max_cols = max((len(r) for r in sheet.rows), default=0)
+
+    def _block_quality(block_origin: int) -> tuple[int, dict[str, int]]:
+        numeric_cells = 0
+        per_role: dict[str, int] = {}
+        for i in range(max(0, config.data_start_row - 1), len(sheet.rows)):
+            row = sheet.rows[i]
+            if _row_is_header_like(row, config.column_roles):
+                continue
+            depth = try_parse_float(row[depth_col] if depth_col < len(row) else None)
+            if depth is None:
+                continue
+            for rel_col, role in rel_roles.items():
+                col = block_origin + rel_col
+                val = try_parse_float(row[col] if col < len(row) else None)
+                if val is not None:
+                    numeric_cells += 1
+                    per_role[role] = int(per_role.get(role, 0) + 1)
+        return numeric_cells, per_role
+
+    candidate_starts: list[int] = []
+    for start in range(max(0, base_col - min_rel), max(0, max_cols - max_rel)):
+        score, role_stat = _block_quality(start)
+        if score <= 0:
+            continue
+        # минимум один numeric на каждую роль шаблона, чтобы отсеять шум
+        if all(role_stat.get(role, 0) > 0 for role in set(rel_roles.values())):
+            candidate_starts.append(start)
+
+    if not candidate_starts:
+        raise ExcelImportError("Не найдено валидных блоков данных справа.")
+    candidate_starts = sorted(set(candidate_starts))
+    filtered_starts: list[int] = []
+    for start in candidate_starts:
+        if not filtered_starts or (start - filtered_starts[-1]) >= max(1, width):
+            filtered_starts.append(start)
+    candidate_starts = filtered_starts
+    if not config.repeat_first_block:
+        candidate_starts = candidate_starts[:1]
 
     soundings: list[ImportedSounding] = []
     warnings: list[str] = []
-    empty_blocks = 0
-    block_idx = 0
-    while True:
-        block_origin = base_col + block_idx * width
+    for block_idx, block_origin in enumerate(candidate_starts):
         rows_out: list[ImportedRow] = []
         for i in range(max(0, config.data_start_row - 1), len(sheet.rows)):
             row = sheet.rows[i]
@@ -231,20 +269,10 @@ def _parse_blocks_right(sheet: WorkbookSheet, config: ExcelImportConfig, fallbac
                 if any(v is None for v in vals.values()):
                     warnings.append(f"Блок {block_idx+1}, строка {i+1}: частично заполнена.")
                 rows_out.append(ImportedRow(depth_m=depth, values=vals))
-
         if not rows_out:
-            empty_blocks += 1
-            if empty_blocks >= 2:
-                break
-            block_idx += 1
             continue
-
-        empty_blocks = 0
         name = _first_text_for_name(sheet.rows, block_origin, block_origin + width - 1, config.header_row) or f"{fallback_name} {block_idx+1}"
         soundings.append(ImportedSounding(source_name=name, display_name=name, rows=rows_out))
-        block_idx += 1
-        if not config.repeat_first_block:
-            break
 
     if not soundings:
         raise ExcelImportError("Не найдено валидных блоков данных справа.")

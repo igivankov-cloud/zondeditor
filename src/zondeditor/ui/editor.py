@@ -6,7 +6,7 @@
 # - _next_free_ige_ordinal/_next_free_ige_id: L1341–L1376 — генерация ближайшего свободного базового имени ИГЭ.
 # - _add_unassigned_ige_from_ribbon: L1582–L1594 — добавление нового ИГЭ с пустым типом грунта.
 # - _rename_ige_from_ribbon: L1846–L1881 — переименование ИГЭ с проверкой уникальности и обновлением ссылок в слоях.
-# - open_excel_import_dialog: L9872–L9974 — импорт Excel (БЕТА) через отдельный диалог и добавление опытов в проект.
+# - open_excel_import_dialog: L9873–L9980 — импорт Excel (БЕТА): сначала выбор файла, затем диалог и добавление опытов в проект.
 # - hatching integration: _draw_layer_hatch/_draw_layers_overlay_for_test — применение встроенной библиотеки hatch-паттернов.
 # === FILE MAP END ===
 
@@ -9872,7 +9872,13 @@ class GeoCanvasEditor(tk.Tk):
 
     def open_excel_import_dialog(self):
         existing_names = {str(getattr(t, "marker", "") or "").strip() for t in (getattr(self, "tests", []) or []) if str(getattr(t, "marker", "") or "").strip()}
-        result = ask_excel_import(self, existing_names=existing_names)
+        in_path = filedialog.askopenfilename(
+            title="Выберите Excel для импорта",
+            filetypes=[("Excel", "*.xlsx *.xls"), ("XLSX", "*.xlsx"), ("XLS", "*.xls")],
+        )
+        if not in_path:
+            return
+        result = ask_excel_import(self, existing_names=existing_names, initial_path=in_path)
         if not result:
             return
         preview = result.get("preview")
