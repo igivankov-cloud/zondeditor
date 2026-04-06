@@ -4394,20 +4394,20 @@ class GeoCanvasEditor(tk.Tk):
                 q_missing = is_missing_value(qv)
                 if q_missing and (i, "qc") not in user_cells:
                     return True
-                if q_missing and (i, "qc") in interp_cells:
+                if (i, "qc") in interp_cells:
                     return True
                 mk_q = marks.get(self._mark_key(tid, self._safe_depth_m(test, i), "qc"))
-                if q_missing and str((mk_q or {}).get("color") or "").strip().lower() == "orange":
+                if str((mk_q or {}).get("color") or "").strip().lower() == "orange":
                     return True
             if i < len(f_arr):
                 fv = f_arr[i]
                 f_missing = is_missing_value(fv)
                 if f_missing and (i, "fs") not in user_cells:
                     return True
-                if f_missing and (i, "fs") in interp_cells:
+                if (i, "fs") in interp_cells:
                     return True
                 mk_f = marks.get(self._mark_key(tid, self._safe_depth_m(test, i), "fs"))
-                if f_missing and str((mk_f or {}).get("color") or "").strip().lower() == "orange":
+                if str((mk_f or {}).get("color") or "").strip().lower() == "orange":
                     return True
         return False
 
