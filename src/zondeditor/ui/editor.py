@@ -4388,6 +4388,8 @@ class GeoCanvasEditor(tk.Tk):
         if test is None:
             return False
         fl = self.flags.get(tid, TestFlags(False, set(), set(), set(), set()))
+        if bool(getattr(fl, "interp_cells", set()) or set()):
+            return True
         user_cells = set(getattr(fl, "user_cells", set()) or set())
         q_arr = list(getattr(test, "qc", []) or [])
         f_arr = list(getattr(test, "fs", []) or [])
