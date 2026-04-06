@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 import tkinter.font as tkfont
 
 # stdlib
@@ -56,6 +56,13 @@ from src.zondeditor.export.cpt_protocol_docx import export_cpt_protocol_docx
 from src.zondeditor.export.geo_export import bundle_geo_filename, export_bundle_geo, prepare_geo_tests
 from src.zondeditor.export.gxl_export import export_gxl_generated
 from src.zondeditor.export.selection import select_export_tests
+from src.zondeditor.export.cad import (
+    ExportCadOptions,
+    build_cpt_cad_scene,
+    convert_dxf_to_dwg,
+    find_oda_converter,
+    write_cad_scene_to_dxf,
+)
 from src.zondeditor.io.geo_reader import load_geo, parse_geo_bytes, GeoParseError
 from src.zondeditor.io.gxl_reader import parse_gxl_file, GxlParseError
 from src.zondeditor.io.geo_writer import save_geo_as, save_k2_geo_from_template, build_k2_geo_from_template
@@ -10365,10 +10372,118 @@ class GeoCanvasEditor(tk.Tk):
             messagebox.showerror("Протокол CPT", f"Не удалось сформировать протокол:\n{e}")
 
     def export_dxf(self):
-        messagebox.showinfo(
-            "Экспорт DXF",
-            "Кнопка экспорта графиков в DXF добавлена. Логика экспорта будет реализована следующим шагом.",
+        if not getattr(self, "tests", None):
+            messagebox.showwarning("Экспорт CAD", "Нет данных зондирования для экспорта.")
+            return
+        if not self._validate_export_rows():
+            return
+
+        scale_value = simpledialog.askstring(
+            "Экспорт CAD",
+            "Вертикальный масштаб (допустимо: 50, 100, 200):",
+            initialvalue="100",
+            parent=self,
         )
+        if scale_value is None:
+            return
+        try:
+            vertical_scale = int(str(scale_value).strip())
+        except Exception:
+            messagebox.showerror("Экспорт CAD", "Масштаб должен быть целым числом: 50, 100 или 200.")
+            return
+        if vertical_scale not in {50, 100, 200}:
+            messagebox.showerror("Экспорт CAD", "Допустимые масштабы: 1:50, 1:100, 1:200.")
+            return
+
+        has_dwg_converter = find_oda_converter(None) is not None
+        fmt_default = "DWG" if has_dwg_converter else "DXF"
+        fmt_value = simpledialog.askstring(
+            "Экспорт CAD",
+            "Формат экспорта (DXF или DWG):",
+            initialvalue=fmt_default,
+            parent=self,
+        )
+        if fmt_value is None:
+            return
+        fmt = str(fmt_value).strip().upper()
+        if fmt not in {"DXF", "DWG"}:
+            messagebox.showerror("Экспорт CAD", "Допустимые форматы: DXF или DWG.")
+            return
+        if fmt == "DWG" and not has_dwg_converter:
+            if not messagebox.askyesno(
+                "Экспорт CAD",
+                "Конвертер ODA не найден. Сохранить только DXF?",
+                parent=self,
+            ):
+                return
+            fmt = "DXF"
+
+        selection = self._collect_export_tests()
+        tests_exp = list(selection.tests)
+        if not tests_exp:
+            messagebox.showwarning("Экспорт CAD", "Нет опытов для экспорта.")
+            return
+
+        active_idx = self._active_layers_test_index()
+        active_test = self.tests[active_idx] if active_idx is not None and 0 <= active_idx < len(self.tests) else None
+        test = active_test if active_test in tests_exp else tests_exp[0]
+
+        object_name = str(getattr(self, "object_name", "") or "sounding").strip().replace(" ", "_")
+        if not object_name:
+            object_name = "sounding"
+        suggested_name = f"{object_name}_{int(getattr(test, 'tid', 0) or 0):02d}_graph_1_{vertical_scale}"
+        initial_ext = ".dwg" if fmt == "DWG" else ".dxf"
+        out_path = filedialog.asksaveasfilename(
+            title="Сохранить CAD график",
+            defaultextension=initial_ext,
+            initialfile=f"{suggested_name}{initial_ext}",
+            filetypes=[("CAD DXF", "*.dxf"), ("CAD DWG", "*.dwg"), ("All files", "*.*")],
+        )
+        if not out_path:
+            return
+
+        cp = self._current_common_params()
+        calibration = calibration_from_common_params(cp, geo_kind=str(getattr(self, "geo_kind", "K2") or "K2"))
+        options = ExportCadOptions(
+            vertical_scale=vertical_scale,
+            include_grid=True,
+            output_format=("dwg" if fmt == "DWG" else "dxf"),
+            try_convert_to_dwg=(fmt == "DWG"),
+        )
+        block_name = f"ZE_CPT_T{int(getattr(test, 'tid', 0) or 0)}_M{vertical_scale}"
+        safe_block_name = re.sub(r"[^A-Za-z0-9_\\-]", "_", block_name)
+
+        try:
+            build_result = build_cpt_cad_scene(
+                test=test,
+                calibration=calibration,
+                options=options,
+                block_name=safe_block_name,
+                qc_max_mpa=float(getattr(self, "graph_qc_max_mpa", 30.0) or 30.0),
+                fs_max_kpa=float(getattr(self, "graph_fs_max_kpa", 500.0) or 500.0),
+            )
+            out_requested = Path(out_path)
+            dxf_path = out_requested if fmt == "DXF" else out_requested.with_suffix(".dxf")
+            write_cad_scene_to_dxf(build_result.scene, dxf_path)
+        except Exception as exc:
+            messagebox.showerror("Экспорт CAD", f"Не удалось сохранить DXF:\n{exc}")
+            return
+
+        if fmt == "DWG":
+            conversion = convert_dxf_to_dwg(dxf_path=dxf_path, dwg_path=Path(out_path))
+            if conversion.success and conversion.dwg_path is not None:
+                messagebox.showinfo(
+                    "Экспорт CAD",
+                    f"Экспорт завершён.\nDXF: {dxf_path}\nDWG: {conversion.dwg_path}",
+                )
+                return
+            messagebox.showwarning(
+                "Экспорт CAD",
+                f"DXF сохранён: {dxf_path}\nDWG не получен: {conversion.message}",
+            )
+            return
+
+        messagebox.showinfo("Экспорт CAD", f"DXF сохранён:\n{dxf_path}")
 
     def export_credo_zip(self):
         """Export each test into two CSV (depth;qc_MPa and depth;fs_kPa) without headers, pack into ZIP.
