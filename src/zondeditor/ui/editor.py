@@ -4385,6 +4385,8 @@ class GeoCanvasEditor(tk.Tk):
         marks = dict(getattr(self, "_marks_index", {}) or {})
         interp_cells = set(getattr(fl, "interp_cells", set()) or set())
         user_cells = set(getattr(fl, "user_cells", set()) or set())
+        algo_cells = set(getattr(fl, "algo_cells", set()) or set())
+        force_cells = set(getattr(fl, "force_cells", set()) or set())
         q_arr = list(getattr(test, "qc", []) or [])
         f_arr = list(getattr(test, "fs", []) or [])
         n = max(len(q_arr), len(f_arr))
@@ -4394,20 +4396,38 @@ class GeoCanvasEditor(tk.Tk):
                 q_missing = is_missing_value(qv)
                 if q_missing and (i, "qc") not in user_cells:
                     return True
-                if (i, "qc") in interp_cells:
-                    return True
                 mk_q = marks.get(self._mark_key(tid, self._safe_depth_m(test, i), "qc"))
-                if str((mk_q or {}).get("color") or "").strip().lower() == "orange":
+                mk_q_color = str((mk_q or {}).get("color") or "").strip().lower()
+                if mk_q_color == "orange":
+                    return True
+                if mk_q_color in {"purple", "green", "blue"}:
+                    continue
+                if (i, "qc") in user_cells:
+                    continue
+                if (i, "qc") in algo_cells:
+                    continue
+                if (i, "qc") in force_cells:
+                    continue
+                if (i, "qc") in interp_cells:
                     return True
             if i < len(f_arr):
                 fv = f_arr[i]
                 f_missing = is_missing_value(fv)
                 if f_missing and (i, "fs") not in user_cells:
                     return True
-                if (i, "fs") in interp_cells:
-                    return True
                 mk_f = marks.get(self._mark_key(tid, self._safe_depth_m(test, i), "fs"))
-                if str((mk_f or {}).get("color") or "").strip().lower() == "orange":
+                mk_f_color = str((mk_f or {}).get("color") or "").strip().lower()
+                if mk_f_color == "orange":
+                    return True
+                if mk_f_color in {"purple", "green", "blue"}:
+                    continue
+                if (i, "fs") in user_cells:
+                    continue
+                if (i, "fs") in algo_cells:
+                    continue
+                if (i, "fs") in force_cells:
+                    continue
+                if (i, "fs") in interp_cells:
                     return True
         return False
 
