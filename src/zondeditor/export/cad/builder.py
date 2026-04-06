@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from src.zondeditor.domain.models import TestData
 from src.zondeditor.processing.calibration import Calibration, calc_qc_fs
 
+from .logging import get_cad_logger
 from .schema import (
     CadBlock,
     CadLayerSpec,
@@ -18,6 +19,7 @@ from .schema import (
     ExportCadOptions,
     TextLabel,
 )
+_log = get_cad_logger()
 
 MANDATORY_LAYERS: tuple[CadLayerSpec, ...] = (
     CadLayerSpec("ZE_CPT_QC_CURVE", color_aci=3, rgb=(22, 163, 74)),
@@ -95,6 +97,14 @@ def build_cpt_cad_scene(
     qc_max_mpa: float = 30.0,
     fs_max_kpa: float = 500.0,
 ) -> CadBuildResult:
+    _log.info(
+        "build_cpt_cad_scene start test_id=%s vertical_scale=%s block=%s qc_max=%s fs_max=%s",
+        int(getattr(test, "tid", 0) or 0),
+        int(options.vertical_scale),
+        block_name,
+        float(qc_max_mpa),
+        float(fs_max_kpa),
+    )
     qc_scale = CurveScaleSpec(
         min_value=0.0,
         max_value=max(1.0, float(qc_max_mpa)),
@@ -233,6 +243,13 @@ def build_cpt_cad_scene(
             points=points,
             texts=texts,
         ),
+    )
+    _log.info(
+        "build_cpt_cad_scene done test_id=%s points_qc=%s points_fs=%s depth_max=%.3f",
+        int(getattr(test, "tid", 0) or 0),
+        len(qc_points),
+        len(fs_points),
+        float(max_depth_m),
     )
     return CadBuildResult(
         scene=scene,

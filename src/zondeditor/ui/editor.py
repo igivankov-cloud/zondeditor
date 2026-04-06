@@ -59,6 +59,7 @@ from src.zondeditor.export.selection import select_export_tests
 from src.zondeditor.export.cad import (
     ExportCadOptions,
     build_cpt_cad_scene,
+    cad_log_path,
     convert_dxf_to_dwg,
     find_oda_converter,
     write_cad_scene_to_dxf,
@@ -10452,6 +10453,18 @@ class GeoCanvasEditor(tk.Tk):
         )
         block_name = f"ZE_CPT_T{int(getattr(test, 'tid', 0) or 0)}_M{vertical_scale}"
         safe_block_name = re.sub(r"[^A-Za-z0-9_\\-]", "_", block_name)
+        cad_log = cad_log_path()
+        try:
+            self.usage_logger.info(
+                "CAD export start: tid=%s fmt=%s vscale=%s out=%s log=%s",
+                int(getattr(test, "tid", 0) or 0),
+                fmt,
+                vertical_scale,
+                out_path,
+                cad_log,
+            )
+        except Exception:
+            pass
 
         try:
             build_result = build_cpt_cad_scene(
@@ -10466,7 +10479,11 @@ class GeoCanvasEditor(tk.Tk):
             dxf_path = out_requested if fmt == "DXF" else out_requested.with_suffix(".dxf")
             write_cad_scene_to_dxf(build_result.scene, dxf_path)
         except Exception as exc:
-            messagebox.showerror("Экспорт CAD", f"Не удалось сохранить DXF:\n{exc}")
+            try:
+                self.usage_logger.exception("CAD export DXF failed")
+            except Exception:
+                pass
+            messagebox.showerror("Экспорт CAD", f"Не удалось сохранить DXF:\n{exc}\n\nЛог: {cad_log}")
             return
 
         if fmt == "DWG":
@@ -10474,16 +10491,16 @@ class GeoCanvasEditor(tk.Tk):
             if conversion.success and conversion.dwg_path is not None:
                 messagebox.showinfo(
                     "Экспорт CAD",
-                    f"Экспорт завершён.\nDXF: {dxf_path}\nDWG: {conversion.dwg_path}",
+                    f"Экспорт завершён.\nDXF: {dxf_path}\nDWG: {conversion.dwg_path}\nЛог: {cad_log}",
                 )
                 return
             messagebox.showwarning(
                 "Экспорт CAD",
-                f"DXF сохранён: {dxf_path}\nDWG не получен: {conversion.message}",
+                f"DXF сохранён: {dxf_path}\nDWG не получен: {conversion.message}\nЛог: {cad_log}",
             )
             return
 
-        messagebox.showinfo("Экспорт CAD", f"DXF сохранён:\n{dxf_path}")
+        messagebox.showinfo("Экспорт CAD", f"DXF сохранён:\n{dxf_path}\nЛог: {cad_log}")
 
     def export_credo_zip(self):
         """Export each test into two CSV (depth;qc_MPa and depth;fs_kPa) without headers, pack into ZIP.

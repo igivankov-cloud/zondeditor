@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import builtins
 import pytest
 
 from src.zondeditor.domain.models import TestData as ZeTestData
@@ -82,3 +83,30 @@ def test_dxf_writer_outputs_layers_and_block_insert(tmp_path: Path):
     msp = doc.modelspace()
     inserts = [e for e in msp if e.dxftype() == "INSERT"]
     assert inserts
+
+
+def test_dxf_writer_fallback_without_ezdxf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from src.zondeditor.export.cad.dxf_writer import write_cad_scene_to_dxf
+
+    orig_import = builtins.__import__
+
+    def _import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "ezdxf":
+            raise ModuleNotFoundError("ezdxf")
+        return orig_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _import)
+
+    result = build_cpt_cad_scene(
+        test=_sample_test_data(),
+        calibration=K2_DEFAULT,
+        options=ExportCadOptions(vertical_scale=100),
+        block_name="ZE_TEST_FALLBACK",
+    )
+    out = tmp_path / "graph_fallback.dxf"
+    write_cad_scene_to_dxf(result.scene, out)
+
+    text = out.read_text(encoding="utf-8")
+    assert "SECTION" in text
+    assert "ZE_CPT_QC_CURVE" in text
+    assert "INSERT" in text

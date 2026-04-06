@@ -5,8 +5,10 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from .logging import get_cad_logger
 from .schema import DwgConversionResult
 
+_log = get_cad_logger()
 
 def find_oda_converter(explicit_path: str | None = None) -> Path | None:
     if explicit_path:
@@ -38,10 +40,12 @@ def convert_dxf_to_dwg(
     dwg_path: str | Path,
     converter_path: str | None = None,
 ) -> DwgConversionResult:
+    _log.info("convert_dxf_to_dwg start dxf=%s dwg=%s converter_path=%s", dxf_path, dwg_path, converter_path or "")
     dxf = Path(dxf_path)
     dwg = Path(dwg_path)
     converter = find_oda_converter(converter_path)
     if converter is None:
+        _log.warning("convert_dxf_to_dwg skipped: ODA converter not found")
         return DwgConversionResult(
             requested=True,
             success=False,
@@ -68,13 +72,16 @@ def convert_dxf_to_dwg(
     try:
         completed = subprocess.run(cmd, check=False, capture_output=True, text=True)
     except OSError as exc:
+        _log.exception("convert_dxf_to_dwg OS error")
         return DwgConversionResult(requested=True, success=False, dwg_path=None, message=f"DWG conversion failed: {exc}")
 
     produced = out_dir / dxf.with_suffix(".dwg").name
     if completed.returncode != 0 or not produced.exists():
         msg = (completed.stderr or completed.stdout or "unknown converter error").strip()
+        _log.error("convert_dxf_to_dwg failed rc=%s msg=%s", completed.returncode, msg)
         return DwgConversionResult(requested=True, success=False, dwg_path=None, message=f"DWG conversion failed: {msg}")
 
     if produced.resolve() != dwg.resolve():
         produced.replace(dwg)
+    _log.info("convert_dxf_to_dwg done dwg=%s", dwg)
     return DwgConversionResult(requested=True, success=True, dwg_path=dwg, message="DWG conversion completed.")
