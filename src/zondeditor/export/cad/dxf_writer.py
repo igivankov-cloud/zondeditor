@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import math
 
 from .logging import get_cad_logger
 from .schema import CadLayerSpec, CadScene
@@ -23,8 +24,42 @@ def _dxf_escape_text(text: str) -> str:
     return "".join(out)
 
 
+def _scene_extents(scenes: list[CadScene], x_step_mm: float) -> tuple[float, float, float, float]:
+    min_x = math.inf
+    min_y = math.inf
+    max_x = -math.inf
+    max_y = -math.inf
+
+    def _touch(x: float, y: float):
+        nonlocal min_x, min_y, max_x, max_y
+        min_x = min(min_x, float(x))
+        min_y = min(min_y, float(y))
+        max_x = max(max_x, float(x))
+        max_y = max(max_y, float(y))
+
+    for i, scene in enumerate(scenes):
+        dx = float(scene.insertion_point[0]) + float(i * x_step_mm)
+        dy = float(scene.insertion_point[1])
+        for line in scene.block.lines:
+            _touch(dx + float(line.start[0]), dy + float(line.start[1]))
+            _touch(dx + float(line.end[0]), dy + float(line.end[1]))
+        for poly in scene.block.polylines:
+            for px, py in poly.points:
+                _touch(dx + float(px), dy + float(py))
+        for point in scene.block.points:
+            _touch(dx + float(point.position[0]), dy + float(point.position[1]))
+        for text in scene.block.texts:
+            _touch(dx + float(text.x_mm), dy + float(text.y_mm))
+
+    if not math.isfinite(min_x) or not math.isfinite(min_y) or not math.isfinite(max_x) or not math.isfinite(max_y):
+        return (0.0, 0.0, 100.0, 100.0)
+    pad = 20.0
+    return (min_x - pad, min_y - pad, max_x + pad, max_y + pad)
+
+
 def _write_ascii_fallback(scenes: list[CadScene], target: Path, x_step_mm: float) -> None:
     lines: list[str] = []
+    ext_min_x, ext_min_y, ext_max_x, ext_max_y = _scene_extents(scenes, x_step_mm)
 
     def add(code: int, value: object):
         lines.extend(_pair(code, value))
@@ -38,6 +73,14 @@ def _write_ascii_fallback(scenes: list[CadScene], target: Path, x_step_mm: float
     add(2, "HEADER")
     add(9, "$INSUNITS")
     add(70, 4)
+    add(9, "$EXTMIN")
+    add(10, ext_min_x)
+    add(20, ext_min_y)
+    add(30, 0.0)
+    add(9, "$EXTMAX")
+    add(10, ext_max_x)
+    add(20, ext_max_y)
+    add(30, 0.0)
     add(0, "ENDSEC")
 
     add(0, "SECTION")
@@ -195,6 +238,9 @@ def write_cad_scenes_to_dxf(scenes: list[CadScene], out_path: str | Path, *, x_s
 
     doc = ezdxf.new("R2010")
     doc.header["$INSUNITS"] = 4
+    ext_min_x, ext_min_y, ext_max_x, ext_max_y = _scene_extents(scenes, x_step_mm)
+    doc.header["$EXTMIN"] = (ext_min_x, ext_min_y, 0.0)
+    doc.header["$EXTMAX"] = (ext_max_x, ext_max_y, 0.0)
     _ensure_text_style(doc)
 
     for scene in scenes:

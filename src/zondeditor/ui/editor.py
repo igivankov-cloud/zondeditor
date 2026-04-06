@@ -35,6 +35,8 @@ import zipfile
 import shutil
 import tempfile
 import traceback
+import stat
+import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -10445,9 +10447,11 @@ class GeoCanvasEditor(tk.Tk):
             var = tk.IntVar(master=dlg, value=100)
             frm = ttk.Frame(dlg, padding=10)
             frm.pack(fill="both", expand=True)
-            ttk.Label(frm, text="Выберите вертикальный масштаб:").pack(anchor="w", pady=(0, 8))
+            ttk.Label(frm, text="Выберите вертикальный масштаб:").pack(anchor="center", pady=(0, 8))
+            scales_host = ttk.Frame(frm)
+            scales_host.pack(anchor="center")
             for value in (50, 100, 200):
-                ttk.Radiobutton(frm, text=f"1:{value}", variable=var, value=value).pack(anchor="w")
+                ttk.Radiobutton(scales_host, text=f"1:{value}", variable=var, value=value).pack(anchor="center", pady=1)
             out = {"value": None}
 
             def _ok():
@@ -10458,9 +10462,9 @@ class GeoCanvasEditor(tk.Tk):
                 dlg.destroy()
 
             btns = ttk.Frame(frm)
-            btns.pack(fill="x", pady=(10, 0))
-            ttk.Button(btns, text="OK", command=_ok).pack(side="right")
-            ttk.Button(btns, text="Отмена", command=_cancel).pack(side="right", padx=(0, 6))
+            btns.pack(anchor="center", pady=(10, 0))
+            ttk.Button(btns, text="Отмена", command=_cancel).pack(side="left", padx=(0, 8))
+            ttk.Button(btns, text="OK", command=_ok).pack(side="left")
             dlg.update_idletasks()
             sw = int(dlg.winfo_screenwidth() or 1200)
             sh = int(dlg.winfo_screenheight() or 800)
@@ -10564,6 +10568,11 @@ class GeoCanvasEditor(tk.Tk):
             out_requested = Path(out_path)
             dxf_path = out_requested
             write_cad_scenes_to_dxf(scenes, dxf_path, x_step_mm=130.0)
+            try:
+                mode = int(dxf_path.stat().st_mode)
+                os.chmod(dxf_path, mode | stat.S_IWUSR | stat.S_IWRITE)
+            except Exception:
+                pass
         except Exception as exc:
             try:
                 self.usage_logger.exception("CAD export DXF failed")
@@ -10572,7 +10581,15 @@ class GeoCanvasEditor(tk.Tk):
             messagebox.showerror("Экспорт CAD", f"Не удалось сохранить DXF:\n{exc}\n\nЛог: {cad_log}")
             return
 
-        messagebox.showinfo("Экспорт CAD", f"DXF сохранён ({len(tests_to_export)} граф.):\n{dxf_path}\nЛог: {cad_log}")
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(str(dxf_path))
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(dxf_path)])
+            else:
+                subprocess.Popen(["xdg-open", str(dxf_path)])
+        except Exception:
+            messagebox.showinfo("Экспорт CAD", f"DXF сохранён ({len(tests_to_export)} граф.):\n{dxf_path}\nЛог: {cad_log}")
 
     def export_credo_zip(self):
         """Export each test into two CSV (depth;qc_MPa and depth;fs_kPa) without headers, pack into ZIP.
