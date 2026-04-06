@@ -4,7 +4,8 @@ from __future__ import annotations
 # FILE MAP (обновляй при правках; указывай строки Lx–Ly)
 # - _apply_compact_ribbon_height: L109–L126 — вычисление высоты верхней ленты по фактической высоте вкладки «ИГЭ».
 # - _build_layers_tab/_sync_ige_canvas: L289–L303, L332–L345 — область ИГЭ без вертикального скролла и с высотой по содержимому.
-# - _set_combo_placeholder/_build_dynamic_ige_fields/_build_ige_column: L440–L555 — логика карточек ИГЭ (в т.ч. пустой тип для нового ИГЭ).
+# - _build_calc_tab: L455–L507 — компоновка вкладки «Расчёт» в 3 колонки и чекбокс «Аллювиальные пески».
+# - _set_combo_placeholder/_build_dynamic_ige_fields/_build_ige_column: L517–L627 — логика карточек ИГЭ (без чекбокса аллювиальности).
 # === FILE MAP END ===
 
 
@@ -55,6 +56,7 @@ class RibbonView(ttk.Frame):
         self.calc_allow_normative_lt6_var = tk.BooleanVar(value=False)
         self.calc_legacy_sandy_loam_var = tk.BooleanVar(value=False)
         self.calc_fill_preliminary_var = tk.BooleanVar(value=False)
+        self.calc_alluvial_sands_var = tk.BooleanVar(value=True)
         self._suspend_common_emit = False
         self.project_type_mode = ""
         self.installation_name_var = tk.StringVar(value="")
@@ -456,24 +458,39 @@ class RibbonView(ttk.Frame):
 
         params = ttk.LabelFrame(tab, text="Параметры расчёта", padding=6)
         params.pack(fill="x", expand=False)
+        params.columnconfigure(0, weight=1)
+        params.columnconfigure(1, weight=1)
+        params.columnconfigure(2, weight=1)
 
-        ttk.Label(params, text="Расчёт по результатам зондирования:").grid(row=0, column=0, sticky="w")
+        col1 = ttk.Frame(params)
+        col2 = ttk.Frame(params)
+        col3 = ttk.Frame(params)
+        col1.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        col2.grid(row=0, column=1, sticky="nsew", padx=(0, 10))
+        col3.grid(row=0, column=2, sticky="nsew")
+        col1.columnconfigure(0, weight=1)
+        col2.columnconfigure(0, weight=1)
+        col3.columnconfigure(0, weight=1)
+
+        ttk.Label(col1, text="Расчёт по результатам зондирования:").grid(row=0, column=0, sticky="w")
         ttk.Label(
-            params,
+            col1,
             text="СП 446.1325800.2019 (с Изм. № 1), приложение Ж",
             foreground="#1f2b3a",
-        ).grid(row=0, column=1, sticky="w", padx=(6, 0))
+        ).grid(row=1, column=0, sticky="w")
 
-        ttk.Label(params, text="Переход от нормативных к расчётным значениям:").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Label(col1, text="Переход от нормативных к расчётным значениям:").grid(row=2, column=0, sticky="w", pady=(6, 0))
         ttk.Label(
-            params,
+            col1,
             text="СП 22.13330.2016 (с Изм. № 1–5), п. 5.3.17",
             foreground="#1f2b3a",
-        ).grid(row=1, column=1, sticky="w", padx=(6, 0), pady=(4, 0))
+        ).grid(row=3, column=0, sticky="w")
 
-        ttk.Checkbutton(params, text="Рассчитывать нормативные значения при n < 6 (см. ГОСТ 20522-2012, п. 4.10)", variable=self.calc_allow_normative_lt6_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_normative_lt6", bool(self.calc_allow_normative_lt6_var.get()))).grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        ttk.Checkbutton(params, text="Рассчитать супесь по редакции СП 446.1325800.2019 до Изм. № 1", variable=self.calc_legacy_sandy_loam_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("use_legacy_sandy_loam_sp446", bool(self.calc_legacy_sandy_loam_var.get()))).grid(row=3, column=0, columnspan=2, sticky="w", pady=(2, 0))
-        ttk.Checkbutton(params, text="Разрешить предварительный расчёт насыпного по материалу", variable=self.calc_fill_preliminary_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_fill_preliminary", bool(self.calc_fill_preliminary_var.get()))).grid(row=4, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        ttk.Checkbutton(col2, text="Рассчитывать нормативные значения при n < 6 (см. ГОСТ 20522-2012, п. 4.10)", variable=self.calc_allow_normative_lt6_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_normative_lt6", bool(self.calc_allow_normative_lt6_var.get()))).grid(row=0, column=0, sticky="w")
+        ttk.Checkbutton(col2, text="Рассчитать супесь по редакции СП 446.1325800.2019 до Изм. № 1", variable=self.calc_legacy_sandy_loam_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("use_legacy_sandy_loam_sp446", bool(self.calc_legacy_sandy_loam_var.get()))).grid(row=1, column=0, sticky="w", pady=(6, 0))
+
+        ttk.Checkbutton(col3, text="Разрешить предварительный расчёт насыпного по материалу", variable=self.calc_fill_preliminary_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_fill_preliminary", bool(self.calc_fill_preliminary_var.get()))).grid(row=0, column=0, sticky="w")
+        ttk.Checkbutton(col3, text="Учитывать аллювиальные пески", variable=self.calc_alluvial_sands_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("alluvial_sands", bool(self.calc_alluvial_sands_var.get()))).grid(row=1, column=0, sticky="w", pady=(6, 0))
 
     def _build_protocol_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
@@ -638,9 +655,6 @@ class RibbonView(ttk.Frame):
             cb_den = ttk.Combobox(parent, state="readonly", width=16, values=["рыхлый", "средней плотности", "плотный"], textvariable=dens)
             cb_den.grid(row=2, column=0, sticky="ew", pady=(0, 0))
             self._set_combo_placeholder(cb_den, dens, "средней плотности")
-
-            alluvial = tk.BooleanVar(value=bool(row.get("sand_is_alluvial", False)))
-            ttk.Checkbutton(parent, text="аллювиальный", variable=alluvial, command=lambda ig=ige_id, vv=alluvial: self._change_ige_field(ig, "sand_is_alluvial", bool(vv.get()))).grid(row=3, column=0, sticky="w", pady=(0, 0))
 
             cb_kind.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=sand_kind: self._change_ige_field(ig, "sand_kind", vv.get()))
             cb_sat.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=sat: self._change_ige_field(ig, "sand_water_saturation", vv.get()))

@@ -788,6 +788,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
                 self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
                 self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
+                self.ribbon_view.calc_alluvial_sands_var.set(bool(getattr(self, "cpt_calc_settings", {}).get("alluvial_sands", True)))
         except Exception:
             pass
 
@@ -801,6 +802,7 @@ class GeoCanvasEditor(tk.Tk):
             self.ige_registry = {}
         try:
             self.cpt_calc_settings = copy.deepcopy(dict(snap.get("cpt_calc_settings", {}) or {})) or {"method": METHOD_SP446, "alluvial_sands": True, "groundwater_level": None}
+            self.cpt_calc_settings["alluvial_sands"] = self._resolve_alluvial_sands_setting(self.cpt_calc_settings.get("alluvial_sands"))
         except Exception:
             self.cpt_calc_settings = {"method": METHOD_SP446, "alluvial_sands": True, "groundwater_level": None}
         cts = dict(snap.get("calc_tab_state") or {})
@@ -1425,6 +1427,18 @@ class GeoCanvasEditor(tk.Tk):
         ent.setdefault("requires_manual_confirmation", False)
         return ent
 
+    def _resolve_alluvial_sands_setting(self, current_value) -> bool:
+        if current_value is not None:
+            return bool(current_value)
+        for ige_id in sorted((self.ige_registry or {}).keys(), key=self._ige_sort_key):
+            ent = dict(self.ige_registry.get(ige_id) or {})
+            soil_raw = str(ent.get("soil_type") or "").lower()
+            if "пес" not in soil_raw:
+                continue
+            if bool(ent.get("sand_is_alluvial", ent.get("is_alluvial", False))):
+                return True
+        return False
+
     def _auto_recalculate_cpt(self):
         settings = dict(getattr(self, "cpt_calc_settings", {}) or {})
         calc = CptCalcSettings(
@@ -1653,6 +1667,18 @@ class GeoCanvasEditor(tk.Tk):
             self.calc_tab_state.use_legacy_sandy_loam_sp446 = bool(value)
         elif key == "allow_fill_preliminary":
             self.calc_tab_state.allow_fill_preliminary = bool(value)
+        elif key == "alluvial_sands":
+            normalized = bool(value)
+            self.cpt_calc_settings["alluvial_sands"] = normalized
+            for _ige_id in sorted((self.ige_registry or {}).keys(), key=self._ige_sort_key):
+                ent = self._ensure_ige_entry(_ige_id)
+                soil_raw = str(ent.get("soil_type") or "").lower()
+                if "пес" not in soil_raw:
+                    continue
+                ent["sand_is_alluvial"] = normalized
+                ent["is_alluvial"] = normalized
+                ent["alluvial"] = normalized
+            self._sync_layers_panel()
 
     def _rebuild_calc_samples(self):
         samples = build_ige_samples(
@@ -2215,6 +2241,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
                 self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
                 self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
+                self.ribbon_view.calc_alluvial_sands_var.set(bool(getattr(self, "cpt_calc_settings", {}).get("alluvial_sands", True)))
             except Exception:
                 pass
             ribbon.pack_forget()
@@ -11149,6 +11176,7 @@ class GeoCanvasEditor(tk.Tk):
         self._rebuild_marks_index()
         status_info = self._recompute_statuses_after_data_load(preview_mode=False)
         self.cpt_calc_settings = dict((project.settings.extras or {}).get("cpt_calc_settings") or self.cpt_calc_settings or {"method": METHOD_SP446, "alluvial_sands": True, "groundwater_level": None})
+        self.cpt_calc_settings["alluvial_sands"] = self._resolve_alluvial_sands_setting(self.cpt_calc_settings.get("alluvial_sands"))
         _base_cts = CalculationTabState().__dict__
         _raw_cts = dict((project.settings.extras or {}).get("calc_tab_state") or {})
         _safe_cts = {k: v for k, v in _raw_cts.items() if k in _base_cts}
