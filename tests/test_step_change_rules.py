@@ -18,6 +18,8 @@ def _mk_editor() -> GeoCanvasEditor:
     ed.step_by_tid = {}
     ed.depth0_by_tid = {}
     ed.flags = {}
+    ed.project_ops = []
+    ed._rebuild_marks_index = lambda: None
     ed._push_undo = lambda: None
     ed._show_validation_error_once = lambda _msg: None
     return ed
@@ -66,6 +68,8 @@ def test_resample_reduce_and_increase_adjust_rows():
     assert len(t.depth) == 5
     assert t.depth[1] == "0.05"
     assert t.depth[3] == "0.15"
+    assert (1, "qc") in ed.flags[1].algo_cells
+    assert (3, "fs") in ed.flags[1].algo_cells
 
     ed._ask_step_change_mode = lambda **_kwargs: "resample"
     assert ed._apply_step_change_request(old_step=0.05, new_step=0.1) is True

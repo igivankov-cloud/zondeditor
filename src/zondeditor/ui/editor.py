@@ -941,6 +941,16 @@ class GeoCanvasEditor(tk.Tk):
         """Bring UI to a fully consistent state after undo/redo."""
         self._rebuild_marks_index()
         self._recompute_statuses_after_data_load(preview_mode=False)
+        try:
+            if getattr(self, "ribbon_view", None):
+                self.ribbon_view.set_project_type(
+                    str(getattr(self, "project_type", "") or ""),
+                    mode_params=dict(getattr(self, "project_mode_params", {}) or {}),
+                    emit=False,
+                )
+                self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
+        except Exception:
+            pass
 
     def undo(self):
         # Если сейчас редактируется ячейка — завершаем редактирование и только потом делаем UNDO
@@ -3052,6 +3062,7 @@ class GeoCanvasEditor(tk.Tk):
 
     def _resample_depth_grid_between_neighbor_steps(self, *, old_step: float, new_step: float):
         is_reduce = float(new_step) < float(old_step)
+        resample_cells: list[dict] = []
         for t in (getattr(self, "tests", []) or []):
             depth_old = list(getattr(t, "depth", []) or [])
             qc_old = list(getattr(t, "qc", []) or [])
@@ -3070,6 +3081,7 @@ class GeoCanvasEditor(tk.Tk):
             map_old_to_new: dict[int, int] = {}
 
             if is_reduce:
+                created_rows: list[int] = []
                 for i in range(n):
                     map_old_to_new[i] = len(new_depth)
                     new_depth.append(str(depth_old[i]))
@@ -3097,6 +3109,7 @@ class GeoCanvasEditor(tk.Tk):
                     new_depth.append(f"{mid:.2f}")
                     new_qc.append(qmid)
                     new_fs.append(fmid)
+                    created_rows.append(len(new_depth) - 1)
             else:
                 d0 = _parse_depth_float(str(depth_old[0]))
                 base = float(d0) if d0 is not None else 0.0
@@ -3135,9 +3148,23 @@ class GeoCanvasEditor(tk.Tk):
             for (r, fld) in (old_flags.algo_cells or set()):
                 if r in map_old_to_new:
                     new_algo.add((map_old_to_new[r], fld))
+            if is_reduce:
+                for rr in created_rows:
+                    new_algo.add((rr, "qc"))
+                    new_algo.add((rr, "fs"))
+                    depth_m = self._safe_depth_m(t, rr)
+                    if depth_m is not None:
+                        resample_cells.append({"testId": int(getattr(t, "tid", 0) or 0), "depthM": depth_m, "field": "qc", "before": "", "after": str((t.qc or [""])[rr]).strip()})
+                        resample_cells.append({"testId": int(getattr(t, "tid", 0) or 0), "depthM": depth_m, "field": "fs", "before": "", "after": str((t.fs or [""])[rr]).strip()})
             self.flags[t.tid] = TestFlags(bool(old_flags.invalid), new_interp, new_force, new_user, new_algo)
 
         self.step_m = float(new_step)
+        try:
+            if is_reduce and resample_cells:
+                self.project_ops.append(op_cells_marked(reason="step_reduce", color="green", cells=resample_cells))
+                self._rebuild_marks_index()
+        except Exception:
+            pass
 
     def _apply_step_change_request(self, *, old_step: float, new_step: float) -> bool:
         if abs(float(old_step) - float(new_step)) <= 1e-6:
