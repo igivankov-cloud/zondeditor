@@ -27,7 +27,7 @@ MANDATORY_LAYERS: tuple[CadLayerSpec, ...] = (
     CadLayerSpec("ZE_CPT_FS_CURVE", color_aci=5, rgb=(37, 99, 235), lineweight=30),
     CadLayerSpec("ZE_CPT_QC_SCALE", color_aci=3, rgb=(22, 163, 74)),
     CadLayerSpec("ZE_CPT_FS_SCALE", color_aci=5, rgb=(37, 99, 235)),
-    CadLayerSpec("ZE_CPT_TITLE", color_aci=1),
+    CadLayerSpec("ZE_CPT_TITLE", color_aci=7),
 )
 
 
@@ -77,7 +77,7 @@ def _build_scale_lines(*, spec: CurveScaleSpec, axis_y_mm: float) -> tuple[list[
     while val <= spec.max_value + 1e-9:
         x_mm = _value_to_x_mm(val, spec)
         lines.append(CadLine(spec.layer_scale, (x_mm, axis_y_mm), (x_mm, axis_y_mm - 2.2)))
-        texts.append(TextLabel("ZE_CPT_TITLE", f"{val:g}", x_mm, axis_y_mm - 3.8, 1.8, align="CENTER"))
+        texts.append(TextLabel(spec.layer_scale, f"{int(round(val))}", x_mm, axis_y_mm - 3.8, 1.8, align="CENTER"))
         val += spec.major_tick_step
 
     return lines, texts
@@ -130,7 +130,7 @@ def build_cpt_cad_scene(
         qc_major, fs_major = 5.0, 50.0
 
     plot_x0 = 0.0
-    plot_width = 82.0
+    plot_width = 55.0
 
     qc_scale = CurveScaleSpec(
         min_value=0.0,
@@ -174,8 +174,8 @@ def build_cpt_cad_scene(
     lines: list[CadLine] = []
     texts: list[TextLabel] = [
         TextLabel("ZE_CPT_TITLE", title, plot_x0, title_y, 3.0, align="LEFT"),
-        TextLabel("ZE_CPT_TITLE", f"qc, {qc_scale.unit}", plot_x0, qc_axis_y + 1.8, 2.4, align="LEFT"),
-        TextLabel("ZE_CPT_TITLE", f"fs, {fs_scale.unit}", plot_x0, fs_axis_y + 1.8, 2.4, align="LEFT"),
+        TextLabel(qc_scale.layer_scale, f"qc, {qc_scale.unit}", plot_x0, qc_axis_y + 1.8, 2.4, align="LEFT"),
+        TextLabel(fs_scale.layer_scale, f"fs, {fs_scale.unit}", plot_x0, fs_axis_y + 1.8, 2.4, align="LEFT"),
     ]
 
     qc_scale_lines, qc_scale_texts = _build_scale_lines(spec=qc_scale, axis_y_mm=qc_axis_y)
@@ -185,7 +185,7 @@ def build_cpt_cad_scene(
     texts.extend(qc_scale_texts)
     texts.extend(fs_scale_texts)
 
-    points = [CadPoint("ZE_CPT_TITLE", (0.0, 0.0, 0.0))]
+    points = [CadPoint("ZE_CPT_TITLE", (0.0, 0.0, 0.0), color_aci=1)]
 
     polylines: list[CadPolyline] = []
     if len(qc_points) >= 2:

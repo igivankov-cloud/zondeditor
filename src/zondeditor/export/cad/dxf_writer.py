@@ -113,7 +113,7 @@ def _write_ascii_fallback(scenes: list[CadScene], target: Path, x_step_mm: float
         for point in scene.block.points:
             add(0, "POINT")
             add(8, point.layer)
-            add(62, 256)
+            add(62, int(point.color_aci) if point.color_aci is not None else 256)
             add(10, point.position[0])
             add(20, point.position[1])
             add(30, point.position[2])
@@ -122,7 +122,7 @@ def _write_ascii_fallback(scenes: list[CadScene], target: Path, x_step_mm: float
             add(0, "TEXT")
             add(8, text.layer)
             add(7, "ZE_CYR")
-            add(62, 256)
+            add(62, int(text.color_aci) if text.color_aci is not None else 256)
             add(10, text.x_mm)
             add(20, text.y_mm)
             add(30, 0.0)
@@ -209,11 +209,19 @@ def write_cad_scenes_to_dxf(scenes: list[CadScene], out_path: str | Path, *, x_s
                 continue
             block.add_lwpolyline(poly.points, close=bool(poly.closed), dxfattribs={"layer": poly.layer, "color": 256})
         for point in scene.block.points:
-            block.add_point(point.position, dxfattribs={"layer": point.layer, "color": 256})
+            block.add_point(
+                point.position,
+                dxfattribs={"layer": point.layer, "color": (int(point.color_aci) if point.color_aci is not None else 256)},
+            )
         for text in scene.block.texts:
             entity = block.add_text(
                 text.text,
-                dxfattribs={"layer": text.layer, "height": text.height_mm, "color": 256, "style": "ZE_CYR"},
+                dxfattribs={
+                    "layer": text.layer,
+                    "height": text.height_mm,
+                    "color": (int(text.color_aci) if text.color_aci is not None else 256),
+                    "style": "ZE_CYR",
+                },
             )
             align = text.align.upper()
             if align == "CENTER":

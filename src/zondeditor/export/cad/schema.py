@@ -45,6 +45,7 @@ class TextLabel:
     y_mm: float
     height_mm: float
     align: Literal["LEFT", "CENTER", "RIGHT"] = "LEFT"
+    color_aci: int | None = None
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,7 @@ class CadLine:
 class CadPoint:
     layer: str
     position: tuple[float, float, float]
+    color_aci: int | None = None
 
 
 @dataclass(frozen=True)

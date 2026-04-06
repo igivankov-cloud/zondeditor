@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, simpledialog
+from tkinter import ttk, filedialog, messagebox
 import tkinter.font as tkfont
 
 # stdlib
@@ -10379,78 +10379,88 @@ class GeoCanvasEditor(tk.Tk):
         if not self._validate_export_rows():
             return
 
-        scale_value = simpledialog.askstring(
-            "Экспорт CAD",
-            "Вертикальный масштаб (допустимо: 50, 100, 200):",
-            initialvalue="100",
-            parent=self,
-        )
-        if scale_value is None:
-            return
-        try:
-            vertical_scale = int(str(scale_value).strip())
-        except Exception:
-            messagebox.showerror("Экспорт CAD", "Масштаб должен быть целым числом: 50, 100 или 200.")
-            return
-        if vertical_scale not in {50, 100, 200}:
-            messagebox.showerror("Экспорт CAD", "Допустимые масштабы: 1:50, 1:100, 1:200.")
-            return
+        def _ask_vertical_scale() -> int | None:
+            dlg = tk.Toplevel(self)
+            dlg.title("Вертикальный масштаб")
+            dlg.transient(self)
+            dlg.grab_set()
+            dlg.resizable(False, False)
+            var = tk.IntVar(master=dlg, value=100)
+            frm = ttk.Frame(dlg, padding=10)
+            frm.pack(fill="both", expand=True)
+            ttk.Label(frm, text="Выберите вертикальный масштаб:").pack(anchor="w", pady=(0, 8))
+            for value in (50, 100, 200):
+                ttk.Radiobutton(frm, text=f"1:{value}", variable=var, value=value).pack(anchor="w")
+            out = {"value": None}
 
-        has_dwg_converter = find_oda_converter(None) is not None
-        fmt_default = "DWG" if has_dwg_converter else "DXF"
-        fmt_value = simpledialog.askstring(
-            "Экспорт CAD",
-            "Формат экспорта (DXF или DWG):",
-            initialvalue=fmt_default,
-            parent=self,
-        )
-        if fmt_value is None:
+            def _ok():
+                out["value"] = int(var.get())
+                dlg.destroy()
+
+            def _cancel():
+                dlg.destroy()
+
+            btns = ttk.Frame(frm)
+            btns.pack(fill="x", pady=(10, 0))
+            ttk.Button(btns, text="OK", command=_ok).pack(side="right")
+            ttk.Button(btns, text="Отмена", command=_cancel).pack(side="right", padx=(0, 6))
+            dlg.protocol("WM_DELETE_WINDOW", _cancel)
+            dlg.wait_window()
+            return out["value"]
+
+        vertical_scale = _ask_vertical_scale()
+        if vertical_scale is None:
             return
-        fmt = str(fmt_value).strip().upper()
-        if fmt not in {"DXF", "DWG"}:
-            messagebox.showerror("Экспорт CAD", "Допустимые форматы: DXF или DWG.")
-            return
-        if fmt == "DWG" and not has_dwg_converter:
-            if not messagebox.askyesno(
-                "Экспорт CAD",
-                "Конвертер ODA не найден. Сохранить только DXF?",
-                parent=self,
-            ):
-                return
-            fmt = "DXF"
 
         selection = self._collect_export_tests()
         tests_exp = list(selection.tests)
         if not tests_exp:
-            messagebox.showwarning("Экспорт CAD", "Нет опытов для экспорта.")
+            messagebox.showwarning("Экспорт CAD", "Не выбрано ни одного опыта для экспорта.")
             return
-        mode_all = messagebox.askyesno(
-            "Экспорт CAD",
-            "Экспортировать все включённые зондирования в один файл?\n"
-            "Да — все включённые, Нет — только активное.",
-            parent=self,
-        )
-        active_idx = self._active_layers_test_index()
-        active_test = self.tests[active_idx] if active_idx is not None and 0 <= active_idx < len(self.tests) else None
-        if mode_all:
-            tests_to_export = list(tests_exp)
-        else:
-            tests_to_export = [active_test] if active_test in tests_exp else [tests_exp[0]]
+        tests_to_export = list(tests_exp)
+
+        invalid_tids: list[int] = []
+        for t in tests_to_export:
+            d_arr = list(getattr(t, "depth", []) or [])
+            q_arr = list(getattr(t, "qc", []) or [])
+            f_arr = list(getattr(t, "fs", []) or [])
+            n = max(len(d_arr), len(q_arr), len(f_arr))
+            bad = False
+            for i in range(n):
+                d = str(d_arr[i]).strip() if i < len(d_arr) and d_arr[i] is not None else ""
+                q = str(q_arr[i]).strip() if i < len(q_arr) and q_arr[i] is not None else ""
+                f = str(f_arr[i]).strip() if i < len(f_arr) and f_arr[i] is not None else ""
+                if not (d or q or f):
+                    continue
+                if not d or not q or not f:
+                    bad = True
+                    break
+            if bad:
+                invalid_tids.append(int(getattr(t, "tid", 0) or 0))
+        if invalid_tids:
+            if len(invalid_tids) == 1:
+                messagebox.showerror("Экспорт CAD", f"Экспорт невозможен: в опыте №{invalid_tids[0]} есть незаполненные значения.")
+            else:
+                joined = ", ".join(f"№{x}" for x in invalid_tids)
+                messagebox.showerror("Экспорт CAD", f"Экспорт невозможен: опыты {joined} содержат пропуски.")
+            return
 
         object_name = str(getattr(self, "object_name", "") or "sounding").strip().replace(" ", "_")
         if not object_name:
             object_name = "sounding"
         suffix = "all" if len(tests_to_export) > 1 else f"{int(getattr(tests_to_export[0], 'tid', 0) or 0):02d}"
         suggested_name = f"{object_name}_{suffix}_graph_1_{vertical_scale}"
-        initial_ext = ".dwg" if fmt == "DWG" else ".dxf"
         out_path = filedialog.asksaveasfilename(
             title="Сохранить CAD график",
-            defaultextension=initial_ext,
-            initialfile=f"{suggested_name}{initial_ext}",
+            defaultextension=".dxf",
+            initialfile=f"{suggested_name}.dxf",
             filetypes=[("CAD DXF", "*.dxf"), ("CAD DWG", "*.dwg"), ("All files", "*.*")],
         )
         if not out_path:
             return
+        ext = str(Path(out_path).suffix or ".dxf").lower()
+        fmt = "DWG" if ext == ".dwg" else "DXF"
+        has_dwg_converter = find_oda_converter(None) is not None
 
         cp = self._current_common_params()
         calibration = calibration_from_common_params(cp, geo_kind=str(getattr(self, "geo_kind", "K2") or "K2"))
@@ -10501,6 +10511,9 @@ class GeoCanvasEditor(tk.Tk):
             return
 
         if fmt == "DWG":
+            if not has_dwg_converter:
+                messagebox.showwarning("Экспорт CAD", f"DXF сохранён ({len(tests_to_export)} граф.): {dxf_path}\nDWG-конвертер не найден.\nЛог: {cad_log}")
+                return
             conversion = convert_dxf_to_dwg(dxf_path=dxf_path, dwg_path=Path(out_path))
             if conversion.success and conversion.dwg_path is not None:
                 messagebox.showinfo(
