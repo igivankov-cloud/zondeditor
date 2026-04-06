@@ -4374,6 +4374,16 @@ class GeoCanvasEditor(tk.Tk):
             return GUI_ORANGE if export_on else "#ffd8aa"  # muted orange
         return GUI_HDR if export_on else "#f2f2f2"
 
+    def _test_has_orange_mark(self, test_id: int) -> bool:
+        tid = int(test_id or 0)
+        marks = dict(getattr(self, "_marks_index", {}) or {})
+        for (m_tid, _depth_m, _field), meta in marks.items():
+            if int(m_tid) != tid:
+                continue
+            if str((meta or {}).get("color") or "").strip().lower() == "orange":
+                return True
+        return False
+
     def _collect_error_protocol_items(self) -> list[dict]:
         items: list[dict] = []
         tests_by_tid = {int(getattr(t, "tid", 0) or 0): t for t in (getattr(self, "tests", []) or [])}
@@ -7923,7 +7933,7 @@ class GeoCanvasEditor(tk.Tk):
             ex_on = bool(getattr(t, "export_on", True))
             fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
             td = diagnostics.by_test.get(int(getattr(t, "tid", 0) or 0))
-            has_missing_values = bool(td and td.missing_rows)
+            has_missing_values = bool((td and td.missing_rows) or self._test_has_orange_mark(int(getattr(t, "tid", 0) or 0)))
             hdr_fill = self._header_fill_for_test(
                 invalid=bool(td.invalid) if td is not None else bool(getattr(fl, "invalid", False)),
                 has_missing=bool(has_missing_values),
@@ -7974,7 +7984,7 @@ class GeoCanvasEditor(tk.Tk):
             ex_on = bool(getattr(t, "export_on", True))
             fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
             td = diagnostics.by_test.get(int(getattr(t, "tid", 0) or 0))
-            has_missing_values = bool(td and td.missing_rows)
+            has_missing_values = bool((td and td.missing_rows) or self._test_has_orange_mark(int(getattr(t, "tid", 0) or 0)))
             hdr_fill = self._header_fill_for_test(
                 invalid=bool(td.invalid) if td is not None else bool(getattr(fl, "invalid", False)),
                 has_missing=bool(has_missing_values),
@@ -10404,6 +10414,14 @@ class GeoCanvasEditor(tk.Tk):
             btns.pack(fill="x", pady=(10, 0))
             ttk.Button(btns, text="OK", command=_ok).pack(side="right")
             ttk.Button(btns, text="Отмена", command=_cancel).pack(side="right", padx=(0, 6))
+            dlg.update_idletasks()
+            sw = int(dlg.winfo_screenwidth() or 1200)
+            sh = int(dlg.winfo_screenheight() or 800)
+            ww = int(dlg.winfo_reqwidth() or 280)
+            wh = int(dlg.winfo_reqheight() or 150)
+            pos_x = max(0, (sw - ww) // 2)
+            pos_y = max(0, (sh - wh) // 2)
+            dlg.geometry(f"{ww}x{wh}+{pos_x}+{pos_y}")
             dlg.protocol("WM_DELETE_WINDOW", _cancel)
             dlg.wait_window()
             return out["value"]
@@ -10512,7 +10530,13 @@ class GeoCanvasEditor(tk.Tk):
 
         if fmt == "DWG":
             if not has_dwg_converter:
-                messagebox.showwarning("Экспорт CAD", f"DXF сохранён ({len(tests_to_export)} граф.): {dxf_path}\nDWG-конвертер не найден.\nЛог: {cad_log}")
+                messagebox.showerror(
+                    "Экспорт CAD",
+                    "DWG-экспорт недоступен: не найден конвертер DWG. "
+                    "Сохраните файл в DXF или настройте путь к конвертеру.\n\n"
+                    f"DXF сохранён ({len(tests_to_export)} граф.): {dxf_path}\n"
+                    f"Лог: {cad_log}",
+                )
                 return
             conversion = convert_dxf_to_dwg(dxf_path=dxf_path, dwg_path=Path(out_path))
             if conversion.success and conversion.dwg_path is not None:

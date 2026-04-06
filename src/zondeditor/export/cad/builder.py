@@ -167,9 +167,9 @@ def build_cpt_cad_scene(
     title = title_text or f"Зондирование {int(getattr(test, 'tid', 0) or 0)}"
 
     # Header is moved up by +20 units compared to previous baseline around y=0..5
-    qc_axis_y = 20.0
+    qc_axis_y = 22.0
     fs_axis_y = 12.0
-    title_y = 28.0
+    title_y = 30.0
 
     lines: list[CadLine] = []
     texts: list[TextLabel] = [
