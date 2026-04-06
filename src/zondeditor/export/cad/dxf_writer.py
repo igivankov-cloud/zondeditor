@@ -147,7 +147,7 @@ def _write_ascii_fallback(scenes: list[CadScene], target: Path, x_step_mm: float
     add(2, "ENTITIES")
     for i, scene in enumerate(scenes):
         add(0, "INSERT")
-        add(8, "ZE_CPT_SERVICE")
+        add(8, "ZE_CPT_TITLE")
         add(2, scene.block.name)
         add(62, 256)
         add(10, scene.insertion_point[0] + i * x_step_mm)
@@ -228,7 +228,7 @@ def write_cad_scenes_to_dxf(scenes: list[CadScene], out_path: str | Path, *, x_s
         msp.add_blockref(
             scene.block.name,
             (scene.insertion_point[0] + i * x_step_mm, scene.insertion_point[1], scene.insertion_point[2]),
-            dxfattribs={"layer": "ZE_CPT_SERVICE", "color": 256},
+            dxfattribs={"layer": "ZE_CPT_TITLE", "color": 256},
         )
 
     doc.saveas(target)

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 from src.zondeditor.domain.models import TestData
@@ -28,9 +27,7 @@ MANDATORY_LAYERS: tuple[CadLayerSpec, ...] = (
     CadLayerSpec("ZE_CPT_FS_CURVE", color_aci=5, rgb=(37, 99, 235), lineweight=30),
     CadLayerSpec("ZE_CPT_QC_SCALE", color_aci=3, rgb=(22, 163, 74)),
     CadLayerSpec("ZE_CPT_FS_SCALE", color_aci=5, rgb=(37, 99, 235)),
-    CadLayerSpec("ZE_CPT_TITLE", color_aci=7),
-    CadLayerSpec("ZE_CPT_BASEPOINT", color_aci=1),
-    CadLayerSpec("ZE_CPT_SERVICE", color_aci=8),
+    CadLayerSpec("ZE_CPT_TITLE", color_aci=1),
 )
 
 
@@ -67,15 +64,6 @@ def _value_to_x_mm(value: float, spec: CurveScaleSpec) -> float:
     return spec.x_origin_mm + (value_clamped - spec.min_value) * spec.width_mm / span
 
 
-def _nice_upper_bound(value: float, *, fallback: float, steps: tuple[float, ...]) -> float:
-    v = max(float(value), 1e-9)
-    for step in steps:
-        if v <= step:
-            return step
-    power = 10.0 ** math.floor(math.log10(v))
-    return math.ceil(v / power) * power
-
-
 def _build_scale_lines(*, spec: CurveScaleSpec, axis_y_mm: float) -> tuple[list[CadLine], list[TextLabel]]:
     lines: list[CadLine] = [
         CadLine(spec.layer_scale, (spec.x_origin_mm, axis_y_mm), (spec.x_origin_mm + spec.width_mm, axis_y_mm)),
@@ -91,13 +79,6 @@ def _build_scale_lines(*, spec: CurveScaleSpec, axis_y_mm: float) -> tuple[list[
         lines.append(CadLine(spec.layer_scale, (x_mm, axis_y_mm), (x_mm, axis_y_mm - 2.2)))
         texts.append(TextLabel("ZE_CPT_TITLE", f"{val:g}", x_mm, axis_y_mm - 3.8, 1.8, align="CENTER"))
         val += spec.major_tick_step
-
-    if 0 < spec.minor_tick_step < spec.major_tick_step:
-        val = spec.min_value
-        while val <= spec.max_value + 1e-9:
-            x_mm = _value_to_x_mm(val, spec)
-            lines.append(CadLine(spec.layer_scale, (x_mm, axis_y_mm), (x_mm, axis_y_mm - 1.2)))
-            val += spec.minor_tick_step
 
     return lines, texts
 
@@ -137,12 +118,16 @@ def build_cpt_cad_scene(
     if not samples:
         samples = [(0.0, 0.0, 0.0)]
 
+    samples.sort(key=lambda item: item[0])
     max_depth_m = max(s[0] for s in samples)
-    raw_qc_max = max(s[1] for s in samples)
-    raw_fs_max = max(s[2] for s in samples)
 
-    qc_range = _nice_upper_bound(max(raw_qc_max * 1.05, float(qc_max_mpa or 0.0)), fallback=5.0, steps=(1, 2, 5, 10, 20, 30, 40, 50, 75, 100))
-    fs_range = _nice_upper_bound(max(raw_fs_max * 1.05, float(fs_max_kpa or 0.0)), fallback=50.0, steps=(10, 20, 50, 100, 200, 300, 500, 750, 1000, 1500, 2000))
+    is_k4 = int(getattr(calibration, "scale_div", 250) or 250) >= 1000
+    if is_k4:
+        qc_range, fs_range = 50.0, 500.0
+        qc_major, fs_major = 10.0, 100.0
+    else:
+        qc_range, fs_range = 30.0, 300.0
+        qc_major, fs_major = 5.0, 50.0
 
     plot_x0 = 0.0
     plot_width = 82.0
@@ -151,8 +136,8 @@ def build_cpt_cad_scene(
         min_value=0.0,
         max_value=qc_range,
         width_mm=plot_width,
-        major_tick_step=max(1.0, qc_range / 6.0),
-        minor_tick_step=max(0.5, qc_range / 30.0),
+        major_tick_step=qc_major,
+        minor_tick_step=0.0,
         title="qc",
         unit="MPa",
         x_origin_mm=plot_x0,
@@ -163,8 +148,8 @@ def build_cpt_cad_scene(
         min_value=0.0,
         max_value=fs_range,
         width_mm=plot_width,
-        major_tick_step=max(1.0, fs_range / 6.0),
-        minor_tick_step=max(1.0, fs_range / 30.0),
+        major_tick_step=fs_major,
+        minor_tick_step=0.0,
         title="fs",
         unit="kPa",
         x_origin_mm=plot_x0,
@@ -200,13 +185,7 @@ def build_cpt_cad_scene(
     texts.extend(qc_scale_texts)
     texts.extend(fs_scale_texts)
 
-    points = [CadPoint("ZE_CPT_BASEPOINT", (0.0, 0.0, 0.0))]
-    lines.extend(
-        [
-            CadLine("ZE_CPT_BASEPOINT", (-1.5, 0.0), (1.5, 0.0)),
-            CadLine("ZE_CPT_BASEPOINT", (0.0, -1.5), (0.0, 1.5)),
-        ]
-    )
+    points = [CadPoint("ZE_CPT_TITLE", (0.0, 0.0, 0.0))]
 
     polylines: list[CadPolyline] = []
     if len(qc_points) >= 2:
@@ -241,7 +220,7 @@ def build_cpt_cad_scene(
         fs_series=CurveSeries(layer=fs_scale.layer_curve, points_mm=fs_points),
         qc_scale=qc_scale,
         fs_scale=fs_scale,
-        depth_axis=DepthAxisSpec(layer="ZE_CPT_SERVICE", x_mm=0.0, max_depth_m=max_depth_m, major_step_m=1.0, minor_step_m=0.2),
+        depth_axis=DepthAxisSpec(layer="ZE_CPT_TITLE", x_mm=0.0, max_depth_m=max_depth_m, major_step_m=1.0, minor_step_m=0.2),
         drawing_width_mm=plot_width,
         drawing_height_mm=abs(y_bottom) + title_y,
     )
