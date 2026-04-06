@@ -10533,7 +10533,8 @@ class GeoCanvasEditor(tk.Tk):
                 messagebox.showerror(
                     "Экспорт CAD",
                     "DWG-экспорт недоступен: не найден конвертер DWG. "
-                    "Сохраните файл в DXF или настройте путь к конвертеру.\n\n"
+                    "Сохраните файл в DXF или настройте путь к конвертеру "
+                    "(переменная ZE_ODA_CONVERTER или папка tools/oda рядом с программой).\n\n"
                     f"DXF сохранён ({len(tests_to_export)} граф.): {dxf_path}\n"
                     f"Лог: {cad_log}",
                 )

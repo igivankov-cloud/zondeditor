@@ -5,7 +5,7 @@ import pytest
 
 from src.zondeditor.domain.models import TestData as ZeTestData
 from src.zondeditor.export.cad.builder import MANDATORY_LAYERS, build_cpt_cad_scene
-from src.zondeditor.export.cad.dwg_bridge import convert_dxf_to_dwg
+from src.zondeditor.export.cad.dwg_bridge import convert_dxf_to_dwg, find_oda_converter
 from src.zondeditor.export.cad.schema import ExportCadOptions
 from src.zondeditor.processing.calibration import K2_DEFAULT, K4_DEFAULT
 
@@ -71,6 +71,19 @@ def test_dwg_bridge_does_not_fail_when_converter_missing(tmp_path: Path):
     assert result.requested is True
     assert result.success is False
     assert "not found" in result.message.lower()
+
+
+def test_find_oda_converter_detects_bundled_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    fake_exe_dir = tmp_path / "app"
+    bundled = fake_exe_dir / "tools" / "oda"
+    bundled.mkdir(parents=True, exist_ok=True)
+    converter = bundled / "ODAFileConverter.exe"
+    converter.write_text("stub", encoding="utf-8")
+    monkeypatch.setattr("src.zondeditor.export.cad.dwg_bridge.sys.executable", str(fake_exe_dir / "zondeditor.exe"))
+    monkeypatch.delenv("ZE_ODA_CONVERTER", raising=False)
+    found = find_oda_converter(None)
+    assert found is not None
+    assert found.name == "ODAFileConverter.exe"
 
 
 def test_dxf_writer_outputs_layers_and_block_insert(tmp_path: Path):

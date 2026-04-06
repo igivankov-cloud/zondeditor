@@ -167,7 +167,7 @@ class RibbonView(ttk.Frame):
         exports.pack_propagate(False)
         self._add_btn(exports, "export_geo", "GEO", "Экспорт GEO только через Сохранить как", width=file_btn_width)
         self._add_btn(exports, "export_gxl", "GXL", "Экспорт GXL только через Сохранить как", width=file_btn_width)
-        self._add_btn(exports, "export_dxf", "DXF", "Экспорт графиков в DXF (заглушка)", width=file_btn_width)
+        self._add_btn(exports, "export_dxf", "DXF / DWG", "Экспорт графиков в CAD (DXF / DWG)", width=file_btn_width)
 
     def _build_params_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)

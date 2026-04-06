@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from .logging import get_cad_logger
@@ -15,11 +16,46 @@ def find_oda_converter(explicit_path: str | None = None) -> Path | None:
         p = Path(explicit_path)
         if p.exists() and p.is_file():
             return p
+        if p.exists() and p.is_dir():
+            for exe in ("ODAFileConverter.exe", "ODAFileConverter", "TeighaFileConverter.exe", "TeighaFileConverter"):
+                candidate = p / exe
+                if candidate.exists() and candidate.is_file():
+                    return candidate
     env = os.environ.get("ZE_ODA_CONVERTER", "").strip()
     if env:
         p = Path(env)
         if p.exists() and p.is_file():
             return p
+        if p.exists() and p.is_dir():
+            for exe in ("ODAFileConverter.exe", "ODAFileConverter", "TeighaFileConverter.exe", "TeighaFileConverter"):
+                candidate = p / exe
+                if candidate.exists() and candidate.is_file():
+                    return candidate
+
+    bundled_dirs: list[Path] = []
+    try:
+        exe_dir = Path(sys.executable).resolve().parent
+        bundled_dirs.extend(
+            [
+                exe_dir / "tools" / "oda",
+                exe_dir / "converters" / "oda",
+                exe_dir / "oda",
+            ]
+        )
+    except Exception:
+        pass
+    bundled_dirs.extend(
+        [
+            Path.cwd() / "tools" / "oda",
+            Path.cwd() / "converters" / "oda",
+            Path.cwd() / "oda",
+        ]
+    )
+    for base in bundled_dirs:
+        for exe in ("ODAFileConverter.exe", "ODAFileConverter", "TeighaFileConverter.exe", "TeighaFileConverter"):
+            candidate = base / exe
+            if candidate.exists() and candidate.is_file():
+                return candidate
 
     candidates = [
         "ODAFileConverter",
