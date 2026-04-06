@@ -4380,6 +4380,27 @@ class GeoCanvasEditor(tk.Tk):
                 continue
             if str((meta or {}).get("color") or "").strip().lower() == "orange":
                 return True
+        test = None
+        for t in (getattr(self, "tests", []) or []):
+            if int(getattr(t, "tid", 0) or 0) == tid:
+                test = t
+                break
+        if test is None:
+            return False
+        fl = self.flags.get(tid, TestFlags(False, set(), set(), set(), set()))
+        user_cells = set(getattr(fl, "user_cells", set()) or set())
+        q_arr = list(getattr(test, "qc", []) or [])
+        f_arr = list(getattr(test, "fs", []) or [])
+        n = max(len(q_arr), len(f_arr))
+        for i in range(n):
+            if i < len(q_arr):
+                qv = q_arr[i]
+                if is_missing_value(qv) and (i, "qc") not in user_cells:
+                    return True
+            if i < len(f_arr):
+                fv = f_arr[i]
+                if is_missing_value(fv) and (i, "fs") not in user_cells:
+                    return True
         return False
 
     def _collect_error_protocol_items(self) -> list[dict]:
