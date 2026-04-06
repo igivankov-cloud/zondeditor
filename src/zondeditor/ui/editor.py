@@ -949,7 +949,6 @@ class GeoCanvasEditor(tk.Tk):
                     mode_params=mode_params,
                     emit=False,
                 )
-                self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
                 step_txt = str(mode_params.get("mode_step_depth", "") or "").strip().replace(",", ".")
                 if not step_txt:
                     try:
