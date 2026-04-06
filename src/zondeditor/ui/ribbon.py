@@ -18,6 +18,8 @@ from src.zondeditor.ui.widgets import ToolTip
 
 
 class RibbonView(ttk.Frame):
+    STEP_DEPTH_CHOICES = ("0.05", "0.10", "0.20")
+
     def __init__(self, master, *, commands: dict[str, callable], icon_font=None):
         super().__init__(master)
         self.commands = commands
@@ -217,14 +219,18 @@ class RibbonView(ttk.Frame):
         col_left.grid(row=0, column=0, sticky="nw", padx=(0, 16))
         col_right.grid(row=0, column=1, sticky="nw")
 
-        self._common_param_entries: dict[str, ttk.Entry] = {}
+        self._common_param_entries: dict[str, tk.Widget] = {}
 
         def add_field(parent, row: int, label: str, var: tk.StringVar, key: str, width: int = 14):
             ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 4), pady=1)
-            ent = ttk.Entry(parent, textvariable=var, width=width)
+            if key == "mode_step_depth":
+                ent = ttk.Combobox(parent, textvariable=var, state="readonly", width=width, values=list(self.STEP_DEPTH_CHOICES))
+                ent.bind("<<ComboboxSelected>>", lambda _e: self._emit_common_params())
+            else:
+                ent = ttk.Entry(parent, textvariable=var, width=width)
+                ent.bind("<FocusOut>", lambda _e: self._emit_common_params())
+                ent.bind("<Return>", lambda _e: self._emit_common_params())
             ent.grid(row=row, column=1, sticky="w", pady=1)
-            ent.bind("<FocusOut>", lambda _e: self._emit_common_params())
-            ent.bind("<Return>", lambda _e: self._emit_common_params())
             self._common_param_entries[key] = ent
 
         add_field(col_left, 0, "Шаг зондирования, м", self.step_depth_var, "mode_step_depth", width=6)
@@ -248,10 +254,14 @@ class RibbonView(ttk.Frame):
         ]
         for i, (label, var, key) in enumerate(rows, start=0):
             ttk.Label(frm, text=label).grid(row=i, column=0, sticky="w", padx=(0, 6), pady=1)
-            ent = ttk.Entry(frm, textvariable=var, width=26)
+            if key == "mode_step_depth":
+                ent = ttk.Combobox(frm, textvariable=var, state="readonly", width=23, values=list(self.STEP_DEPTH_CHOICES))
+                ent.bind("<<ComboboxSelected>>", lambda _e: self._emit_common_params())
+            else:
+                ent = ttk.Entry(frm, textvariable=var, width=26)
+                ent.bind("<FocusOut>", lambda _e: self._emit_common_params())
+                ent.bind("<Return>", lambda _e: self._emit_common_params())
             ent.grid(row=i, column=1, sticky="w", pady=1)
-            ent.bind("<FocusOut>", lambda _e: self._emit_common_params())
-            ent.bind("<Return>", lambda _e: self._emit_common_params())
             self._common_param_entries[key] = ent
 
     def _build_direct_params_form(self, parent):
@@ -259,10 +269,9 @@ class RibbonView(ttk.Frame):
         frm.pack(side="top", fill="x")
         self._common_param_entries = {}
         ttk.Label(frm, text="Шаг зондирования, м").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=1)
-        ent_step = ttk.Entry(frm, textvariable=self.step_depth_var, width=10)
+        ent_step = ttk.Combobox(frm, textvariable=self.step_depth_var, state="readonly", width=10, values=list(self.STEP_DEPTH_CHOICES))
         ent_step.grid(row=0, column=1, sticky="w", pady=1)
-        ent_step.bind("<FocusOut>", lambda _e: self._emit_common_params())
-        ent_step.bind("<Return>", lambda _e: self._emit_common_params())
+        ent_step.bind("<<ComboboxSelected>>", lambda _e: self._emit_common_params())
         self._common_param_entries["mode_step_depth"] = ent_step
 
     def _render_params_by_project_type(self, project_type: str, *, emit: bool = True):
@@ -773,7 +782,8 @@ class RibbonView(ttk.Frame):
         try:
             self._render_params_by_project_type(ptype, emit=False)
             self.installation_name_var.set(str(mp.get("mode_installation_name", "") or ""))
-            self.step_depth_var.set(str(mp.get("mode_step_depth", self.step_depth_var.get() or default_step) or default_step))
+            raw_step = str(mp.get("mode_step_depth", self.step_depth_var.get() or default_step) or default_step)
+            self.step_depth_var.set(self._normalize_step_depth_choice(raw_step, default_step=default_step))
             self.mech_lob_coeff_var.set(str(mp.get("mode_lob_coeff", self.mech_lob_coeff_var.get() or "1.00") or "1.00"))
             self.mech_total_coeff_var.set(str(mp.get("mode_total_coeff", self.mech_total_coeff_var.get() or "1.00") or "1.00"))
             self.mech_calib_date_var.set(str(mp.get("mode_calibration_date", "") or ""))
@@ -804,6 +814,22 @@ class RibbonView(ttk.Frame):
                 ent.configure(state=("disabled" if str(geo_kind or "K2").upper() == "K4" else "normal"))
             except Exception:
                 pass
+
+    def _normalize_step_depth_choice(self, raw_step: str, *, default_step: str) -> str:
+        txt = str(raw_step or "").strip().replace(",", ".")
+        if txt in self.STEP_DEPTH_CHOICES:
+            return txt
+        try:
+            val = float(txt)
+        except Exception:
+            return str(default_step)
+        for choice in self.STEP_DEPTH_CHOICES:
+            try:
+                if abs(float(choice) - val) <= 1e-3:
+                    return choice
+            except Exception:
+                continue
+        return str(default_step)
 
     def select_tab(self, title: str):
         target = str(title or "").strip()

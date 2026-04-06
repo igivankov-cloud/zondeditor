@@ -2963,7 +2963,7 @@ class GeoCanvasEditor(tk.Tk):
 
     @staticmethod
     def _allowed_step_values() -> tuple[float, ...]:
-        return (0.05, 0.1, 0.2, 0.3, 0.4, 0.5)
+        return (0.05, 0.1, 0.2)
 
     def _normalize_allowed_step(self, raw_value) -> float | None:
         try:
@@ -2976,8 +2976,191 @@ class GeoCanvasEditor(tk.Tk):
         return None
 
     def _step_validation_message(self) -> str:
-        allowed = ", ".join(f"{x:g}" for x in self._allowed_step_values())
+        allowed = ", ".join(f"{x:.2f}" for x in self._allowed_step_values())
         return f"Недопустимый шаг зондирования. Разрешены значения: {allowed} м."
+
+    def _is_neighbor_step_transition(self, old_step: float, new_step: float) -> bool:
+        seq = list(self._allowed_step_values())
+        old_idx = None
+        new_idx = None
+        for idx, val in enumerate(seq):
+            if abs(float(val) - float(old_step)) <= 1e-3:
+                old_idx = idx
+            if abs(float(val) - float(new_step)) <= 1e-3:
+                new_idx = idx
+        if old_idx is None or new_idx is None:
+            return False
+        return abs(int(old_idx) - int(new_idx)) <= 1
+
+    def _estimate_step_grid_delta(self, old_step: float, new_step: float) -> tuple[int, int]:
+        add_rows = 0
+        drop_rows = 0
+        for t in (getattr(self, "tests", []) or []):
+            dvals: list[float] = []
+            for raw in (getattr(t, "depth", []) or []):
+                dv = _parse_depth_float(str(raw))
+                if dv is None:
+                    continue
+                dvals.append(float(dv))
+            if len(dvals) < 2:
+                continue
+            if new_step < old_step:
+                for i in range(len(dvals) - 1):
+                    if abs((dvals[i + 1] - dvals[i]) - float(old_step)) <= 1e-2:
+                        add_rows += 1
+            else:
+                start = dvals[0]
+                for d in dvals:
+                    rel = (float(d) - float(start)) / float(new_step)
+                    if abs(rel - round(rel)) > 1e-2:
+                        drop_rows += 1
+        return add_rows, drop_rows
+
+    def _ask_step_change_mode(self, *, old_step: float, new_step: float, add_rows: int, drop_rows: int) -> str:
+        is_reduce = float(new_step) < float(old_step)
+        dlg = tk.Toplevel(self)
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.title("Изменение шага зондирования")
+        frm = ttk.Frame(dlg, padding=10)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text=(f"Шаг будет {'уменьшен' if is_reduce else 'увеличен'}: {old_step:.2f} → {new_step:.2f}"), font=("", 10, "bold")).pack(anchor="w")
+        if is_reduce and add_rows > 0:
+            ttk.Label(frm, text=f"Будет добавлено строк: ~{int(add_rows)}", foreground="#5f6b7a").pack(anchor="w", pady=(4, 0))
+        if (not is_reduce) and drop_rows > 0:
+            ttk.Label(frm, text=f"Будет удалено строк: ~{int(drop_rows)}", foreground="#5f6b7a").pack(anchor="w", pady=(4, 0))
+        ttk.Label(frm, text="Что сделать?", padding=(0, 8, 0, 0)).pack(anchor="w")
+        ttk.Label(frm, text="«Перезаписать значение шага» используйте, если шаг был указан неверно.", foreground="#5f6b7a", wraplength=460).pack(anchor="w", pady=(0, 8))
+        result = {"mode": "cancel"}
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x")
+
+        def _set_mode(mode: str):
+            result["mode"] = mode
+            dlg.destroy()
+
+        action_text = "Уменьшить шаг и интерполировать" if is_reduce else "Увеличить шаг, удалить промежуточные значения"
+        ttk.Button(btns, text=action_text, command=lambda: _set_mode("resample")).pack(side="left")
+        ttk.Button(btns, text="Перезаписать значение шага", command=lambda: _set_mode("overwrite")).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="Отмена", command=lambda: _set_mode("cancel")).pack(side="right")
+        try:
+            self._center_child(dlg)
+        except Exception:
+            pass
+        self.wait_window(dlg)
+        return str(result.get("mode") or "cancel")
+
+    def _resample_depth_grid_between_neighbor_steps(self, *, old_step: float, new_step: float):
+        is_reduce = float(new_step) < float(old_step)
+        for t in (getattr(self, "tests", []) or []):
+            depth_old = list(getattr(t, "depth", []) or [])
+            qc_old = list(getattr(t, "qc", []) or [])
+            fs_old = list(getattr(t, "fs", []) or [])
+            if not depth_old:
+                continue
+            n = max(len(depth_old), len(qc_old), len(fs_old))
+            depth_old += [""] * max(0, n - len(depth_old))
+            qc_old += [""] * max(0, n - len(qc_old))
+            fs_old += [""] * max(0, n - len(fs_old))
+            old_flags = copy.deepcopy(getattr(self, "flags", {}).get(t.tid, TestFlags(False, set(), set(), set(), set())) or TestFlags(False, set(), set(), set(), set()))
+
+            new_depth: list[str] = []
+            new_qc: list[str] = []
+            new_fs: list[str] = []
+            map_old_to_new: dict[int, int] = {}
+
+            if is_reduce:
+                for i in range(n):
+                    map_old_to_new[i] = len(new_depth)
+                    new_depth.append(str(depth_old[i]))
+                    new_qc.append(str(qc_old[i]))
+                    new_fs.append(str(fs_old[i]))
+                    if i + 1 >= n:
+                        continue
+                    d0 = _parse_depth_float(str(depth_old[i]))
+                    d1 = _parse_depth_float(str(depth_old[i + 1]))
+                    if d0 is None or d1 is None or abs((float(d1) - float(d0)) - float(old_step)) > 1e-2:
+                        continue
+                    mid = 0.5 * (float(d0) + float(d1))
+                    q0 = parse_measurement(qc_old[i])
+                    q1 = parse_measurement(qc_old[i + 1])
+                    f0 = parse_measurement(fs_old[i])
+                    f1 = parse_measurement(fs_old[i + 1])
+                    if q0 is not None and q1 is not None:
+                        qmid = str(int(round((float(q0) + float(q1)) * 0.5)))
+                    else:
+                        qmid = ""
+                    if f0 is not None and f1 is not None:
+                        fmid = str(int(round((float(f0) + float(f1)) * 0.5)))
+                    else:
+                        fmid = ""
+                    new_depth.append(f"{mid:.2f}")
+                    new_qc.append(qmid)
+                    new_fs.append(fmid)
+            else:
+                d0 = _parse_depth_float(str(depth_old[0]))
+                base = float(d0) if d0 is not None else 0.0
+                for i in range(n):
+                    dv = _parse_depth_float(str(depth_old[i]))
+                    if dv is None:
+                        continue
+                    rel = (float(dv) - base) / float(new_step)
+                    if abs(rel - round(rel)) > 1e-2:
+                        continue
+                    map_old_to_new[i] = len(new_depth)
+                    new_depth.append(f"{float(dv):.2f}")
+                    new_qc.append(str(qc_old[i]))
+                    new_fs.append(str(fs_old[i]))
+
+            if not new_depth:
+                continue
+            t.depth, t.qc, t.fs = new_depth, new_qc, new_fs
+            tid = int(getattr(t, "tid", 0) or 0)
+            self.depth0_by_tid[tid] = _parse_depth_float(str(new_depth[0])) or 0.0
+            self.step_by_tid[tid] = float(new_step)
+
+            new_interp: set[tuple[int, str]] = set()
+            new_force: set[tuple[int, str]] = set()
+            new_user: set[tuple[int, str]] = set()
+            new_algo: set[tuple[int, str]] = set()
+            for (r, fld) in (old_flags.interp_cells or set()):
+                if r in map_old_to_new:
+                    new_interp.add((map_old_to_new[r], fld))
+            for (r, fld) in (old_flags.force_cells or set()):
+                if r in map_old_to_new:
+                    new_force.add((map_old_to_new[r], fld))
+            for (r, fld) in (old_flags.user_cells or set()):
+                if r in map_old_to_new:
+                    new_user.add((map_old_to_new[r], fld))
+            for (r, fld) in (old_flags.algo_cells or set()):
+                if r in map_old_to_new:
+                    new_algo.add((map_old_to_new[r], fld))
+            self.flags[t.tid] = TestFlags(bool(old_flags.invalid), new_interp, new_force, new_user, new_algo)
+
+        self.step_m = float(new_step)
+
+    def _apply_step_change_request(self, *, old_step: float, new_step: float) -> bool:
+        if abs(float(old_step) - float(new_step)) <= 1e-6:
+            return True
+        if not self._is_neighbor_step_transition(float(old_step), float(new_step)):
+            self._show_validation_error_once(
+                f"Нельзя изменить шаг с {old_step:.2f} сразу на {new_step:.2f}. "
+                f"Сначала измените шаг на {'0.10' if min(old_step, new_step) < 0.10 < max(old_step, new_step) else 'соседнее значение'}."
+            )
+            return False
+        add_rows, drop_rows = self._estimate_step_grid_delta(float(old_step), float(new_step))
+        mode = self._ask_step_change_mode(old_step=float(old_step), new_step=float(new_step), add_rows=add_rows, drop_rows=drop_rows)
+        if mode == "cancel":
+            return False
+        self._push_undo()
+        if mode == "resample":
+            self._resample_depth_grid_between_neighbor_steps(old_step=float(old_step), new_step=float(new_step))
+        else:
+            self.step_m = float(new_step)
+            for t in (getattr(self, "tests", []) or []):
+                tid = int(getattr(t, "tid", 0) or 0)
+                self.step_by_tid[tid] = float(new_step)
+        return True
 
     def _apply_type1_params(self, mode_keys: dict[str, str]) -> bool:
         old_step = str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.20") or "0.20")
@@ -3007,8 +3190,13 @@ class GeoCanvasEditor(tk.Tk):
             self._sync_type1_params_to_ribbon()
             return False
 
-        if round(step_val, 3) != round(float(old_step), 3):
-            self._rebuild_type1_depth_grid(step_val)
+        try:
+            old_step_val = float(old_step)
+        except Exception:
+            old_step_val = 0.20
+        if not self._apply_step_change_request(old_step=old_step_val, new_step=float(step_val)):
+            self._sync_type1_params_to_ribbon()
+            return False
 
         self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
         self.project_mode_params["mode_lob_coeff"] = f"{lob_val:.2f}".rstrip("0").rstrip(".")
@@ -3036,8 +3224,13 @@ class GeoCanvasEditor(tk.Tk):
             self._show_validation_error_once(self._step_validation_message())
             self._sync_direct_params_to_ribbon()
             return False
-        if round(step_val, 3) != round(float(old_step), 3):
-            self._rebuild_type1_depth_grid(step_val)
+        try:
+            old_step_val = float(old_step)
+        except Exception:
+            old_step_val = 0.20
+        if not self._apply_step_change_request(old_step=old_step_val, new_step=float(step_val)):
+            self._sync_direct_params_to_ribbon()
+            return False
         self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
         self._skip_next_type1_error_popup = False
         self._redraw()
@@ -3052,18 +3245,13 @@ class GeoCanvasEditor(tk.Tk):
             self._show_validation_error_once(self._step_validation_message())
             self._sync_type2_params_to_ribbon()
             return False
-        is_k4 = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"
-        is_imported_k2 = (str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K2") and bool(getattr(self, "geo_path", None))
         try:
-            old_step_val = round(float(old_step), 3)
+            old_step_val = float(old_step)
         except Exception:
             old_step_val = 0.05
-        if round(step_val, 3) != round(float(old_step), 3):
-            if old_step_val >= 0.1 and step_val == 0.05 and (is_k4 or is_imported_k2):
-                self.convert_10_to_5()
-                self.step_by_tid = {int(getattr(t, "tid", 0) or 0): 0.05 for t in (getattr(self, "tests", []) or [])}
-            else:
-                self._rebuild_type1_depth_grid(step_val)
+        if not self._apply_step_change_request(old_step=float(old_step_val), new_step=float(step_val)):
+            self._sync_type2_params_to_ribbon()
+            return False
         self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
         self._skip_next_type1_error_popup = False
         self._redraw()
