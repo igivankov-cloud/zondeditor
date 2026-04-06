@@ -62,7 +62,7 @@ from src.zondeditor.export.cad import (
     cad_log_path,
     convert_dxf_to_dwg,
     find_oda_converter,
-    write_cad_scene_to_dxf,
+    write_cad_scenes_to_dxf,
 )
 from src.zondeditor.io.geo_reader import load_geo, parse_geo_bytes, GeoParseError
 from src.zondeditor.io.gxl_reader import parse_gxl_file, GxlParseError
@@ -10424,15 +10424,24 @@ class GeoCanvasEditor(tk.Tk):
         if not tests_exp:
             messagebox.showwarning("Экспорт CAD", "Нет опытов для экспорта.")
             return
-
+        mode_all = messagebox.askyesno(
+            "Экспорт CAD",
+            "Экспортировать все включённые зондирования в один файл?\n"
+            "Да — все включённые, Нет — только активное.",
+            parent=self,
+        )
         active_idx = self._active_layers_test_index()
         active_test = self.tests[active_idx] if active_idx is not None and 0 <= active_idx < len(self.tests) else None
-        test = active_test if active_test in tests_exp else tests_exp[0]
+        if mode_all:
+            tests_to_export = list(tests_exp)
+        else:
+            tests_to_export = [active_test] if active_test in tests_exp else [tests_exp[0]]
 
         object_name = str(getattr(self, "object_name", "") or "sounding").strip().replace(" ", "_")
         if not object_name:
             object_name = "sounding"
-        suggested_name = f"{object_name}_{int(getattr(test, 'tid', 0) or 0):02d}_graph_1_{vertical_scale}"
+        suffix = "all" if len(tests_to_export) > 1 else f"{int(getattr(tests_to_export[0], 'tid', 0) or 0):02d}"
+        suggested_name = f"{object_name}_{suffix}_graph_1_{vertical_scale}"
         initial_ext = ".dwg" if fmt == "DWG" else ".dxf"
         out_path = filedialog.asksaveasfilename(
             title="Сохранить CAD график",
@@ -10451,13 +10460,11 @@ class GeoCanvasEditor(tk.Tk):
             output_format=("dwg" if fmt == "DWG" else "dxf"),
             try_convert_to_dwg=(fmt == "DWG"),
         )
-        block_name = f"ZE_CPT_T{int(getattr(test, 'tid', 0) or 0)}_M{vertical_scale}"
-        safe_block_name = re.sub(r"[^A-Za-z0-9_\\-]", "_", block_name)
         cad_log = cad_log_path()
         try:
             self.usage_logger.info(
-                "CAD export start: tid=%s fmt=%s vscale=%s out=%s log=%s",
-                int(getattr(test, "tid", 0) or 0),
+                "CAD export start: tests=%s fmt=%s vscale=%s out=%s log=%s",
+                [int(getattr(t, "tid", 0) or 0) for t in tests_to_export],
                 fmt,
                 vertical_scale,
                 out_path,
@@ -10467,17 +10474,24 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
         try:
-            build_result = build_cpt_cad_scene(
-                test=test,
-                calibration=calibration,
-                options=options,
-                block_name=safe_block_name,
-                qc_max_mpa=float(getattr(self, "graph_qc_max_mpa", 30.0) or 30.0),
-                fs_max_kpa=float(getattr(self, "graph_fs_max_kpa", 500.0) or 500.0),
-            )
+            scenes = []
+            for test in tests_to_export:
+                block_name = f"ZE_CPT_T{int(getattr(test, 'tid', 0) or 0)}_M{vertical_scale}"
+                safe_block_name = re.sub(r"[^A-Za-z0-9_\\-]", "_", block_name)
+                title_text = f"Опыт {int(getattr(test, 'tid', 0) or 0)}"
+                build_result = build_cpt_cad_scene(
+                    test=test,
+                    calibration=calibration,
+                    options=options,
+                    block_name=safe_block_name,
+                    qc_max_mpa=float(getattr(self, "graph_qc_max_mpa", 0.0) or 0.0),
+                    fs_max_kpa=float(getattr(self, "graph_fs_max_kpa", 0.0) or 0.0),
+                    title_text=title_text,
+                )
+                scenes.append(build_result.scene)
             out_requested = Path(out_path)
             dxf_path = out_requested if fmt == "DXF" else out_requested.with_suffix(".dxf")
-            write_cad_scene_to_dxf(build_result.scene, dxf_path)
+            write_cad_scenes_to_dxf(scenes, dxf_path, x_step_mm=130.0)
         except Exception as exc:
             try:
                 self.usage_logger.exception("CAD export DXF failed")
@@ -10491,16 +10505,16 @@ class GeoCanvasEditor(tk.Tk):
             if conversion.success and conversion.dwg_path is not None:
                 messagebox.showinfo(
                     "Экспорт CAD",
-                    f"Экспорт завершён.\nDXF: {dxf_path}\nDWG: {conversion.dwg_path}\nЛог: {cad_log}",
+                    f"Экспорт завершён ({len(tests_to_export)} граф.).\nDXF: {dxf_path}\nDWG: {conversion.dwg_path}\nЛог: {cad_log}",
                 )
                 return
             messagebox.showwarning(
                 "Экспорт CAD",
-                f"DXF сохранён: {dxf_path}\nDWG не получен: {conversion.message}\nЛог: {cad_log}",
+                f"DXF сохранён ({len(tests_to_export)} граф.): {dxf_path}\nDWG не получен: {conversion.message}\nЛог: {cad_log}",
             )
             return
 
-        messagebox.showinfo("Экспорт CAD", f"DXF сохранён:\n{dxf_path}\nЛог: {cad_log}")
+        messagebox.showinfo("Экспорт CAD", f"DXF сохранён ({len(tests_to_export)} граф.):\n{dxf_path}\nЛог: {cad_log}")
 
     def export_credo_zip(self):
         """Export each test into two CSV (depth;qc_MPa and depth;fs_kPa) without headers, pack into ZIP.

@@ -31,6 +31,9 @@ def test_builder_contains_all_mandatory_layers_and_basepoint():
     names = {layer.name for layer in result.scene.layers}
     assert {layer.name for layer in MANDATORY_LAYERS}.issubset(names)
     assert any(p.layer == "ZE_CPT_BASEPOINT" and p.position == (0.0, 0.0, 0.0) for p in result.scene.block.points)
+    assert "ZE_CPT_FRAME" not in names
+    assert "ZE_CPT_DEPTH_AXIS" not in names
+    assert "ZE_CPT_GRID" not in names
 
 
 def test_builder_respects_vertical_scale_formula():
@@ -85,6 +88,31 @@ def test_dxf_writer_outputs_layers_and_block_insert(tmp_path: Path):
     assert inserts
 
 
+def test_dxf_writer_supports_multiple_blocks(tmp_path: Path):
+    ezdxf = pytest.importorskip("ezdxf")
+    from src.zondeditor.export.cad.dxf_writer import write_cad_scenes_to_dxf
+
+    r1 = build_cpt_cad_scene(
+        test=_sample_test_data(),
+        calibration=K2_DEFAULT,
+        options=ExportCadOptions(vertical_scale=100),
+        block_name="ZE_TEST_1",
+        title_text="Опыт 1",
+    )
+    r2 = build_cpt_cad_scene(
+        test=ZeTestData(tid=2, dt="01.01.2026", depth=["0", "1"], qc=["10", "20"], fs=["20", "30"]),
+        calibration=K2_DEFAULT,
+        options=ExportCadOptions(vertical_scale=100),
+        block_name="ZE_TEST_2",
+        title_text="Опыт 2",
+    )
+    out = tmp_path / "multi.dxf"
+    write_cad_scenes_to_dxf([r1.scene, r2.scene], out, x_step_mm=130.0)
+    doc = ezdxf.readfile(out)
+    inserts = [e for e in doc.modelspace() if e.dxftype() == "INSERT"]
+    assert len(inserts) == 2
+
+
 def test_dxf_writer_fallback_without_ezdxf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from src.zondeditor.export.cad.dxf_writer import write_cad_scene_to_dxf
 
@@ -102,6 +130,7 @@ def test_dxf_writer_fallback_without_ezdxf(tmp_path: Path, monkeypatch: pytest.M
         calibration=K2_DEFAULT,
         options=ExportCadOptions(vertical_scale=100),
         block_name="ZE_TEST_FALLBACK",
+        title_text="Опыт 6",
     )
     out = tmp_path / "graph_fallback.dxf"
     write_cad_scene_to_dxf(result.scene, out)
@@ -110,3 +139,4 @@ def test_dxf_writer_fallback_without_ezdxf(tmp_path: Path, monkeypatch: pytest.M
     assert "SECTION" in text
     assert "ZE_CPT_QC_CURVE" in text
     assert "INSERT" in text
+    assert "\\U+041E" in text  # Unicode escaped Cyrillic

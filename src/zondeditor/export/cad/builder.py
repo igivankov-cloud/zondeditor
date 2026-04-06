@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from src.zondeditor.domain.models import TestData
@@ -19,18 +20,16 @@ from .schema import (
     ExportCadOptions,
     TextLabel,
 )
+
 _log = get_cad_logger()
 
 MANDATORY_LAYERS: tuple[CadLayerSpec, ...] = (
-    CadLayerSpec("ZE_CPT_QC_CURVE", color_aci=3, rgb=(22, 163, 74)),
-    CadLayerSpec("ZE_CPT_FS_CURVE", color_aci=5, rgb=(37, 99, 235)),
-    CadLayerSpec("ZE_CPT_DEPTH_AXIS", color_aci=7),
+    CadLayerSpec("ZE_CPT_QC_CURVE", color_aci=3, rgb=(22, 163, 74), lineweight=30),
+    CadLayerSpec("ZE_CPT_FS_CURVE", color_aci=5, rgb=(37, 99, 235), lineweight=30),
     CadLayerSpec("ZE_CPT_QC_SCALE", color_aci=3, rgb=(22, 163, 74)),
     CadLayerSpec("ZE_CPT_FS_SCALE", color_aci=5, rgb=(37, 99, 235)),
-    CadLayerSpec("ZE_CPT_TITLES", color_aci=7),
-    CadLayerSpec("ZE_CPT_FRAME", color_aci=8),
+    CadLayerSpec("ZE_CPT_TITLE", color_aci=7),
     CadLayerSpec("ZE_CPT_BASEPOINT", color_aci=1),
-    CadLayerSpec("ZE_CPT_GRID", color_aci=9),
     CadLayerSpec("ZE_CPT_SERVICE", color_aci=8),
 )
 
@@ -43,6 +42,8 @@ class CadBuildResult:
     qc_scale: CurveScaleSpec
     fs_scale: CurveScaleSpec
     depth_axis: DepthAxisSpec
+    drawing_width_mm: float
+    drawing_height_mm: float
 
 
 def _parse_float(value: str | float | int | None) -> float | None:
@@ -54,38 +55,51 @@ def _parse_float(value: str | float | int | None) -> float | None:
         return None
 
 
-def _build_scale_ticks(*, spec: CurveScaleSpec, y_top_mm: float, y_bottom_mm: float) -> list[CadLine]:
-    out: list[CadLine] = []
-    out.append(CadLine(spec.layer_scale, (spec.x_origin_mm, y_top_mm), (spec.x_origin_mm + spec.width_mm, y_top_mm)))
-    major = spec.major_tick_step if spec.major_tick_step > 0 else (spec.max_value - spec.min_value)
-    minor = spec.minor_tick_step if spec.minor_tick_step > 0 else major
-    if major <= 0:
-        return out
-    val = spec.min_value
-    while val <= spec.max_value + 1e-9:
-        x_mm = spec.x_origin_mm + ((val - spec.min_value) / (spec.max_value - spec.min_value)) * spec.width_mm
-        out.append(CadLine(spec.layer_scale, (x_mm, y_top_mm), (x_mm, y_top_mm - 2.5)))
-        val += major
-    if minor > 0 and minor < major:
-        val = spec.min_value
-        while val <= spec.max_value + 1e-9:
-            x_mm = spec.x_origin_mm + ((val - spec.min_value) / (spec.max_value - spec.min_value)) * spec.width_mm
-            out.append(CadLine(spec.layer_scale, (x_mm, y_top_mm), (x_mm, y_top_mm - 1.2)))
-            val += minor
-    _ = y_bottom_mm
-    return out
-
-
 def _depth_to_y_mm(depth_m: float, vertical_scale: int) -> float:
     return -depth_m * 1000.0 / float(vertical_scale)
 
 
 def _value_to_x_mm(value: float, spec: CurveScaleSpec) -> float:
-    value_clamped = max(spec.min_value, min(spec.max_value, value))
     span = spec.max_value - spec.min_value
     if span <= 0:
         return spec.x_origin_mm
+    value_clamped = max(spec.min_value, min(spec.max_value, value))
     return spec.x_origin_mm + (value_clamped - spec.min_value) * spec.width_mm / span
+
+
+def _nice_upper_bound(value: float, *, fallback: float, steps: tuple[float, ...]) -> float:
+    v = max(float(value), 1e-9)
+    for step in steps:
+        if v <= step:
+            return step
+    power = 10.0 ** math.floor(math.log10(v))
+    return math.ceil(v / power) * power
+
+
+def _build_scale_lines(*, spec: CurveScaleSpec, axis_y_mm: float) -> tuple[list[CadLine], list[TextLabel]]:
+    lines: list[CadLine] = [
+        CadLine(spec.layer_scale, (spec.x_origin_mm, axis_y_mm), (spec.x_origin_mm + spec.width_mm, axis_y_mm)),
+    ]
+    texts: list[TextLabel] = []
+
+    if spec.major_tick_step <= 0:
+        return lines, texts
+
+    val = spec.min_value
+    while val <= spec.max_value + 1e-9:
+        x_mm = _value_to_x_mm(val, spec)
+        lines.append(CadLine(spec.layer_scale, (x_mm, axis_y_mm), (x_mm, axis_y_mm - 2.2)))
+        texts.append(TextLabel("ZE_CPT_TITLE", f"{val:g}", x_mm, axis_y_mm - 3.8, 1.8, align="CENTER"))
+        val += spec.major_tick_step
+
+    if 0 < spec.minor_tick_step < spec.major_tick_step:
+        val = spec.min_value
+        while val <= spec.max_value + 1e-9:
+            x_mm = _value_to_x_mm(val, spec)
+            lines.append(CadLine(spec.layer_scale, (x_mm, axis_y_mm), (x_mm, axis_y_mm - 1.2)))
+            val += spec.minor_tick_step
+
+    return lines, texts
 
 
 def build_cpt_cad_scene(
@@ -94,51 +108,23 @@ def build_cpt_cad_scene(
     calibration: Calibration,
     options: ExportCadOptions,
     block_name: str,
-    qc_max_mpa: float = 30.0,
-    fs_max_kpa: float = 500.0,
+    qc_max_mpa: float | None = None,
+    fs_max_kpa: float | None = None,
+    title_text: str | None = None,
 ) -> CadBuildResult:
     _log.info(
-        "build_cpt_cad_scene start test_id=%s vertical_scale=%s block=%s qc_max=%s fs_max=%s",
+        "build_cpt_cad_scene start test_id=%s vertical_scale=%s block=%s",
         int(getattr(test, "tid", 0) or 0),
         int(options.vertical_scale),
         block_name,
-        float(qc_max_mpa),
-        float(fs_max_kpa),
     )
-    qc_scale = CurveScaleSpec(
-        min_value=0.0,
-        max_value=max(1.0, float(qc_max_mpa)),
-        width_mm=65.0,
-        major_tick_step=5.0,
-        minor_tick_step=1.0,
-        title="qc",
-        unit="MPa",
-        x_origin_mm=24.0,
-        layer_scale="ZE_CPT_QC_SCALE",
-        layer_curve="ZE_CPT_QC_CURVE",
-    )
-    fs_scale = CurveScaleSpec(
-        min_value=0.0,
-        max_value=max(10.0, float(fs_max_kpa)),
-        width_mm=65.0,
-        major_tick_step=100.0,
-        minor_tick_step=20.0,
-        title="fs",
-        unit="kPa",
-        x_origin_mm=98.0,
-        layer_scale="ZE_CPT_FS_SCALE",
-        layer_curve="ZE_CPT_FS_CURVE",
-    )
-
-    depth_values: list[float] = []
-    qc_points: list[tuple[float, float]] = []
-    fs_points: list[tuple[float, float]] = []
 
     depth_arr = list(getattr(test, "depth", []) or [])
     qc_arr = list(getattr(test, "qc", []) or [])
     fs_arr = list(getattr(test, "fs", []) or [])
     n = max(len(depth_arr), len(qc_arr), len(fs_arr))
 
+    samples: list[tuple[float, float, float]] = []
     for i in range(n):
         depth = _parse_float(depth_arr[i]) if i < len(depth_arr) else None
         qc_raw = _parse_float(qc_arr[i]) if i < len(qc_arr) else None
@@ -146,56 +132,73 @@ def build_cpt_cad_scene(
         if depth is None or (qc_raw is None and fs_raw is None):
             continue
         qc_mpa, fs_kpa = calc_qc_fs(int(round(qc_raw or 0.0)), int(round(fs_raw or 0.0)), cal=calibration)
-        y_mm = _depth_to_y_mm(float(depth), int(options.vertical_scale))
-        depth_values.append(float(depth))
+        samples.append((float(depth), float(qc_mpa), float(fs_kpa)))
+
+    if not samples:
+        samples = [(0.0, 0.0, 0.0)]
+
+    max_depth_m = max(s[0] for s in samples)
+    raw_qc_max = max(s[1] for s in samples)
+    raw_fs_max = max(s[2] for s in samples)
+
+    qc_range = _nice_upper_bound(max(raw_qc_max * 1.05, float(qc_max_mpa or 0.0)), fallback=5.0, steps=(1, 2, 5, 10, 20, 30, 40, 50, 75, 100))
+    fs_range = _nice_upper_bound(max(raw_fs_max * 1.05, float(fs_max_kpa or 0.0)), fallback=50.0, steps=(10, 20, 50, 100, 200, 300, 500, 750, 1000, 1500, 2000))
+
+    plot_x0 = 0.0
+    plot_width = 82.0
+
+    qc_scale = CurveScaleSpec(
+        min_value=0.0,
+        max_value=qc_range,
+        width_mm=plot_width,
+        major_tick_step=max(1.0, qc_range / 6.0),
+        minor_tick_step=max(0.5, qc_range / 30.0),
+        title="qc",
+        unit="MPa",
+        x_origin_mm=plot_x0,
+        layer_scale="ZE_CPT_QC_SCALE",
+        layer_curve="ZE_CPT_QC_CURVE",
+    )
+    fs_scale = CurveScaleSpec(
+        min_value=0.0,
+        max_value=fs_range,
+        width_mm=plot_width,
+        major_tick_step=max(1.0, fs_range / 6.0),
+        minor_tick_step=max(1.0, fs_range / 30.0),
+        title="fs",
+        unit="kPa",
+        x_origin_mm=plot_x0,
+        layer_scale="ZE_CPT_FS_SCALE",
+        layer_curve="ZE_CPT_FS_CURVE",
+    )
+
+    qc_points: list[tuple[float, float]] = []
+    fs_points: list[tuple[float, float]] = []
+    for depth, qc_mpa, fs_kpa in samples:
+        y_mm = _depth_to_y_mm(depth, int(options.vertical_scale))
         qc_points.append((_value_to_x_mm(qc_mpa, qc_scale), y_mm))
         fs_points.append((_value_to_x_mm(fs_kpa, fs_scale), y_mm))
 
-    if not depth_values:
-        depth_values = [0.0]
+    title = title_text or f"Зондирование {int(getattr(test, 'tid', 0) or 0)}"
 
-    max_depth_m = max(depth_values)
-    y_bottom_mm = _depth_to_y_mm(max_depth_m, int(options.vertical_scale))
-    depth_axis = DepthAxisSpec(
-        layer="ZE_CPT_DEPTH_AXIS",
-        x_mm=0.0,
-        max_depth_m=max_depth_m,
-        major_step_m=1.0,
-        minor_step_m=0.2,
-        label_offset_mm=3.0,
-    )
+    # Header is moved up by +20 units compared to previous baseline around y=0..5
+    qc_axis_y = 20.0
+    fs_axis_y = 12.0
+    title_y = 28.0
 
-    lines: list[CadLine] = [
-        CadLine("ZE_CPT_DEPTH_AXIS", (depth_axis.x_mm, 0.0), (depth_axis.x_mm, y_bottom_mm)),
+    lines: list[CadLine] = []
+    texts: list[TextLabel] = [
+        TextLabel("ZE_CPT_TITLE", title, plot_x0, title_y, 3.0, align="LEFT"),
+        TextLabel("ZE_CPT_TITLE", f"qc, {qc_scale.unit}", plot_x0, qc_axis_y + 1.8, 2.4, align="LEFT"),
+        TextLabel("ZE_CPT_TITLE", f"fs, {fs_scale.unit}", plot_x0, fs_axis_y + 1.8, 2.4, align="LEFT"),
     ]
-    lines.extend(_build_scale_ticks(spec=qc_scale, y_top_mm=0.0, y_bottom_mm=y_bottom_mm))
-    lines.extend(_build_scale_ticks(spec=fs_scale, y_top_mm=0.0, y_bottom_mm=y_bottom_mm))
 
-    major = depth_axis.major_step_m
-    minor = depth_axis.minor_step_m
-    d = 0.0
-    while d <= max_depth_m + 1e-9:
-        y = _depth_to_y_mm(d, int(options.vertical_scale))
-        lines.append(CadLine("ZE_CPT_DEPTH_AXIS", (-1.8, y), (1.8, y)))
-        if options.include_grid:
-            lines.append(CadLine("ZE_CPT_GRID", (qc_scale.x_origin_mm, y), (fs_scale.x_origin_mm + fs_scale.width_mm, y)))
-        d += major
-    d = 0.0
-    while d <= max_depth_m + 1e-9:
-        y = _depth_to_y_mm(d, int(options.vertical_scale))
-        lines.append(CadLine("ZE_CPT_DEPTH_AXIS", (-1.0, y), (1.0, y)))
-        d += minor
-
-    frame_x0 = -8.0
-    frame_x1 = fs_scale.x_origin_mm + fs_scale.width_mm + 8.0
-    lines.extend(
-        [
-            CadLine("ZE_CPT_FRAME", (frame_x0, 6.0), (frame_x1, 6.0)),
-            CadLine("ZE_CPT_FRAME", (frame_x1, 6.0), (frame_x1, y_bottom_mm - 6.0)),
-            CadLine("ZE_CPT_FRAME", (frame_x1, y_bottom_mm - 6.0), (frame_x0, y_bottom_mm - 6.0)),
-            CadLine("ZE_CPT_FRAME", (frame_x0, y_bottom_mm - 6.0), (frame_x0, 6.0)),
-        ]
-    )
+    qc_scale_lines, qc_scale_texts = _build_scale_lines(spec=qc_scale, axis_y_mm=qc_axis_y)
+    fs_scale_lines, fs_scale_texts = _build_scale_lines(spec=fs_scale, axis_y_mm=fs_axis_y)
+    lines.extend(qc_scale_lines)
+    lines.extend(fs_scale_lines)
+    texts.extend(qc_scale_texts)
+    texts.extend(fs_scale_texts)
 
     points = [CadPoint("ZE_CPT_BASEPOINT", (0.0, 0.0, 0.0))]
     lines.extend(
@@ -205,29 +208,7 @@ def build_cpt_cad_scene(
         ]
     )
 
-    texts: list[TextLabel] = [
-        TextLabel("ZE_CPT_TITLES", f"{qc_scale.title}, {qc_scale.unit}", qc_scale.x_origin_mm, 5.0, 2.5),
-        TextLabel("ZE_CPT_TITLES", f"{fs_scale.title}, {fs_scale.unit}", fs_scale.x_origin_mm, 5.0, 2.5),
-        TextLabel("ZE_CPT_TITLES", "Глубина, м", -7.0, 5.0, 2.5),
-    ]
-
-    d = 0.0
-    while d <= max_depth_m + 1e-9:
-        y = _depth_to_y_mm(d, int(options.vertical_scale))
-        texts.append(TextLabel("ZE_CPT_TITLES", f"{d:.2f}", -7.0, y - 0.8, 2.0))
-        d += major
-
-    for spec in (qc_scale, fs_scale):
-        val = spec.min_value
-        while val <= spec.max_value + 1e-9:
-            x = _value_to_x_mm(val, spec)
-            texts.append(TextLabel("ZE_CPT_TITLES", f"{val:g}", x, -4.2, 1.8, align="CENTER"))
-            val += spec.major_tick_step
-
-    qc_series = CurveSeries(layer=qc_scale.layer_curve, points_mm=qc_points)
-    fs_series = CurveSeries(layer=fs_scale.layer_curve, points_mm=fs_points)
-
-    polylines = []
+    polylines: list[CadPolyline] = []
     if len(qc_points) >= 2:
         polylines.append(CadPolyline(qc_scale.layer_curve, qc_points))
     if len(fs_points) >= 2:
@@ -244,18 +225,23 @@ def build_cpt_cad_scene(
             texts=texts,
         ),
     )
+
+    y_bottom = _depth_to_y_mm(max_depth_m, int(options.vertical_scale))
     _log.info(
-        "build_cpt_cad_scene done test_id=%s points_qc=%s points_fs=%s depth_max=%.3f",
+        "build_cpt_cad_scene done test_id=%s points_qc=%s points_fs=%s qc_max=%.3f fs_max=%.3f",
         int(getattr(test, "tid", 0) or 0),
         len(qc_points),
         len(fs_points),
-        float(max_depth_m),
+        qc_range,
+        fs_range,
     )
     return CadBuildResult(
         scene=scene,
-        qc_series=qc_series,
-        fs_series=fs_series,
+        qc_series=CurveSeries(layer=qc_scale.layer_curve, points_mm=qc_points),
+        fs_series=CurveSeries(layer=fs_scale.layer_curve, points_mm=fs_points),
         qc_scale=qc_scale,
         fs_scale=fs_scale,
-        depth_axis=depth_axis,
+        depth_axis=DepthAxisSpec(layer="ZE_CPT_SERVICE", x_mm=0.0, max_depth_m=max_depth_m, major_step_m=1.0, minor_step_m=0.2),
+        drawing_width_mm=plot_width,
+        drawing_height_mm=abs(y_bottom) + title_y,
     )

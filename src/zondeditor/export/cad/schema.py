@@ -14,6 +14,7 @@ class CadLayerSpec:
     color_aci: int
     rgb: tuple[int, int, int] | None = None
     linetype: str = "CONTINUOUS"
+    lineweight: int | None = None  # hundredths of mm: 30 => 0.30mm
 
 
 @dataclass(frozen=True)
