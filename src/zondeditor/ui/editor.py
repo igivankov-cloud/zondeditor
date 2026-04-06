@@ -943,12 +943,28 @@ class GeoCanvasEditor(tk.Tk):
         self._recompute_statuses_after_data_load(preview_mode=False)
         try:
             if getattr(self, "ribbon_view", None):
+                mode_params = dict(getattr(self, "project_mode_params", {}) or {})
                 self.ribbon_view.set_project_type(
                     str(getattr(self, "project_type", "") or ""),
-                    mode_params=dict(getattr(self, "project_mode_params", {}) or {}),
+                    mode_params=mode_params,
                     emit=False,
                 )
                 self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(getattr(self, "geo_kind", "K2")))
+                step_txt = str(mode_params.get("mode_step_depth", "") or "").strip().replace(",", ".")
+                if not step_txt:
+                    try:
+                        step_txt = f"{float(getattr(self, 'step_m', 0.05) or 0.05):.2f}"
+                    except Exception:
+                        step_txt = "0.05"
+                else:
+                    try:
+                        step_txt = f"{float(step_txt):.2f}"
+                    except Exception:
+                        pass
+                try:
+                    self.ribbon_view.step_depth_var.set(step_txt)
+                except Exception:
+                    pass
         except Exception:
             pass
 
