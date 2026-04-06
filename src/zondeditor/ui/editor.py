@@ -3187,6 +3187,13 @@ class GeoCanvasEditor(tk.Tk):
             for t in (getattr(self, "tests", []) or []):
                 tid = int(getattr(t, "tid", 0) or 0)
                 self.step_by_tid[tid] = float(new_step)
+        try:
+            if abs(float(new_step) - 0.05) <= 1e-6:
+                self.step_choice.set("5")
+            elif float(new_step) >= 0.1:
+                self.step_choice.set("10")
+        except Exception:
+            pass
         return True
 
     def _apply_type1_params(self, mode_keys: dict[str, str]) -> bool:
@@ -3228,6 +3235,7 @@ class GeoCanvasEditor(tk.Tk):
         self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
         self.project_mode_params["mode_lob_coeff"] = f"{lob_val:.2f}".rstrip("0").rstrip(".")
         self.project_mode_params["mode_total_coeff"] = f"{tot_val:.2f}".rstrip("0").rstrip(".")
+        self._sync_type1_params_to_ribbon()
         self._skip_next_type1_error_popup = False
         self._redraw()
         self.schedule_graph_redraw()
@@ -3259,6 +3267,7 @@ class GeoCanvasEditor(tk.Tk):
             self._sync_direct_params_to_ribbon()
             return False
         self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
+        self._sync_direct_params_to_ribbon()
         self._skip_next_type1_error_popup = False
         self._redraw()
         self.schedule_graph_redraw()
@@ -3280,6 +3289,7 @@ class GeoCanvasEditor(tk.Tk):
             self._sync_type2_params_to_ribbon()
             return False
         self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
+        self._sync_type2_params_to_ribbon()
         self._skip_next_type1_error_popup = False
         self._redraw()
         self.schedule_graph_redraw()

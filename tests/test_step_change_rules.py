@@ -74,3 +74,19 @@ def test_resample_reduce_and_increase_adjust_rows():
     ed._ask_step_change_mode = lambda **_kwargs: "resample"
     assert ed._apply_step_change_request(old_step=0.05, new_step=0.1) is True
     assert t.depth == ["0.00", "0.10", "0.20"]
+
+
+def test_apply_type2_params_updates_mode_step_and_syncs_ribbon():
+    ed = _mk_editor()
+    ed.project_mode_params = {"mode_step_depth": "0.10"}
+    ed._skip_next_type1_error_popup = True
+    ed._redraw = lambda: None
+    ed.schedule_graph_redraw = lambda: None
+    sync_calls = []
+    ed._sync_type2_params_to_ribbon = lambda: sync_calls.append("sync")
+    ed._apply_step_change_request = lambda **_kwargs: True
+
+    ok = ed._apply_type2_params({"mode_step_depth": "0.05"})
+    assert ok is True
+    assert ed.project_mode_params["mode_step_depth"] == "0.05"
+    assert sync_calls == ["sync"]
