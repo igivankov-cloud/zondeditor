@@ -944,11 +944,15 @@ class GeoCanvasEditor(tk.Tk):
         try:
             if getattr(self, "ribbon_view", None):
                 mode_params = dict(getattr(self, "project_mode_params", {}) or {})
+                merged_params = dict(self._current_common_params() or {})
+                merged_params.update(mode_params)
+                merged_params["project_type"] = str(getattr(self, "project_type", "") or "")
                 self.ribbon_view.set_project_type(
                     str(getattr(self, "project_type", "") or ""),
-                    mode_params=mode_params,
+                    mode_params=merged_params,
                     emit=False,
                 )
+                self.ribbon_view.set_common_params(merged_params, geo_kind=str(getattr(self, "geo_kind", "K2")))
                 step_txt = str(mode_params.get("mode_step_depth", "") or "").strip().replace(",", ".")
                 if not step_txt:
                     try:
@@ -964,6 +968,13 @@ class GeoCanvasEditor(tk.Tk):
                     self.ribbon_view.step_depth_var.set(step_txt)
                 except Exception:
                     pass
+                self._debug_log(
+                    "UNDO/REDO sync: "
+                    f"project_type={getattr(self, 'project_type', '')}, "
+                    f"mode_step={mode_params.get('mode_step_depth')}, "
+                    f"step_var={getattr(self.ribbon_view, 'step_depth_var', None).get() if getattr(self.ribbon_view, 'step_depth_var', None) else ''}, "
+                    f"controller={merged_params.get('controller_type', '')}"
+                )
         except Exception:
             pass
 
