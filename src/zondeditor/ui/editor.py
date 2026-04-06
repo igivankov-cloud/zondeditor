@@ -60,8 +60,6 @@ from src.zondeditor.export.cad import (
     ExportCadOptions,
     build_cpt_cad_scene,
     cad_log_path,
-    convert_dxf_to_dwg,
-    find_oda_converter,
     write_cad_scenes_to_dxf,
 )
 from src.zondeditor.io.geo_reader import load_geo, parse_geo_bytes, GeoParseError
@@ -10472,28 +10470,25 @@ class GeoCanvasEditor(tk.Tk):
             title="Сохранить CAD график",
             defaultextension=".dxf",
             initialfile=f"{suggested_name}.dxf",
-            filetypes=[("CAD DXF", "*.dxf"), ("CAD DWG", "*.dwg"), ("All files", "*.*")],
+            filetypes=[("CAD DXF", "*.dxf"), ("All files", "*.*")],
         )
         if not out_path:
             return
-        ext = str(Path(out_path).suffix or ".dxf").lower()
-        fmt = "DWG" if ext == ".dwg" else "DXF"
-        has_dwg_converter = find_oda_converter(None) is not None
+        out_path = str(Path(out_path).with_suffix(".dxf"))
 
         cp = self._current_common_params()
         calibration = calibration_from_common_params(cp, geo_kind=str(getattr(self, "geo_kind", "K2") or "K2"))
         options = ExportCadOptions(
             vertical_scale=vertical_scale,
             include_grid=True,
-            output_format=("dwg" if fmt == "DWG" else "dxf"),
-            try_convert_to_dwg=(fmt == "DWG"),
+            output_format="dxf",
         )
         cad_log = cad_log_path()
         try:
             self.usage_logger.info(
                 "CAD export start: tests=%s fmt=%s vscale=%s out=%s log=%s",
                 [int(getattr(t, "tid", 0) or 0) for t in tests_to_export],
-                fmt,
+                "DXF",
                 vertical_scale,
                 out_path,
                 cad_log,
@@ -10518,7 +10513,7 @@ class GeoCanvasEditor(tk.Tk):
                 )
                 scenes.append(build_result.scene)
             out_requested = Path(out_path)
-            dxf_path = out_requested if fmt == "DXF" else out_requested.with_suffix(".dxf")
+            dxf_path = out_requested
             write_cad_scenes_to_dxf(scenes, dxf_path, x_step_mm=130.0)
         except Exception as exc:
             try:
@@ -10526,30 +10521,6 @@ class GeoCanvasEditor(tk.Tk):
             except Exception:
                 pass
             messagebox.showerror("Экспорт CAD", f"Не удалось сохранить DXF:\n{exc}\n\nЛог: {cad_log}")
-            return
-
-        if fmt == "DWG":
-            if not has_dwg_converter:
-                messagebox.showerror(
-                    "Экспорт CAD",
-                    "DWG-экспорт недоступен: не найден конвертер DWG. "
-                    "Сохраните файл в DXF или настройте путь к конвертеру "
-                    "(переменная ZE_ODA_CONVERTER или папка tools/oda рядом с программой).\n\n"
-                    f"DXF сохранён ({len(tests_to_export)} граф.): {dxf_path}\n"
-                    f"Лог: {cad_log}",
-                )
-                return
-            conversion = convert_dxf_to_dwg(dxf_path=dxf_path, dwg_path=Path(out_path))
-            if conversion.success and conversion.dwg_path is not None:
-                messagebox.showinfo(
-                    "Экспорт CAD",
-                    f"Экспорт завершён ({len(tests_to_export)} граф.).\nDXF: {dxf_path}\nDWG: {conversion.dwg_path}\nЛог: {cad_log}",
-                )
-                return
-            messagebox.showwarning(
-                "Экспорт CAD",
-                f"DXF сохранён ({len(tests_to_export)} граф.): {dxf_path}\nDWG не получен: {conversion.message}\nЛог: {cad_log}",
-            )
             return
 
         messagebox.showinfo("Экспорт CAD", f"DXF сохранён ({len(tests_to_export)} граф.):\n{dxf_path}\nЛог: {cad_log}")

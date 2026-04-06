@@ -167,25 +167,28 @@ class RibbonView(ttk.Frame):
         exports.pack_propagate(False)
         self._add_btn(exports, "export_geo", "GEO", "Экспорт GEO только через Сохранить как", width=file_btn_width)
         self._add_btn(exports, "export_gxl", "GXL", "Экспорт GXL только через Сохранить как", width=file_btn_width)
-        self._add_btn(exports, "export_dxf", "DXF / DWG", "Экспорт графиков в CAD (DXF / DWG)", width=file_btn_width)
+        self._add_btn(exports, "export_dxf", "DXF", "Экспорт графиков в CAD (DXF)", width=file_btn_width)
 
     def _build_params_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Параметры")
         self._params_tab = tab
         layout = ttk.Frame(tab)
-        layout.pack(side="top", anchor="w")
+        layout.pack(side="top", fill="x", anchor="w")
         self._params_mode_host = ttk.Frame(layout)
-        self._params_mode_host.pack(side="left", anchor="nw")
+        self._params_mode_host.pack(side="left", anchor="nw", fill="x", expand=True)
         actions = ttk.Frame(layout)
-        actions.pack(side="left", anchor="nw", padx=(10, 0))
-        self._add_btn(
+        actions.pack(side="right", anchor="ne", padx=(12, 0), fill="y")
+        fix_btn = ttk.Button(
             actions,
-            "fix_algo",
-            "Интерполировать отсутствующие значения",
-            "Автоматическая корректировка",
-            width=38,
+            text="Интерполировать\nотсутствующие\nзначения",
+            command=self.commands.get("fix_algo"),
+            style="RibbonCompact.TButton",
+            width=14,
         )
+        fix_btn.pack(side="top", fill="y", ipadx=6, ipady=18, pady=2)
+        ToolTip(fix_btn, "Автоматическая корректировка")
+        self._buttons["fix_algo"] = fix_btn
         self._render_params_by_project_type(self.project_type_mode)
 
     def _build_empty_params_state(self, parent):

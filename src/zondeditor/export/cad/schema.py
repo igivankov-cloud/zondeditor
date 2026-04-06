@@ -1,11 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Literal
-
-
-CadFormat = Literal["dxf", "dwg"]
 
 
 @dataclass(frozen=True)
@@ -62,9 +58,7 @@ class DepthAxisSpec:
 class ExportCadOptions:
     vertical_scale: int = 100
     include_grid: bool = True
-    output_format: CadFormat = "dxf"
-    converter_path: str | None = None
-    try_convert_to_dwg: bool = False
+    output_format: Literal["dxf"] = "dxf"
 
 
 @dataclass(frozen=True)
@@ -104,10 +98,3 @@ class CadScene:
     block: CadBlock
     insertion_point: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
-
-@dataclass(frozen=True)
-class DwgConversionResult:
-    requested: bool
-    success: bool
-    dwg_path: Path | None = None
-    message: str = ""
