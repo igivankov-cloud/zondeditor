@@ -178,13 +178,16 @@ class RibbonView(ttk.Frame):
         self._params_mode_host = ttk.Frame(layout)
         self._params_mode_host.pack(side="left", anchor="nw")
         actions = ttk.Frame(layout)
-        actions.pack(side="left", anchor="n", padx=(10, 0), pady=(12, 0), fill="y")
-        fix_btn = ttk.Button(
+        actions.pack(side="left", anchor="n", padx=(10, 0), pady=(24, 0), fill="y")
+        fix_btn = tk.Button(
             actions,
             text="Интерполировать\nотсутствующие\nзначения",
             command=self.commands.get("fix_algo"),
-            style="RibbonCompact.TButton",
             width=14,
+            justify="center",
+            anchor="center",
+            relief="groove",
+            borderwidth=1,
         )
         fix_btn.pack(side="top", fill="y", ipadx=6, ipady=18, pady=2)
         ToolTip(fix_btn, "Автоматическая корректировка")

@@ -4374,12 +4374,6 @@ class GeoCanvasEditor(tk.Tk):
 
     def _test_has_orange_mark(self, test_id: int) -> bool:
         tid = int(test_id or 0)
-        marks = dict(getattr(self, "_marks_index", {}) or {})
-        for (m_tid, _depth_m, _field), meta in marks.items():
-            if int(m_tid) != tid:
-                continue
-            if str((meta or {}).get("color") or "").strip().lower() == "orange":
-                return True
         test = None
         for t in (getattr(self, "tests", []) or []):
             if int(getattr(t, "tid", 0) or 0) == tid:
@@ -4388,8 +4382,8 @@ class GeoCanvasEditor(tk.Tk):
         if test is None:
             return False
         fl = self.flags.get(tid, TestFlags(False, set(), set(), set(), set()))
-        if bool(getattr(fl, "interp_cells", set()) or set()):
-            return True
+        marks = dict(getattr(self, "_marks_index", {}) or {})
+        interp_cells = set(getattr(fl, "interp_cells", set()) or set())
         user_cells = set(getattr(fl, "user_cells", set()) or set())
         q_arr = list(getattr(test, "qc", []) or [])
         f_arr = list(getattr(test, "fs", []) or [])
@@ -4397,11 +4391,23 @@ class GeoCanvasEditor(tk.Tk):
         for i in range(n):
             if i < len(q_arr):
                 qv = q_arr[i]
-                if is_missing_value(qv) and (i, "qc") not in user_cells:
+                q_missing = is_missing_value(qv)
+                if q_missing and (i, "qc") not in user_cells:
+                    return True
+                if q_missing and (i, "qc") in interp_cells:
+                    return True
+                mk_q = marks.get(self._mark_key(tid, self._safe_depth_m(test, i), "qc"))
+                if q_missing and str((mk_q or {}).get("color") or "").strip().lower() == "orange":
                     return True
             if i < len(f_arr):
                 fv = f_arr[i]
-                if is_missing_value(fv) and (i, "fs") not in user_cells:
+                f_missing = is_missing_value(fv)
+                if f_missing and (i, "fs") not in user_cells:
+                    return True
+                if f_missing and (i, "fs") in interp_cells:
+                    return True
+                mk_f = marks.get(self._mark_key(tid, self._safe_depth_m(test, i), "fs"))
+                if f_missing and str((mk_f or {}).get("color") or "").strip().lower() == "orange":
                     return True
         return False
 
