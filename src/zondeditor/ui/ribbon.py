@@ -185,7 +185,6 @@ class RibbonView(ttk.Frame):
             command=self.commands.get("fix_algo"),
             style="RibbonCompact.TButton",
             width=14,
-            justify="center",
         )
         fix_btn.pack(side="top", fill="y", ipadx=6, ipady=18, pady=2)
         ToolTip(fix_btn, "Автоматическая корректировка")
