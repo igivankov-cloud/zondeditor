@@ -42,7 +42,7 @@ def test_non_neighbor_transition_is_rejected():
     assert ed._is_neighbor_step_transition(0.2, 0.1) is True
 
 
-def test_overwrite_mode_changes_only_step_value():
+def test_overwrite_mode_rewrites_depth_grid_and_keeps_measurements():
     ed = _mk_editor()
     t = _DummyTest(tid=1, depth=["0.00", "0.10", "0.20"], qc=["1", "2", "3"], fs=["10", "20", "30"])
     ed.tests = [t]
@@ -51,7 +51,7 @@ def test_overwrite_mode_changes_only_step_value():
 
     ok = ed._apply_step_change_request(old_step=0.1, new_step=0.2)
     assert ok is True
-    assert t.depth == ["0.00", "0.10", "0.20"]
+    assert t.depth == ["0.00", "0.20", "0.40"]
     assert t.qc == ["1", "2", "3"]
     assert t.fs == ["10", "20", "30"]
     assert ed.step_by_tid[1] == 0.2

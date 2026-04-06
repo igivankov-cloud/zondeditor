@@ -3166,6 +3166,25 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             pass
 
+    def _rewrite_depth_grid_keep_measurements(self, *, new_step: float):
+        step = float(new_step)
+        if step <= 0:
+            return
+        for t in (getattr(self, "tests", []) or []):
+            depth_arr = list(getattr(t, "depth", []) or [])
+            if not depth_arr:
+                continue
+            d0 = _parse_depth_float(str(depth_arr[0]))
+            if d0 is None:
+                tid = int(getattr(t, "tid", 0) or 0)
+                d0 = float((getattr(self, "depth0_by_tid", {}) or {}).get(tid, 0.0) or 0.0)
+            new_depth = [f"{(float(d0) + (idx * step)):.2f}" for idx in range(len(depth_arr))]
+            t.depth = new_depth
+            tid = int(getattr(t, "tid", 0) or 0)
+            self.depth0_by_tid[tid] = float(d0)
+            self.step_by_tid[tid] = float(step)
+        self.step_m = float(step)
+
     def _apply_step_change_request(self, *, old_step: float, new_step: float) -> bool:
         if abs(float(old_step) - float(new_step)) <= 1e-6:
             return True
@@ -3183,10 +3202,7 @@ class GeoCanvasEditor(tk.Tk):
         if mode == "resample":
             self._resample_depth_grid_between_neighbor_steps(old_step=float(old_step), new_step=float(new_step))
         else:
-            self.step_m = float(new_step)
-            for t in (getattr(self, "tests", []) or []):
-                tid = int(getattr(t, "tid", 0) or 0)
-                self.step_by_tid[tid] = float(new_step)
+            self._rewrite_depth_grid_keep_measurements(new_step=float(new_step))
         try:
             if abs(float(new_step) - 0.05) <= 1e-6:
                 self.step_choice.set("5")
