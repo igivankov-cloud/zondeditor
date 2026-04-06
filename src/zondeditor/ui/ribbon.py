@@ -69,6 +69,8 @@ class RibbonView(ttk.Frame):
             style.configure("RibbonCompact.TButton", padding=(4, 1))
             style.configure("RibbonFileLeft.TButton", padding=(4, 1), anchor="w")
             style.configure("IGEHdr.TButton", padding=(3, 1))
+            style.configure("InterpAction.TButton", padding=(6, 18), anchor="center")
+            style.map("InterpAction.TButton", background=[("active", "#e8edf5")])
         except Exception:
             pass
 
@@ -167,7 +169,7 @@ class RibbonView(ttk.Frame):
         exports.pack_propagate(False)
         self._add_btn(exports, "export_geo", "GEO", "Экспорт GEO только через Сохранить как", width=file_btn_width)
         self._add_btn(exports, "export_gxl", "GXL", "Экспорт GXL только через Сохранить как", width=file_btn_width)
-        self._add_btn(exports, "export_dxf", "DXF", "Экспорт графиков в DXF (заглушка)", width=file_btn_width)
+        self._add_btn(exports, "export_dxf", "DXF", "Экспорт графиков в CAD (DXF)", width=file_btn_width)
 
     def _build_params_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
@@ -178,14 +180,17 @@ class RibbonView(ttk.Frame):
         self._params_mode_host = ttk.Frame(layout)
         self._params_mode_host.pack(side="left", anchor="nw")
         actions = ttk.Frame(layout)
-        actions.pack(side="left", anchor="nw", padx=(10, 0))
-        self._add_btn(
+        actions.pack(side="left", anchor="n", padx=(10, 0), pady=(24, 0), fill="y")
+        fix_btn = ttk.Button(
             actions,
-            "fix_algo",
-            "Интерполировать отсутствующие значения",
-            "Автоматическая корректировка",
-            width=38,
+            text="Интерполировать\nотсутствующие\nзначения",
+            command=self.commands.get("fix_algo"),
+            style="InterpAction.TButton",
+            width=14,
         )
+        fix_btn.pack(side="top", fill="y", ipadx=6, ipady=2, pady=2)
+        ToolTip(fix_btn, "Автоматическая корректировка")
+        self._buttons["fix_algo"] = fix_btn
         self._render_params_by_project_type(self.project_type_mode)
 
     def _build_empty_params_state(self, parent):

@@ -35,6 +35,8 @@ import zipfile
 import shutil
 import tempfile
 import traceback
+import stat
+import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -56,6 +58,12 @@ from src.zondeditor.export.cpt_protocol_docx import export_cpt_protocol_docx
 from src.zondeditor.export.geo_export import bundle_geo_filename, export_bundle_geo, prepare_geo_tests
 from src.zondeditor.export.gxl_export import export_gxl_generated
 from src.zondeditor.export.selection import select_export_tests
+from src.zondeditor.export.cad import (
+    ExportCadOptions,
+    build_cpt_cad_scene,
+    cad_log_path,
+    write_cad_scenes_to_dxf,
+)
 from src.zondeditor.io.geo_reader import load_geo, parse_geo_bytes, GeoParseError
 from src.zondeditor.io.gxl_reader import parse_gxl_file, GxlParseError
 from src.zondeditor.io.geo_writer import save_geo_as, save_k2_geo_from_template, build_k2_geo_from_template
@@ -4366,6 +4374,65 @@ class GeoCanvasEditor(tk.Tk):
             return GUI_ORANGE if export_on else "#ffd8aa"  # muted orange
         return GUI_HDR if export_on else "#f2f2f2"
 
+    def _test_has_orange_mark(self, test_id: int) -> bool:
+        tid = int(test_id or 0)
+        test = None
+        for t in (getattr(self, "tests", []) or []):
+            if int(getattr(t, "tid", 0) or 0) == tid:
+                test = t
+                break
+        if test is None:
+            return False
+        fl = self.flags.get(tid, TestFlags(False, set(), set(), set(), set()))
+        marks = dict(getattr(self, "_marks_index", {}) or {})
+        interp_cells = set(getattr(fl, "interp_cells", set()) or set())
+        user_cells = set(getattr(fl, "user_cells", set()) or set())
+        algo_cells = set(getattr(fl, "algo_cells", set()) or set())
+        force_cells = set(getattr(fl, "force_cells", set()) or set())
+        q_arr = list(getattr(test, "qc", []) or [])
+        f_arr = list(getattr(test, "fs", []) or [])
+        n = max(len(q_arr), len(f_arr))
+        for i in range(n):
+            if i < len(q_arr):
+                qv = q_arr[i]
+                q_missing = is_missing_value(qv)
+                if q_missing and (i, "qc") not in user_cells:
+                    return True
+                mk_q = marks.get(self._mark_key(tid, self._safe_depth_m(test, i), "qc"))
+                mk_q_color = str((mk_q or {}).get("color") or "").strip().lower()
+                if mk_q_color == "orange":
+                    return True
+                if mk_q_color in {"purple", "green", "blue"}:
+                    continue
+                if (i, "qc") in user_cells:
+                    continue
+                if (i, "qc") in algo_cells:
+                    continue
+                if (i, "qc") in force_cells:
+                    continue
+                if (i, "qc") in interp_cells:
+                    return True
+            if i < len(f_arr):
+                fv = f_arr[i]
+                f_missing = is_missing_value(fv)
+                if f_missing and (i, "fs") not in user_cells:
+                    return True
+                mk_f = marks.get(self._mark_key(tid, self._safe_depth_m(test, i), "fs"))
+                mk_f_color = str((mk_f or {}).get("color") or "").strip().lower()
+                if mk_f_color == "orange":
+                    return True
+                if mk_f_color in {"purple", "green", "blue"}:
+                    continue
+                if (i, "fs") in user_cells:
+                    continue
+                if (i, "fs") in algo_cells:
+                    continue
+                if (i, "fs") in force_cells:
+                    continue
+                if (i, "fs") in interp_cells:
+                    return True
+        return False
+
     def _collect_error_protocol_items(self) -> list[dict]:
         items: list[dict] = []
         tests_by_tid = {int(getattr(t, "tid", 0) or 0): t for t in (getattr(self, "tests", []) or [])}
@@ -7915,7 +7982,7 @@ class GeoCanvasEditor(tk.Tk):
             ex_on = bool(getattr(t, "export_on", True))
             fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
             td = diagnostics.by_test.get(int(getattr(t, "tid", 0) or 0))
-            has_missing_values = bool(td and td.missing_rows)
+            has_missing_values = bool((td and td.missing_rows) or self._test_has_orange_mark(int(getattr(t, "tid", 0) or 0)))
             hdr_fill = self._header_fill_for_test(
                 invalid=bool(td.invalid) if td is not None else bool(getattr(fl, "invalid", False)),
                 has_missing=bool(has_missing_values),
@@ -7966,7 +8033,7 @@ class GeoCanvasEditor(tk.Tk):
             ex_on = bool(getattr(t, "export_on", True))
             fl = self.flags.get(t.tid, TestFlags(False, set(), set(), set(), set()))
             td = diagnostics.by_test.get(int(getattr(t, "tid", 0) or 0))
-            has_missing_values = bool(td and td.missing_rows)
+            has_missing_values = bool((td and td.missing_rows) or self._test_has_orange_mark(int(getattr(t, "tid", 0) or 0)))
             hdr_fill = self._header_fill_for_test(
                 invalid=bool(td.invalid) if td is not None else bool(getattr(fl, "invalid", False)),
                 has_missing=bool(has_missing_values),
@@ -10365,10 +10432,164 @@ class GeoCanvasEditor(tk.Tk):
             messagebox.showerror("Протокол CPT", f"Не удалось сформировать протокол:\n{e}")
 
     def export_dxf(self):
-        messagebox.showinfo(
-            "Экспорт DXF",
-            "Кнопка экспорта графиков в DXF добавлена. Логика экспорта будет реализована следующим шагом.",
+        if not getattr(self, "tests", None):
+            messagebox.showwarning("Экспорт CAD", "Нет данных зондирования для экспорта.")
+            return
+        if not self._validate_export_rows():
+            return
+
+        def _ask_vertical_scale() -> int | None:
+            dlg = tk.Toplevel(self)
+            dlg.title("Вертикальный масштаб")
+            dlg.transient(self)
+            dlg.grab_set()
+            dlg.resizable(False, False)
+            var = tk.IntVar(master=dlg, value=100)
+            frm = ttk.Frame(dlg, padding=10)
+            frm.pack(fill="both", expand=True)
+            ttk.Label(frm, text="Выберите вертикальный масштаб:").pack(anchor="center", pady=(0, 8))
+            scales_host = ttk.Frame(frm)
+            scales_host.pack(anchor="center")
+            for value in (50, 100, 200):
+                ttk.Radiobutton(scales_host, text=f"1:{value}", variable=var, value=value).pack(anchor="center", pady=1)
+            out = {"value": None}
+
+            def _ok():
+                out["value"] = int(var.get())
+                dlg.destroy()
+
+            def _cancel():
+                dlg.destroy()
+
+            btns = ttk.Frame(frm)
+            btns.pack(anchor="center", pady=(10, 0))
+            ttk.Button(btns, text="Отмена", command=_cancel).pack(side="left", padx=(0, 8))
+            ttk.Button(btns, text="OK", command=_ok).pack(side="left")
+            dlg.update_idletasks()
+            sw = int(dlg.winfo_screenwidth() or 1200)
+            sh = int(dlg.winfo_screenheight() or 800)
+            ww = int(dlg.winfo_reqwidth() or 280)
+            wh = int(dlg.winfo_reqheight() or 150)
+            pos_x = max(0, (sw - ww) // 2)
+            pos_y = max(0, (sh - wh) // 2)
+            dlg.geometry(f"{ww}x{wh}+{pos_x}+{pos_y}")
+            dlg.protocol("WM_DELETE_WINDOW", _cancel)
+            dlg.wait_window()
+            return out["value"]
+
+        vertical_scale = _ask_vertical_scale()
+        if vertical_scale is None:
+            return
+
+        selection = self._collect_export_tests()
+        tests_exp = list(selection.tests)
+        if not tests_exp:
+            messagebox.showwarning("Экспорт CAD", "Не выбрано ни одного опыта для экспорта.")
+            return
+        tests_to_export = list(tests_exp)
+
+        invalid_tids: list[int] = []
+        for t in tests_to_export:
+            d_arr = list(getattr(t, "depth", []) or [])
+            q_arr = list(getattr(t, "qc", []) or [])
+            f_arr = list(getattr(t, "fs", []) or [])
+            n = max(len(d_arr), len(q_arr), len(f_arr))
+            bad = False
+            for i in range(n):
+                d = str(d_arr[i]).strip() if i < len(d_arr) and d_arr[i] is not None else ""
+                q = str(q_arr[i]).strip() if i < len(q_arr) and q_arr[i] is not None else ""
+                f = str(f_arr[i]).strip() if i < len(f_arr) and f_arr[i] is not None else ""
+                if not (d or q or f):
+                    continue
+                if not d or not q or not f:
+                    bad = True
+                    break
+            if bad:
+                invalid_tids.append(int(getattr(t, "tid", 0) or 0))
+        if invalid_tids:
+            if len(invalid_tids) == 1:
+                messagebox.showerror("Экспорт CAD", f"Экспорт невозможен: в опыте №{invalid_tids[0]} есть незаполненные значения.")
+            else:
+                joined = ", ".join(f"№{x}" for x in invalid_tids)
+                messagebox.showerror("Экспорт CAD", f"Экспорт невозможен: опыты {joined} содержат пропуски.")
+            return
+
+        object_name = str(getattr(self, "object_name", "") or "sounding").strip().replace(" ", "_")
+        if not object_name:
+            object_name = "sounding"
+        suffix = "all" if len(tests_to_export) > 1 else f"{int(getattr(tests_to_export[0], 'tid', 0) or 0):02d}"
+        suggested_name = f"{object_name}_{suffix}_graph_1_{vertical_scale}"
+        out_path = filedialog.asksaveasfilename(
+            title="Сохранить CAD график",
+            defaultextension=".dxf",
+            initialfile=f"{suggested_name}.dxf",
+            filetypes=[("CAD DXF", "*.dxf"), ("All files", "*.*")],
         )
+        if not out_path:
+            return
+        out_path = str(Path(out_path).with_suffix(".dxf"))
+
+        cp = self._current_common_params()
+        calibration = calibration_from_common_params(cp, geo_kind=str(getattr(self, "geo_kind", "K2") or "K2"))
+        options = ExportCadOptions(
+            vertical_scale=vertical_scale,
+            include_grid=True,
+            output_format="dxf",
+        )
+        cad_log = cad_log_path()
+        try:
+            self.usage_logger.info(
+                "CAD export start: tests=%s fmt=%s vscale=%s out=%s log=%s",
+                [int(getattr(t, "tid", 0) or 0) for t in tests_to_export],
+                "DXF",
+                vertical_scale,
+                out_path,
+                cad_log,
+            )
+        except Exception:
+            pass
+
+        try:
+            scenes = []
+            for test in tests_to_export:
+                block_name = f"ZE_CPT_T{int(getattr(test, 'tid', 0) or 0)}_M{vertical_scale}"
+                safe_block_name = re.sub(r"[^A-Za-z0-9_\\-]", "_", block_name)
+                title_text = f"Опыт {int(getattr(test, 'tid', 0) or 0)}"
+                build_result = build_cpt_cad_scene(
+                    test=test,
+                    calibration=calibration,
+                    options=options,
+                    block_name=safe_block_name,
+                    qc_max_mpa=float(getattr(self, "graph_qc_max_mpa", 0.0) or 0.0),
+                    fs_max_kpa=float(getattr(self, "graph_fs_max_kpa", 0.0) or 0.0),
+                    title_text=title_text,
+                )
+                scenes.append(build_result.scene)
+            out_requested = Path(out_path)
+            dxf_path = out_requested
+            write_cad_scenes_to_dxf(scenes, dxf_path, x_step_mm=130.0)
+            try:
+                mode = int(dxf_path.stat().st_mode)
+                os.chmod(dxf_path, mode | stat.S_IWUSR | stat.S_IWRITE)
+            except Exception:
+                pass
+        except Exception as exc:
+            try:
+                self.usage_logger.exception("CAD export DXF failed")
+            except Exception:
+                pass
+            messagebox.showerror("Экспорт CAD", f"Не удалось сохранить DXF:\n{exc}\n\nЛог: {cad_log}")
+            return
+
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(str(dxf_path))
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(dxf_path)])
+            else:
+                subprocess.Popen(["xdg-open", str(dxf_path)])
+        except Exception:
+            messagebox.showinfo("Экспорт CAD", f"DXF сохранён ({len(tests_to_export)} граф.):\n{dxf_path}\nЛог: {cad_log}")
 
     def export_credo_zip(self):
         """Export each test into two CSV (depth;qc_MPa and depth;fs_kPa) without headers, pack into ZIP.
