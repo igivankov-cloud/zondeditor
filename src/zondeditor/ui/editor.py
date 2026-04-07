@@ -888,6 +888,22 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
     def _debug_log(self, msg: str):
+        try:
+            log_path = getattr(self, "_debug_log_file_path", None)
+            if not log_path:
+                base_dir = Path.cwd() / "logs"
+                base_dir.mkdir(parents=True, exist_ok=True)
+                log_path = base_dir / "zondeditor_debug.log"
+                self._debug_log_file_path = log_path
+                try:
+                    print(f"[DEBUG] file log: {log_path}", file=sys.stderr)
+                except Exception:
+                    pass
+            ts = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(log_path, "a", encoding="utf-8") as fp:
+                fp.write(f"{ts} [DEBUG] {msg}\n")
+        except Exception:
+            pass
         if bool(getattr(self, "_debug_layers_overlay", False)):
             try:
                 print(f"[DEBUG] {msg}", file=sys.stderr)
