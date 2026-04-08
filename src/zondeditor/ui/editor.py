@@ -10465,12 +10465,16 @@ class GeoCanvasEditor(tk.Tk):
         )
         if not out_path:
             return
-        export_protocols_to_dxf(
-            scenes=[x.scene for x in results],
-            heights_mm=[x.height_mm for x in results],
-            out_path=Path(out_path).with_suffix('.dxf'),
-            gap_mm=10.0,
-        )
+        try:
+            export_protocols_to_dxf(
+                scenes=[x.scene for x in results],
+                heights_mm=[x.height_mm for x in results],
+                out_path=Path(out_path).with_suffix('.dxf'),
+                gap_mm=10.0,
+            )
+        except Exception as exc:
+            messagebox.showerror("Протокол", f"Не удалось сохранить DXF:\n{exc}")
+            return
         messagebox.showinfo("Протокол", f"DXF сохранён:\n{str(Path(out_path).with_suffix('.dxf'))}")
 
     def export_sounding_protocols_pdf(self):

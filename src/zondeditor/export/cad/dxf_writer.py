@@ -244,7 +244,14 @@ def _apply_layer(doc, layer: CadLayerSpec) -> None:
         layer_obj.rgb = tuple(int(c) for c in layer.rgb)
 
 
-def write_cad_scenes_to_dxf(scenes: list[CadScene], out_path: str | Path, *, x_step_mm: float = 120.0) -> Path:
+def write_cad_scenes_to_dxf(
+    scenes: list[CadScene],
+    out_path: str | Path,
+    *,
+    x_step_mm: float = 120.0,
+    require_ezdxf: bool = False,
+    validate_after_write: bool = False,
+) -> Path:
     if not scenes:
         raise ValueError("No CAD scenes to write")
 
@@ -255,8 +262,12 @@ def write_cad_scenes_to_dxf(scenes: list[CadScene], out_path: str | Path, *, x_s
     try:
         import ezdxf  # type: ignore
     except Exception as exc:  # pragma: no cover
+        if require_ezdxf:
+            raise RuntimeError("DXF export requires ezdxf runtime (fallback writer disabled for this export mode).") from exc
         _log.warning("ezdxf unavailable (%s), using ascii fallback writer", exc)
         _write_ascii_fallback(scenes, target, x_step_mm)
+        if validate_after_write:
+            _validate_ascii_structure(target)
         _log.info("write_cad_scenes_to_dxf done target=%s mode=fallback", target)
         return target
 
@@ -329,9 +340,34 @@ def write_cad_scenes_to_dxf(scenes: list[CadScene], out_path: str | Path, *, x_s
         )
 
     doc.saveas(target)
+    if validate_after_write:
+        _validate_ezdxf_file(target)
     _log.info("write_cad_scenes_to_dxf done target=%s mode=ezdxf", target)
     return target
 
 
 def write_cad_scene_to_dxf(scene: CadScene, out_path: str | Path) -> Path:
     return write_cad_scenes_to_dxf([scene], out_path)
+
+
+def _validate_ascii_structure(path: Path) -> None:
+    raw = path.read_bytes()
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raise RuntimeError("DXF contains UTF-8 BOM header, which is not allowed for fallback ASCII DXF.")
+    text = raw.decode("utf-8", errors="strict")
+    lines = text.splitlines()
+    if not lines or lines[-1].strip() != "EOF":
+        raise RuntimeError("DXF fallback file is missing EOF terminator.")
+    if "SECTION" not in text or "ENDSEC" not in text:
+        raise RuntimeError("DXF fallback file has invalid section structure.")
+    if "ENTITIES" not in text:
+        raise RuntimeError("DXF fallback file has no ENTITIES section.")
+
+
+def _validate_ezdxf_file(path: Path) -> None:
+    import ezdxf  # type: ignore
+
+    doc = ezdxf.readfile(path)
+    msp = doc.modelspace()
+    if len(msp) <= 0:
+        raise RuntimeError("DXF validation failed: ENTITIES section is empty.")
