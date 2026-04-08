@@ -47,6 +47,12 @@ from src.zondeditor.processing.calibration import (
     calc_qc_fs_from_del,
     calibration_from_common_params,
 )
+from src.zondeditor.export.protocol import (
+    build_protocol_documents as build_cpt_protocol_documents,
+    build_protocol_scene,
+    export_protocols_to_dxf,
+    export_protocols_to_pdf,
+)
 from src.zondeditor.processing.value_semantics import is_effective_zero, is_missing_value, max_zero_run, parse_measurement
 from src.zondeditor.processing.interpolation_precision import normalize_interpolated_value
 try:
@@ -301,6 +307,7 @@ class GeoCanvasEditor(tk.Tk):
         self._active_test_idx: int | None = None
         self.graph_qc_max_mpa: float = 30.0
         self.graph_fs_max_kpa: float = 500.0
+        self._protocol_cad_results = []
         self.layer_edit_mode = True
         self._layer_drag = None  # {"ti": int, "boundary": int}
         self._layer_handle_hitbox = []
@@ -2246,6 +2253,9 @@ class GeoCanvasEditor(tk.Tk):
                 "export_archive": self.export_bundle,
                 "export_dxf": self.export_dxf,
                 "export_cpt_protocol": self.export_cpt_protocol,
+                "protocol_build": self.build_sounding_protocols,
+                "protocol_export_dxf": self.export_sounding_protocols_dxf,
+                "protocol_export_pdf": self.export_sounding_protocols_pdf,
                 "geo_params": self.open_geo_params_dialog,
                 "common_params_changed": self._on_common_params_changed,
                 "fix_algo": self.fix_by_algorithm,
@@ -2304,6 +2314,10 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
                 self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
                 self.ribbon_view.calc_alluvial_sands_var.set(bool(getattr(self, "cpt_calc_settings", {}).get("alluvial_sands", True)))
+            except Exception:
+                pass
+            try:
+                self.ribbon_view.set_protocol_export_enabled(False)
             except Exception:
                 pass
             ribbon.pack_forget()
@@ -10389,6 +10403,98 @@ class GeoCanvasEditor(tk.Tk):
             return False
         return True
 
+
+
+    def _collect_protocol_tests(self):
+        return list(self._collect_export_tests().tests or [])
+
+    def _validate_protocol_tests(self, tests_to_check: list[TestData]) -> tuple[bool, list[int]]:
+        invalid_tids: list[int] = []
+        for t in tests_to_check:
+            d_arr = list(getattr(t, "depth", []) or [])
+            q_arr = list(getattr(t, "qc", []) or [])
+            f_arr = list(getattr(t, "fs", []) or [])
+            n = max(len(d_arr), len(q_arr), len(f_arr))
+            for i in range(n):
+                d = str(d_arr[i]).strip() if i < len(d_arr) and d_arr[i] is not None else ""
+                q = str(q_arr[i]).strip() if i < len(q_arr) and q_arr[i] is not None else ""
+                f = str(f_arr[i]).strip() if i < len(f_arr) and f_arr[i] is not None else ""
+                if not (d or q or f):
+                    continue
+                if not d or not q or not f:
+                    invalid_tids.append(int(getattr(t, "tid", 0) or 0))
+                    break
+        return (len(invalid_tids) == 0, invalid_tids)
+
+    def build_sounding_protocols(self):
+        tests_to_export = self._collect_protocol_tests()
+        if not tests_to_export:
+            messagebox.showerror("Протокол", "Не выбрано ни одного опыта для формирования протокола.")
+            return
+        ok, invalid_tids = self._validate_protocol_tests(tests_to_export)
+        if not ok:
+            joined = ", ".join(f"№{x}" for x in invalid_tids)
+            messagebox.showerror("Протокол", f"Формирование невозможно: в опытах {joined} есть неполные строки qc/fs.")
+            return
+
+        cp = self._current_common_params()
+        calibration = calibration_from_common_params(cp, geo_kind=str(getattr(self, "geo_kind", "K2") or "K2"))
+
+        docs_pack = build_cpt_protocol_documents(tests=tests_to_export, ige_registry=dict(getattr(self, "ige_registry", {}) or {}))
+        results = []
+        for doc in docs_pack.documents:
+            block_name = f"ZE_PROTOCOL_T{int(getattr(doc.test, 'tid', 0) or 0)}"
+            results.append(build_protocol_scene(doc=doc, calibration=calibration, block_name=block_name))
+        self._protocol_cad_results = results
+        try:
+            if getattr(self, "ribbon_view", None) is not None:
+                self.ribbon_view.set_protocol_export_enabled(bool(results))
+        except Exception:
+            pass
+        messagebox.showinfo("Протокол", f"Сформировано протоколов: {len(results)}")
+
+    def export_sounding_protocols_dxf(self):
+        results = list(getattr(self, "_protocol_cad_results", []) or [])
+        if not results:
+            messagebox.showwarning("Протокол", "Сначала сформируйте протокол.")
+            return
+        out_path = filedialog.asksaveasfilename(
+            title="Сохранить протоколы в DXF",
+            defaultextension=".dxf",
+            filetypes=[("CAD DXF", "*.dxf"), ("All files", "*.*")],
+        )
+        if not out_path:
+            return
+        export_protocols_to_dxf(
+            scenes=[x.scene for x in results],
+            heights_mm=[x.height_mm for x in results],
+            out_path=Path(out_path).with_suffix('.dxf'),
+            gap_mm=10.0,
+        )
+        messagebox.showinfo("Протокол", f"DXF сохранён:\n{str(Path(out_path).with_suffix('.dxf'))}")
+
+    def export_sounding_protocols_pdf(self):
+        results = list(getattr(self, "_protocol_cad_results", []) or [])
+        if not results:
+            messagebox.showwarning("Протокол", "Сначала сформируйте протокол.")
+            return
+        out_path = filedialog.asksaveasfilename(
+            title="Сохранить протоколы в PDF",
+            defaultextension=".pdf",
+            filetypes=[("PDF", "*.pdf"), ("All files", "*.*")],
+        )
+        if not out_path:
+            return
+        try:
+            export_protocols_to_pdf(
+                scenes=[x.scene for x in results],
+                heights_mm=[x.height_mm for x in results],
+                out_path=Path(out_path).with_suffix('.pdf'),
+            )
+        except Exception as exc:
+            messagebox.showerror("Протокол", f"Не удалось сохранить PDF:\n{exc}")
+            return
+        messagebox.showinfo("Протокол", f"PDF сохранён:\n{str(Path(out_path).with_suffix('.pdf'))}")
 
     def export_excel(self):
         if not self.tests:
