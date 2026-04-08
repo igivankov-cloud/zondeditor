@@ -6,7 +6,7 @@ from datetime import datetime
 from dataclasses import dataclass
 
 from src.zondeditor.domain.experience_column import ExperienceColumn, build_column_from_layers
-from src.zondeditor.domain.hatching.registry import load_registered_hatch
+from src.zondeditor.domain.hatching.registry import SOIL_TYPE_TO_HATCH_FILE, load_registered_hatch, normalize_soil_type
 from src.zondeditor.domain.models import TestData
 from src.zondeditor.processing.calibration import Calibration, calc_qc_fs
 from src.zondeditor.export.cad.schema import CadBlock, CadHatch, CadLayerSpec, CadLine, CadPolyline, CadScene, TextLabel
@@ -64,6 +64,18 @@ def _format_test_date(value: str) -> str:
         return raw
 
 
+def _infer_soil_type(*, explicit: str, description: str, ige_name: str) -> str:
+    raw = normalize_soil_type(explicit)
+    if raw in SOIL_TYPE_TO_HATCH_FILE:
+        return raw
+    hay = " ".join([str(description or ""), str(ige_name or "")]).lower().replace("ё", "е")
+    # Prefer longer keys first to avoid partial clashes (e.g., "песок" inside longer aliases).
+    for soil_key in sorted(SOIL_TYPE_TO_HATCH_FILE.keys(), key=len, reverse=True):
+        if soil_key in hay:
+            return soil_key
+    return raw
+
+
 def build_protocol_documents(*, tests: list[TestData], ige_registry: dict[str, dict[str, object]] | None = None) -> ProtocolBuildPack:
     docs: list[ProtocolDocument] = []
     reg = dict(ige_registry or {})
@@ -83,7 +95,11 @@ def build_protocol_documents(*, tests: list[TestData], ige_registry: dict[str, d
                     to_depth_m=float(getattr(it, "to_depth", 0.0) or 0.0),
                     ige_id=ige_id,
                     description=descr,
-                    soil_type=str(ent.get("soil_type") or ""),
+                    soil_type=_infer_soil_type(
+                        explicit=str(ent.get("soil_type") or ""),
+                        description=descr,
+                        ige_name=str(getattr(it, "ige_name", "") or ""),
+                    ),
                     abs_mark_text="",  # temporary: absolute elevation is not in data model yet
                 )
             )

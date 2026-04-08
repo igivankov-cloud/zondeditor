@@ -69,3 +69,13 @@ def test_protocol_suglinok_pattern_step_not_scaled_twice():
     assert angle_deg == 45.0
     # Suglinok JSON keeps dy around 5.65; export should not multiply by pattern.scale (14.0).
     assert offset[1] == 5.65
+
+
+def test_protocol_build_infers_soil_type_from_description_when_registry_field_missing():
+    pack = build_protocol_documents(
+        tests=[_test_data()],
+        ige_registry={"ИГЭ-1": {"notes": "ИГЭ-1 (суглинок)"}},
+    )
+    assert pack.documents
+    assert pack.documents[0].layers
+    assert pack.documents[0].layers[0].soil_type == "суглинок"
