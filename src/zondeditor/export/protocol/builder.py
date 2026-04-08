@@ -354,6 +354,8 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
                 CadHatch(
                     "ZE_PROTO_CUT",
                     section_boundary,
+                    color_aci=7,
+                    rgb=(0, 0, 0),
                     solid=False,
                     pattern_name=pattern_name,
                     pattern_definition=pattern_rows,

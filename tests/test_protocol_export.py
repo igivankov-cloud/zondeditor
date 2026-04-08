@@ -1,5 +1,6 @@
 from src.zondeditor.domain.models import TestData
 from src.zondeditor.domain.experience_column import ColumnInterval, ExperienceColumn
+from src.zondeditor.domain.hatching.registry import load_registered_hatch
 from src.zondeditor.processing.calibration import Calibration
 from src.zondeditor.export.protocol import build_protocol_documents, build_protocol_scene
 
@@ -96,3 +97,19 @@ def test_protocol_build_resolves_soil_type_by_ige_number_when_id_formats_differ(
     assert pack.documents
     assert pack.documents[0].layers
     assert pack.documents[0].layers[0].soil_type == "песок"
+
+
+def test_registry_supports_argilit_alias():
+    assert load_registered_hatch("аргилит") is not None
+
+
+def test_protocol_section_pattern_hatches_use_black_color():
+    pack = build_protocol_documents(
+        tests=[_test_data()],
+        ige_registry={"ИГЭ-1": {"soil_type": "глина", "notes": "Глина"}},
+    )
+    cal = Calibration(scale_div=250, fcone_kn=30.0, fsleeve_kn=10.0, cone_area_cm2=10.0, sleeve_area_cm2=350.0)
+    result = build_protocol_scene(doc=pack.documents[0], calibration=cal, block_name="PROTO_BLACK_HATCH")
+    patterned = [h for h in result.scene.block.hatches if h.layer == "ZE_PROTO_CUT" and h.pattern_definition]
+    assert patterned
+    assert all(h.color_aci == 7 for h in patterned)
