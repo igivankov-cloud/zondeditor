@@ -41,6 +41,16 @@ def export_protocols_to_pdf(*, scenes: list[CadScene], heights_mm: list[float], 
 
             for ln in scene.block.lines:
                 ax.plot([ln.start[0], ln.end[0]], [ln.start[1], ln.end[1]], color=_layer_color(ln.layer), linewidth=0.5)
+            for h in getattr(scene.block, "hatches", []):
+                if len(h.boundary) < 3:
+                    continue
+                xs = [p[0] for p in h.boundary] + [h.boundary[0][0]]
+                ys = [p[1] for p in h.boundary] + [h.boundary[0][1]]
+                col = _layer_color(h.layer)
+                if getattr(h, "rgb", None) is not None:
+                    rr, gg, bb = h.rgb
+                    col = f"#{int(rr):02x}{int(gg):02x}{int(bb):02x}"
+                ax.fill(xs, ys, color=col, linewidth=0)
             for pl in scene.block.polylines:
                 if not pl.points:
                     continue

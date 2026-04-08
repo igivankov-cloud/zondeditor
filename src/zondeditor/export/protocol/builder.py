@@ -8,7 +8,7 @@ from src.zondeditor.domain.experience_column import ExperienceColumn, build_colu
 from src.zondeditor.domain.hatching.registry import load_registered_hatch
 from src.zondeditor.domain.models import TestData
 from src.zondeditor.processing.calibration import Calibration, calc_qc_fs
-from src.zondeditor.export.cad.schema import CadBlock, CadLayerSpec, CadLine, CadPolyline, CadScene, TextLabel
+from src.zondeditor.export.cad.schema import CadBlock, CadHatch, CadLayerSpec, CadLine, CadPolyline, CadScene, TextLabel
 
 from .layout import DEFAULT_PROTOCOL_LAYOUT, ProtocolLayout
 from .models import ProtocolBuildPack, ProtocolDocument, ProtocolLayerRow
@@ -173,6 +173,7 @@ def _hatch_rect_lines(*, x0: float, x1: float, y_top: float, y_bot: float, spaci
 
 def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, block_name: str, layout: ProtocolLayout = DEFAULT_PROTOCOL_LAYOUT) -> ProtocolCadResult:
     lines: list[CadLine] = []
+    hatches: list[CadHatch] = []
     texts: list[TextLabel] = []
     polys: list[CadPolyline] = []
 
@@ -222,10 +223,20 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
             y_next = layout.y_for_depth(float(d + 1))
             # clean black rectangular fill for ruler band every second meter
             if d % 2 == 0:
-                yy = y
-                while yy > y_next:
-                    lines.append(CadLine("ZE_PROTO_RULER", (layout.x_depth_ruler_black, yy), (layout.x_depth_ruler_white, yy)))
-                    yy -= 0.10
+                hatches.append(
+                    CadHatch(
+                        "ZE_PROTO_RULER",
+                        [
+                            (layout.x_depth_ruler_black, y),
+                            (layout.x_depth_ruler_white, y),
+                            (layout.x_depth_ruler_white, y_next),
+                            (layout.x_depth_ruler_black, y_next),
+                        ],
+                        color_aci=7,
+                        rgb=(0, 0, 0),
+                        solid=True,
+                    )
+                )
             lines.append(CadLine("ZE_PROTO_CUT", (layout.x_depth_ruler_black, y), (layout.x_depth_ruler_white, y)))
             lines.append(CadLine("ZE_PROTO_CUT", (layout.x_depth_ruler_black, y_next), (layout.x_depth_ruler_white, y_next)))
         if d % 2 == 0 and d != 0:
@@ -266,14 +277,12 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
         circle_cx = 94.2
         circle_cy = (y0 + y1) / 2.0
         radius = 2.2
-        # white mask under circle so hatch does not shine through
-        circle_fill_lines: list[CadLine] = []
-        yy = circle_cy - radius
-        while yy <= circle_cy + radius:
-            dx = max(0.0, radius * radius - (yy - circle_cy) ** 2) ** 0.5
-            circle_fill_lines.append(CadLine("ZE_PROTO_MASK", (circle_cx - dx, yy), (circle_cx + dx, yy)))
-            yy += 0.08
-        lines.extend(circle_fill_lines)
+        # white circular solid mask (overlay over section hatch)
+        circle_mask = []
+        for i in range(24):
+            a = 2.0 * math.pi * float(i) / 24.0
+            circle_mask.append((circle_cx + radius * math.cos(a), circle_cy + radius * math.sin(a)))
+        hatches.append(CadHatch("ZE_PROTO_MASK", circle_mask, color_aci=7, rgb=(255, 255, 255), solid=True))
         circle_pts = []
         for i in range(20):
             a = 2.0 * math.pi * float(i) / 20.0
@@ -351,6 +360,6 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
 
     scene = CadScene(
         layers=list(PROTOCOL_LAYERS),
-        block=CadBlock(name=block_name, base_point=(0.0, 0.0, 0.0), lines=lines, polylines=polys, texts=texts),
+        block=CadBlock(name=block_name, base_point=(0.0, 0.0, 0.0), lines=lines, polylines=polys, hatches=hatches, texts=texts),
     )
     return ProtocolCadResult(document=doc, scene=scene, height_mm=layout.total_height_for_depth(doc.max_depth_m))

@@ -84,11 +84,21 @@ class CadPolyline:
 
 
 @dataclass(frozen=True)
+class CadHatch:
+    layer: str
+    boundary: list[tuple[float, float]]
+    color_aci: int | None = None
+    rgb: tuple[int, int, int] | None = None
+    solid: bool = True
+
+
+@dataclass(frozen=True)
 class CadBlock:
     name: str
     base_point: tuple[float, float, float]
     lines: list[CadLine] = field(default_factory=list)
     polylines: list[CadPolyline] = field(default_factory=list)
+    hatches: list[CadHatch] = field(default_factory=list)
     points: list[CadPoint] = field(default_factory=list)
     texts: list[TextLabel] = field(default_factory=list)
 

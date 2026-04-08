@@ -46,6 +46,9 @@ def _scene_extents(scenes: list[CadScene], x_step_mm: float) -> tuple[float, flo
         for poly in scene.block.polylines:
             for px, py in poly.points:
                 _touch(dx + float(px), dy + float(py))
+        for hatch in getattr(scene.block, "hatches", []):
+            for px, py in hatch.boundary:
+                _touch(dx + float(px), dy + float(py))
         for point in scene.block.points:
             _touch(dx + float(point.position[0]), dy + float(point.position[1]))
         for text in scene.block.texts:
@@ -94,6 +97,8 @@ def _write_ascii_fallback(scenes: list[CadScene], target: Path, x_step_mm: float
         add(70, 0)
         add(62, int(layer.color_aci))
         add(6, layer.linetype)
+        if layer.lineweight is not None:
+            add(370, int(layer.lineweight))
     add(0, "ENDTAB")
 
     add(0, "TABLE")
@@ -152,6 +157,24 @@ def _write_ascii_fallback(scenes: list[CadScene], target: Path, x_step_mm: float
                 add(30, 0.0)
             add(0, "SEQEND")
             add(8, poly.layer)
+
+        # ASCII fallback keeps solid areas as closed polylines only.
+        for hatch in getattr(scene.block, "hatches", []):
+            if len(hatch.boundary) < 3:
+                continue
+            add(0, "POLYLINE")
+            add(8, hatch.layer)
+            add(62, int(hatch.color_aci) if hatch.color_aci is not None else 256)
+            add(66, 1)
+            add(70, 1)
+            for p in hatch.boundary:
+                add(0, "VERTEX")
+                add(8, hatch.layer)
+                add(10, p[0])
+                add(20, p[1])
+                add(30, 0.0)
+            add(0, "SEQEND")
+            add(8, hatch.layer)
 
         for point in scene.block.points:
             add(0, "POINT")
@@ -251,6 +274,21 @@ def write_cad_scenes_to_dxf(scenes: list[CadScene], out_path: str | Path, *, x_s
         block = doc.blocks.new(name=scene.block.name, base_point=scene.block.base_point)
         for line in scene.block.lines:
             block.add_line(line.start, line.end, dxfattribs={"layer": line.layer, "color": 256})
+        for hatch in getattr(scene.block, "hatches", []):
+            if len(hatch.boundary) < 3:
+                continue
+            hatch_entity = block.add_hatch(
+                color=(int(hatch.color_aci) if hatch.color_aci is not None else 256),
+                dxfattribs={"layer": hatch.layer},
+            )
+            hatch_entity.paths.add_polyline_path(hatch.boundary, is_closed=True)
+            try:
+                hatch_entity.set_solid_fill(
+                    color=(int(hatch.color_aci) if hatch.color_aci is not None else 256),
+                    rgb=(tuple(int(c) for c in hatch.rgb) if hatch.rgb is not None else None),
+                )
+            except Exception:
+                pass
         for poly in scene.block.polylines:
             if len(poly.points) < 2:
                 continue
