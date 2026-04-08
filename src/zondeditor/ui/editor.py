@@ -687,6 +687,8 @@ class GeoCanvasEditor(tk.Tk):
             "display_sort_mode": str(getattr(self, "display_sort_mode", "date") or "date"),
             "expanded_meters": sorted(int(x) for x in (getattr(self, "expanded_meters", set()) or set())),
             "layer_edit_mode": bool(getattr(self, "layer_edit_mode", False)),
+            "project_type": str(getattr(self, "project_type", "type2_electric") or "type2_electric"),
+            "project_mode_params": copy.deepcopy(dict(getattr(self, "project_mode_params", {}) or {})),
             "project_ops": copy.deepcopy(list(getattr(self, "project_ops", []) or [])),
             "ige_registry": copy.deepcopy(dict(getattr(self, "ige_registry", {}) or {})),
             "cpt_calc_settings": copy.deepcopy(dict(getattr(self, "cpt_calc_settings", {}) or {})),
@@ -710,6 +712,14 @@ class GeoCanvasEditor(tk.Tk):
             self.geo_kind = str(snap.get("geo_kind", getattr(self, "geo_kind", "K2")) or "K2").upper()
         except Exception:
             self.geo_kind = str(getattr(self, "geo_kind", "K2") or "K2").upper()
+        try:
+            self.project_type = str(snap.get("project_type", getattr(self, "project_type", "type2_electric")) or "type2_electric")
+        except Exception:
+            self.project_type = str(getattr(self, "project_type", "type2_electric") or "type2_electric")
+        try:
+            self.project_mode_params = copy.deepcopy(dict(snap.get("project_mode_params", getattr(self, "project_mode_params", {}) or {}) or {}))
+        except Exception:
+            self.project_mode_params = copy.deepcopy(dict(getattr(self, "project_mode_params", {}) or {}))
         if self.geo_kind not in ("K2", "K4"):
             self.geo_kind = "K2"
         try:
@@ -788,6 +798,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
                 self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
                 self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
+                self.ribbon_view.calc_alluvial_sands_var.set(bool(getattr(self, "cpt_calc_settings", {}).get("alluvial_sands", True)))
         except Exception:
             pass
 
@@ -801,6 +812,7 @@ class GeoCanvasEditor(tk.Tk):
             self.ige_registry = {}
         try:
             self.cpt_calc_settings = copy.deepcopy(dict(snap.get("cpt_calc_settings", {}) or {})) or {"method": METHOD_SP446, "alluvial_sands": True, "groundwater_level": None}
+            self.cpt_calc_settings["alluvial_sands"] = self._resolve_alluvial_sands_setting(self.cpt_calc_settings.get("alluvial_sands"))
         except Exception:
             self.cpt_calc_settings = {"method": METHOD_SP446, "alluvial_sands": True, "groundwater_level": None}
         cts = dict(snap.get("calc_tab_state") or {})
@@ -886,6 +898,22 @@ class GeoCanvasEditor(tk.Tk):
             pass
 
     def _debug_log(self, msg: str):
+        try:
+            log_path = getattr(self, "_debug_log_file_path", None)
+            if not log_path:
+                base_dir = Path.cwd() / "logs"
+                base_dir.mkdir(parents=True, exist_ok=True)
+                log_path = base_dir / "zondeditor_debug.log"
+                self._debug_log_file_path = log_path
+                try:
+                    print(f"[DEBUG] file log: {log_path}", file=sys.stderr)
+                except Exception:
+                    pass
+            ts = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(log_path, "a", encoding="utf-8") as fp:
+                fp.write(f"{ts} [DEBUG] {msg}\n")
+        except Exception:
+            pass
         if bool(getattr(self, "_debug_layers_overlay", False)):
             try:
                 print(f"[DEBUG] {msg}", file=sys.stderr)
@@ -939,6 +967,42 @@ class GeoCanvasEditor(tk.Tk):
         """Bring UI to a fully consistent state after undo/redo."""
         self._rebuild_marks_index()
         self._recompute_statuses_after_data_load(preview_mode=False)
+        try:
+            if getattr(self, "ribbon_view", None):
+                mode_params = dict(getattr(self, "project_mode_params", {}) or {})
+                merged_params = dict(self._current_common_params() or {})
+                merged_params.update(mode_params)
+                merged_params["project_type"] = str(getattr(self, "project_type", "") or "")
+                self.ribbon_view.set_project_type(
+                    str(getattr(self, "project_type", "") or ""),
+                    mode_params=merged_params,
+                    emit=False,
+                )
+                self.ribbon_view.set_common_params(merged_params, geo_kind=str(getattr(self, "geo_kind", "K2")))
+                step_txt = str(mode_params.get("mode_step_depth", "") or "").strip().replace(",", ".")
+                if not step_txt:
+                    try:
+                        step_txt = f"{float(getattr(self, 'step_m', 0.05) or 0.05):.2f}"
+                    except Exception:
+                        step_txt = "0.05"
+                else:
+                    try:
+                        step_txt = f"{float(step_txt):.2f}"
+                    except Exception:
+                        pass
+                try:
+                    self.ribbon_view.step_depth_var.set(step_txt)
+                except Exception:
+                    pass
+                self._debug_log(
+                    "UNDO/REDO sync: "
+                    f"project_type={getattr(self, 'project_type', '')}, "
+                    f"mode_step={mode_params.get('mode_step_depth')}, "
+                    f"step_var={getattr(self.ribbon_view, 'step_depth_var', None).get() if getattr(self.ribbon_view, 'step_depth_var', None) else ''}, "
+                    f"controller={merged_params.get('controller_type', '')}"
+                )
+        except Exception:
+            pass
 
     def undo(self):
         # Если сейчас редактируется ячейка — завершаем редактирование и только потом делаем UNDO
@@ -1425,6 +1489,18 @@ class GeoCanvasEditor(tk.Tk):
         ent.setdefault("requires_manual_confirmation", False)
         return ent
 
+    def _resolve_alluvial_sands_setting(self, current_value) -> bool:
+        if current_value is not None:
+            return bool(current_value)
+        for ige_id in sorted((self.ige_registry or {}).keys(), key=self._ige_sort_key):
+            ent = dict(self.ige_registry.get(ige_id) or {})
+            soil_raw = str(ent.get("soil_type") or "").lower()
+            if "пес" not in soil_raw:
+                continue
+            if bool(ent.get("sand_is_alluvial", ent.get("is_alluvial", False))):
+                return True
+        return False
+
     def _auto_recalculate_cpt(self):
         settings = dict(getattr(self, "cpt_calc_settings", {}) or {})
         calc = CptCalcSettings(
@@ -1653,6 +1729,18 @@ class GeoCanvasEditor(tk.Tk):
             self.calc_tab_state.use_legacy_sandy_loam_sp446 = bool(value)
         elif key == "allow_fill_preliminary":
             self.calc_tab_state.allow_fill_preliminary = bool(value)
+        elif key == "alluvial_sands":
+            normalized = bool(value)
+            self.cpt_calc_settings["alluvial_sands"] = normalized
+            for _ige_id in sorted((self.ige_registry or {}).keys(), key=self._ige_sort_key):
+                ent = self._ensure_ige_entry(_ige_id)
+                soil_raw = str(ent.get("soil_type") or "").lower()
+                if "пес" not in soil_raw:
+                    continue
+                ent["sand_is_alluvial"] = normalized
+                ent["is_alluvial"] = normalized
+                ent["alluvial"] = normalized
+            self._sync_layers_panel()
 
     def _rebuild_calc_samples(self):
         samples = build_ige_samples(
@@ -2215,6 +2303,7 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.calc_allow_normative_lt6_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_normative_lt6))
                 self.ribbon_view.calc_legacy_sandy_loam_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).use_legacy_sandy_loam_sp446))
                 self.ribbon_view.calc_fill_preliminary_var.set(bool(getattr(self, "calc_tab_state", CalculationTabState()).allow_fill_preliminary))
+                self.ribbon_view.calc_alluvial_sands_var.set(bool(getattr(self, "cpt_calc_settings", {}).get("alluvial_sands", True)))
             except Exception:
                 pass
             ribbon.pack_forget()
@@ -2936,7 +3025,7 @@ class GeoCanvasEditor(tk.Tk):
 
     @staticmethod
     def _allowed_step_values() -> tuple[float, ...]:
-        return (0.05, 0.1, 0.2, 0.3, 0.4, 0.5)
+        return (0.05, 0.1, 0.2)
 
     def _normalize_allowed_step(self, raw_value) -> float | None:
         try:
@@ -2949,8 +3038,231 @@ class GeoCanvasEditor(tk.Tk):
         return None
 
     def _step_validation_message(self) -> str:
-        allowed = ", ".join(f"{x:g}" for x in self._allowed_step_values())
+        allowed = ", ".join(f"{x:.2f}" for x in self._allowed_step_values())
         return f"Недопустимый шаг зондирования. Разрешены значения: {allowed} м."
+
+    def _is_neighbor_step_transition(self, old_step: float, new_step: float) -> bool:
+        seq = list(self._allowed_step_values())
+        old_idx = None
+        new_idx = None
+        for idx, val in enumerate(seq):
+            if abs(float(val) - float(old_step)) <= 1e-3:
+                old_idx = idx
+            if abs(float(val) - float(new_step)) <= 1e-3:
+                new_idx = idx
+        if old_idx is None or new_idx is None:
+            return False
+        return abs(int(old_idx) - int(new_idx)) <= 1
+
+    def _estimate_step_grid_delta(self, old_step: float, new_step: float) -> tuple[int, int]:
+        add_rows = 0
+        drop_rows = 0
+        for t in (getattr(self, "tests", []) or []):
+            dvals: list[float] = []
+            for raw in (getattr(t, "depth", []) or []):
+                dv = _parse_depth_float(str(raw))
+                if dv is None:
+                    continue
+                dvals.append(float(dv))
+            if len(dvals) < 2:
+                continue
+            if new_step < old_step:
+                for i in range(len(dvals) - 1):
+                    if abs((dvals[i + 1] - dvals[i]) - float(old_step)) <= 1e-2:
+                        add_rows += 1
+            else:
+                start = dvals[0]
+                for d in dvals:
+                    rel = (float(d) - float(start)) / float(new_step)
+                    if abs(rel - round(rel)) > 1e-2:
+                        drop_rows += 1
+        return add_rows, drop_rows
+
+    def _ask_step_change_mode(self, *, old_step: float, new_step: float, add_rows: int, drop_rows: int) -> str:
+        is_reduce = float(new_step) < float(old_step)
+        dlg = tk.Toplevel(self)
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.title("Изменение шага зондирования")
+        frm = ttk.Frame(dlg, padding=10)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text=(f"Шаг будет {'уменьшен' if is_reduce else 'увеличен'}: {old_step:.2f} → {new_step:.2f}"), font=("", 10, "bold")).pack(anchor="w")
+        if is_reduce and add_rows > 0:
+            ttk.Label(frm, text=f"Будет добавлено строк: ~{int(add_rows)}", foreground="#5f6b7a").pack(anchor="w", pady=(4, 0))
+        if (not is_reduce) and drop_rows > 0:
+            ttk.Label(frm, text=f"Будет удалено строк: ~{int(drop_rows)}", foreground="#5f6b7a").pack(anchor="w", pady=(4, 0))
+        ttk.Label(frm, text="Что сделать?", padding=(0, 8, 0, 0)).pack(anchor="w")
+        ttk.Label(frm, text="«Перезаписать значение шага» используйте, если шаг был указан неверно.", foreground="#5f6b7a", wraplength=460).pack(anchor="w", pady=(0, 8))
+        result = {"mode": "cancel"}
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x")
+
+        def _set_mode(mode: str):
+            result["mode"] = mode
+            dlg.destroy()
+
+        action_text = "Уменьшить шаг и интерполировать" if is_reduce else "Увеличить шаг, удалить промежуточные значения"
+        ttk.Button(btns, text=action_text, command=lambda: _set_mode("resample")).pack(side="left")
+        ttk.Button(btns, text="Перезаписать значение шага", command=lambda: _set_mode("overwrite")).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="Отмена", command=lambda: _set_mode("cancel")).pack(side="right")
+        try:
+            self._center_child(dlg)
+        except Exception:
+            pass
+        self.wait_window(dlg)
+        return str(result.get("mode") or "cancel")
+
+    def _resample_depth_grid_between_neighbor_steps(self, *, old_step: float, new_step: float):
+        is_reduce = float(new_step) < float(old_step)
+        resample_cells: list[dict] = []
+        for t in (getattr(self, "tests", []) or []):
+            depth_old = list(getattr(t, "depth", []) or [])
+            qc_old = list(getattr(t, "qc", []) or [])
+            fs_old = list(getattr(t, "fs", []) or [])
+            if not depth_old:
+                continue
+            n = max(len(depth_old), len(qc_old), len(fs_old))
+            depth_old += [""] * max(0, n - len(depth_old))
+            qc_old += [""] * max(0, n - len(qc_old))
+            fs_old += [""] * max(0, n - len(fs_old))
+            old_flags = copy.deepcopy(getattr(self, "flags", {}).get(t.tid, TestFlags(False, set(), set(), set(), set())) or TestFlags(False, set(), set(), set(), set()))
+
+            new_depth: list[str] = []
+            new_qc: list[str] = []
+            new_fs: list[str] = []
+            map_old_to_new: dict[int, int] = {}
+
+            if is_reduce:
+                created_rows: list[int] = []
+                for i in range(n):
+                    map_old_to_new[i] = len(new_depth)
+                    new_depth.append(str(depth_old[i]))
+                    new_qc.append(str(qc_old[i]))
+                    new_fs.append(str(fs_old[i]))
+                    if i + 1 >= n:
+                        continue
+                    d0 = _parse_depth_float(str(depth_old[i]))
+                    d1 = _parse_depth_float(str(depth_old[i + 1]))
+                    if d0 is None or d1 is None or abs((float(d1) - float(d0)) - float(old_step)) > 1e-2:
+                        continue
+                    mid = 0.5 * (float(d0) + float(d1))
+                    q0 = parse_measurement(qc_old[i])
+                    q1 = parse_measurement(qc_old[i + 1])
+                    f0 = parse_measurement(fs_old[i])
+                    f1 = parse_measurement(fs_old[i + 1])
+                    if q0 is not None and q1 is not None:
+                        qmid = str(int(round((float(q0) + float(q1)) * 0.5)))
+                    else:
+                        qmid = ""
+                    if f0 is not None and f1 is not None:
+                        fmid = str(int(round((float(f0) + float(f1)) * 0.5)))
+                    else:
+                        fmid = ""
+                    new_depth.append(f"{mid:.2f}")
+                    new_qc.append(qmid)
+                    new_fs.append(fmid)
+                    created_rows.append(len(new_depth) - 1)
+            else:
+                d0 = _parse_depth_float(str(depth_old[0]))
+                base = float(d0) if d0 is not None else 0.0
+                for i in range(n):
+                    dv = _parse_depth_float(str(depth_old[i]))
+                    if dv is None:
+                        continue
+                    rel = (float(dv) - base) / float(new_step)
+                    if abs(rel - round(rel)) > 1e-2:
+                        continue
+                    map_old_to_new[i] = len(new_depth)
+                    new_depth.append(f"{float(dv):.2f}")
+                    new_qc.append(str(qc_old[i]))
+                    new_fs.append(str(fs_old[i]))
+
+            if not new_depth:
+                continue
+            t.depth, t.qc, t.fs = new_depth, new_qc, new_fs
+            tid = int(getattr(t, "tid", 0) or 0)
+            self.depth0_by_tid[tid] = _parse_depth_float(str(new_depth[0])) or 0.0
+            self.step_by_tid[tid] = float(new_step)
+
+            new_interp: set[tuple[int, str]] = set()
+            new_force: set[tuple[int, str]] = set()
+            new_user: set[tuple[int, str]] = set()
+            new_algo: set[tuple[int, str]] = set()
+            for (r, fld) in (old_flags.interp_cells or set()):
+                if r in map_old_to_new:
+                    new_interp.add((map_old_to_new[r], fld))
+            for (r, fld) in (old_flags.force_cells or set()):
+                if r in map_old_to_new:
+                    new_force.add((map_old_to_new[r], fld))
+            for (r, fld) in (old_flags.user_cells or set()):
+                if r in map_old_to_new:
+                    new_user.add((map_old_to_new[r], fld))
+            for (r, fld) in (old_flags.algo_cells or set()):
+                if r in map_old_to_new:
+                    new_algo.add((map_old_to_new[r], fld))
+            if is_reduce:
+                for rr in created_rows:
+                    new_algo.add((rr, "qc"))
+                    new_algo.add((rr, "fs"))
+                    depth_m = self._safe_depth_m(t, rr)
+                    if depth_m is not None:
+                        resample_cells.append({"testId": int(getattr(t, "tid", 0) or 0), "depthM": depth_m, "field": "qc", "before": "", "after": str((t.qc or [""])[rr]).strip()})
+                        resample_cells.append({"testId": int(getattr(t, "tid", 0) or 0), "depthM": depth_m, "field": "fs", "before": "", "after": str((t.fs or [""])[rr]).strip()})
+            self.flags[t.tid] = TestFlags(bool(old_flags.invalid), new_interp, new_force, new_user, new_algo)
+
+        self.step_m = float(new_step)
+        try:
+            if is_reduce and resample_cells:
+                self.project_ops.append(op_cells_marked(reason="step_reduce", color="green", cells=resample_cells))
+                self._rebuild_marks_index()
+        except Exception:
+            pass
+
+    def _rewrite_depth_grid_keep_measurements(self, *, new_step: float):
+        step = float(new_step)
+        if step <= 0:
+            return
+        for t in (getattr(self, "tests", []) or []):
+            depth_arr = list(getattr(t, "depth", []) or [])
+            if not depth_arr:
+                continue
+            d0 = _parse_depth_float(str(depth_arr[0]))
+            if d0 is None:
+                tid = int(getattr(t, "tid", 0) or 0)
+                d0 = float((getattr(self, "depth0_by_tid", {}) or {}).get(tid, 0.0) or 0.0)
+            new_depth = [f"{(float(d0) + (idx * step)):.2f}" for idx in range(len(depth_arr))]
+            t.depth = new_depth
+            tid = int(getattr(t, "tid", 0) or 0)
+            self.depth0_by_tid[tid] = float(d0)
+            self.step_by_tid[tid] = float(step)
+        self.step_m = float(step)
+
+    def _apply_step_change_request(self, *, old_step: float, new_step: float) -> bool:
+        if abs(float(old_step) - float(new_step)) <= 1e-6:
+            return True
+        if not self._is_neighbor_step_transition(float(old_step), float(new_step)):
+            self._show_validation_error_once(
+                f"Нельзя изменить шаг с {old_step:.2f} сразу на {new_step:.2f}. "
+                f"Сначала измените шаг на {'0.10' if min(old_step, new_step) < 0.10 < max(old_step, new_step) else 'соседнее значение'}."
+            )
+            return False
+        add_rows, drop_rows = self._estimate_step_grid_delta(float(old_step), float(new_step))
+        mode = self._ask_step_change_mode(old_step=float(old_step), new_step=float(new_step), add_rows=add_rows, drop_rows=drop_rows)
+        if mode == "cancel":
+            return False
+        self._push_undo()
+        if mode == "resample":
+            self._resample_depth_grid_between_neighbor_steps(old_step=float(old_step), new_step=float(new_step))
+        else:
+            self._rewrite_depth_grid_keep_measurements(new_step=float(new_step))
+        try:
+            if abs(float(new_step) - 0.05) <= 1e-6:
+                self.step_choice.set("5")
+            elif float(new_step) >= 0.1:
+                self.step_choice.set("10")
+        except Exception:
+            pass
+        return True
 
     def _apply_type1_params(self, mode_keys: dict[str, str]) -> bool:
         old_step = str(getattr(self, "project_mode_params", {}).get("mode_step_depth", "0.20") or "0.20")
@@ -2980,12 +3292,18 @@ class GeoCanvasEditor(tk.Tk):
             self._sync_type1_params_to_ribbon()
             return False
 
-        if round(step_val, 3) != round(float(old_step), 3):
-            self._rebuild_type1_depth_grid(step_val)
+        try:
+            old_step_val = float(old_step)
+        except Exception:
+            old_step_val = 0.20
+        if not self._apply_step_change_request(old_step=old_step_val, new_step=float(step_val)):
+            self._sync_type1_params_to_ribbon()
+            return False
 
         self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
         self.project_mode_params["mode_lob_coeff"] = f"{lob_val:.2f}".rstrip("0").rstrip(".")
         self.project_mode_params["mode_total_coeff"] = f"{tot_val:.2f}".rstrip("0").rstrip(".")
+        self._sync_type1_params_to_ribbon()
         self._skip_next_type1_error_popup = False
         self._redraw()
         self.schedule_graph_redraw()
@@ -3009,9 +3327,15 @@ class GeoCanvasEditor(tk.Tk):
             self._show_validation_error_once(self._step_validation_message())
             self._sync_direct_params_to_ribbon()
             return False
-        if round(step_val, 3) != round(float(old_step), 3):
-            self._rebuild_type1_depth_grid(step_val)
+        try:
+            old_step_val = float(old_step)
+        except Exception:
+            old_step_val = 0.20
+        if not self._apply_step_change_request(old_step=old_step_val, new_step=float(step_val)):
+            self._sync_direct_params_to_ribbon()
+            return False
         self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
+        self._sync_direct_params_to_ribbon()
         self._skip_next_type1_error_popup = False
         self._redraw()
         self.schedule_graph_redraw()
@@ -3025,19 +3349,15 @@ class GeoCanvasEditor(tk.Tk):
             self._show_validation_error_once(self._step_validation_message())
             self._sync_type2_params_to_ribbon()
             return False
-        is_k4 = str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4"
-        is_imported_k2 = (str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K2") and bool(getattr(self, "geo_path", None))
         try:
-            old_step_val = round(float(old_step), 3)
+            old_step_val = float(old_step)
         except Exception:
             old_step_val = 0.05
-        if round(step_val, 3) != round(float(old_step), 3):
-            if old_step_val >= 0.1 and step_val == 0.05 and (is_k4 or is_imported_k2):
-                self.convert_10_to_5()
-                self.step_by_tid = {int(getattr(t, "tid", 0) or 0): 0.05 for t in (getattr(self, "tests", []) or [])}
-            else:
-                self._rebuild_type1_depth_grid(step_val)
+        if not self._apply_step_change_request(old_step=float(old_step_val), new_step=float(step_val)):
+            self._sync_type2_params_to_ribbon()
+            return False
         self.project_mode_params["mode_step_depth"] = f"{step_val:.2f}".rstrip("0").rstrip(".")
+        self._sync_type2_params_to_ribbon()
         self._skip_next_type1_error_popup = False
         self._redraw()
         self.schedule_graph_redraw()
@@ -11149,6 +11469,7 @@ class GeoCanvasEditor(tk.Tk):
         self._rebuild_marks_index()
         status_info = self._recompute_statuses_after_data_load(preview_mode=False)
         self.cpt_calc_settings = dict((project.settings.extras or {}).get("cpt_calc_settings") or self.cpt_calc_settings or {"method": METHOD_SP446, "alluvial_sands": True, "groundwater_level": None})
+        self.cpt_calc_settings["alluvial_sands"] = self._resolve_alluvial_sands_setting(self.cpt_calc_settings.get("alluvial_sands"))
         _base_cts = CalculationTabState().__dict__
         _raw_cts = dict((project.settings.extras or {}).get("calc_tab_state") or {})
         _safe_cts = {k: v for k, v in _raw_cts.items() if k in _base_cts}
