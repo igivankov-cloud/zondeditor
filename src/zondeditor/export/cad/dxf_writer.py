@@ -296,12 +296,22 @@ def write_cad_scenes_to_dxf(
                 hatch_entity.paths.add_polyline_path(hatch.boundary, is_closed=True)
                 has_pattern = bool(getattr(hatch, "pattern_name", None) or getattr(hatch, "pattern_definition", None))
                 if has_pattern:
+                    pattern_name = str(getattr(hatch, "pattern_name", None) or "USER")
+                    definition = list(getattr(hatch, "pattern_definition", []) or [])
+                    _log.info(
+                        "dxf_hatch_pattern layer=%s block=%s pattern=%s rows=%s boundary_points=%s",
+                        hatch.layer,
+                        scene.block.name,
+                        pattern_name,
+                        len(definition),
+                        len(hatch.boundary),
+                    )
                     hatch_entity.set_pattern_fill(
-                        name=str(getattr(hatch, "pattern_name", None) or "USER"),
+                        name=pattern_name,
                         color=(int(hatch.color_aci) if hatch.color_aci is not None else 256),
                         angle=0.0,
                         scale=1.0,
-                        definition=list(getattr(hatch, "pattern_definition", []) or []),
+                        definition=definition,
                     )
                 else:
                     hatch_entity.set_solid_fill(

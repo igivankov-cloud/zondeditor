@@ -9,11 +9,14 @@ from dataclasses import dataclass
 from src.zondeditor.domain.experience_column import ExperienceColumn, build_column_from_layers
 from src.zondeditor.domain.hatching.registry import SOIL_TYPE_TO_HATCH_FILE, load_registered_hatch, normalize_soil_type
 from src.zondeditor.domain.models import TestData
+from src.zondeditor.export.cad.logging import get_cad_logger
 from src.zondeditor.processing.calibration import Calibration, calc_qc_fs
 from src.zondeditor.export.cad.schema import CadBlock, CadHatch, CadLayerSpec, CadLine, CadPolyline, CadScene, TextLabel
 
 from .layout import DEFAULT_PROTOCOL_LAYOUT, ProtocolLayout
 from .models import ProtocolBuildPack, ProtocolDocument, ProtocolLayerRow
+
+_log = get_cad_logger()
 
 
 PROTOCOL_LAYERS: tuple[CadLayerSpec, ...] = (
@@ -40,6 +43,17 @@ def _parse_float(value) -> float | None:
         return float(str(value).replace(",", ".").strip())
     except Exception:
         return None
+
+
+def _hatch_debug_enabled() -> bool:
+    return str(os.getenv("ZOND_PROTO_HATCH_DEBUG", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _hatch_debug(event: str, **payload: object) -> None:
+    if not _hatch_debug_enabled():
+        return
+    parts = [f"{k}={payload[k]!r}" for k in sorted(payload.keys())]
+    _log.info("proto_hatch_debug %s %s", event, " ".join(parts))
 
 
 def _max_depth(test: TestData) -> float:
@@ -89,20 +103,26 @@ def _extract_ige_num(value: str) -> str:
 
 def _resolve_ige_entry(registry: dict[str, dict[str, object]], ige_id: str) -> dict[str, object]:
     if ige_id in registry:
+        _hatch_debug("ige_match_exact", ige_id=ige_id)
         return dict(registry.get(ige_id) or {})
     want_canon = _canonical_ige_key(ige_id)
     want_num = _extract_ige_num(ige_id)
     for key, ent in registry.items():
         key_s = str(key or "")
         if _canonical_ige_key(key_s) == want_canon:
+            _hatch_debug("ige_match_canonical", ige_id=ige_id, registry_key=key_s)
             return dict(ent or {})
         if want_num and _extract_ige_num(key_s) == want_num:
+            _hatch_debug("ige_match_num_key", ige_id=ige_id, registry_key=key_s, ige_num=want_num)
             return dict(ent or {})
         label = str((ent or {}).get("label") or "")
         if label and _canonical_ige_key(label) == want_canon:
+            _hatch_debug("ige_match_label_canonical", ige_id=ige_id, registry_key=key_s, label=label)
             return dict(ent or {})
         if want_num and label and _extract_ige_num(label) == want_num:
+            _hatch_debug("ige_match_num_label", ige_id=ige_id, registry_key=key_s, label=label, ige_num=want_num)
             return dict(ent or {})
+    _hatch_debug("ige_match_miss", ige_id=ige_id)
     return {}
 
 
@@ -132,6 +152,13 @@ def build_protocol_documents(*, tests: list[TestData], ige_registry: dict[str, d
                     ),
                     abs_mark_text="",  # temporary: absolute elevation is not in data model yet
                 )
+            )
+            _hatch_debug(
+                "protocol_layer_row",
+                idx=idx,
+                ige_id=ige_id,
+                soil_type=str(rows[-1].soil_type or ""),
+                note_source=descr[:120],
             )
         max_depth = max(_max_depth(test), max((r.to_depth_m for r in rows), default=0.0))
         docs.append(
@@ -183,6 +210,7 @@ def _split_text_lines(text: str, line_limit: int = 42) -> list[str]:
 def _to_dxf_pattern_definition(soil_type: str) -> tuple[str, list[tuple[float, tuple[float, float], tuple[float, float], list[float]]]] | None:
     hatch = load_registered_hatch(soil_type)
     if hatch is None:
+        _hatch_debug("pattern_not_found", soil_type=soil_type)
         return None
     # IMPORTANT:
     # hatch.scale from JSON is UI render normalization (see resolve_hatch_render_scale),
@@ -213,7 +241,9 @@ def _to_dxf_pattern_definition(soil_type: str) -> tuple[str, list[tuple[float, t
             )
         )
     if not rows:
+        _hatch_debug("pattern_empty_rows", soil_type=soil_type, pattern_name=str(getattr(hatch, "name", "")))
         return None
+    _hatch_debug("pattern_built", soil_type=soil_type, pattern_name=str(getattr(hatch, "name", "USER")), rows=len(rows))
     return (str(getattr(hatch, "name", "USER") or "USER"), rows)
 
 
@@ -311,6 +341,15 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
         dxf_pattern = _to_dxf_pattern_definition(row.soil_type)
         if dxf_pattern is not None:
             pattern_name, pattern_rows = dxf_pattern
+            _hatch_debug(
+                "section_hatch_apply",
+                row_idx=row.idx,
+                ige_id=row.ige_id,
+                soil_type=row.soil_type,
+                pattern_name=pattern_name,
+                rows=len(pattern_rows),
+                boundary=section_boundary,
+            )
             hatches.append(
                 CadHatch(
                     "ZE_PROTO_CUT",
