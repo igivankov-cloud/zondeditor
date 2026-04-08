@@ -687,6 +687,8 @@ class GeoCanvasEditor(tk.Tk):
             "display_sort_mode": str(getattr(self, "display_sort_mode", "date") or "date"),
             "expanded_meters": sorted(int(x) for x in (getattr(self, "expanded_meters", set()) or set())),
             "layer_edit_mode": bool(getattr(self, "layer_edit_mode", False)),
+            "project_type": str(getattr(self, "project_type", "type2_electric") or "type2_electric"),
+            "project_mode_params": copy.deepcopy(dict(getattr(self, "project_mode_params", {}) or {})),
             "project_ops": copy.deepcopy(list(getattr(self, "project_ops", []) or [])),
             "ige_registry": copy.deepcopy(dict(getattr(self, "ige_registry", {}) or {})),
             "cpt_calc_settings": copy.deepcopy(dict(getattr(self, "cpt_calc_settings", {}) or {})),
@@ -710,6 +712,14 @@ class GeoCanvasEditor(tk.Tk):
             self.geo_kind = str(snap.get("geo_kind", getattr(self, "geo_kind", "K2")) or "K2").upper()
         except Exception:
             self.geo_kind = str(getattr(self, "geo_kind", "K2") or "K2").upper()
+        try:
+            self.project_type = str(snap.get("project_type", getattr(self, "project_type", "type2_electric")) or "type2_electric")
+        except Exception:
+            self.project_type = str(getattr(self, "project_type", "type2_electric") or "type2_electric")
+        try:
+            self.project_mode_params = copy.deepcopy(dict(snap.get("project_mode_params", getattr(self, "project_mode_params", {}) or {}) or {}))
+        except Exception:
+            self.project_mode_params = copy.deepcopy(dict(getattr(self, "project_mode_params", {}) or {}))
         if self.geo_kind not in ("K2", "K4"):
             self.geo_kind = "K2"
         try:
