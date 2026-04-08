@@ -170,6 +170,7 @@ def _write_ascii_fallback(scenes: list[CadScene], target: Path, x_step_mm: float
             add(20, text.y_mm)
             add(30, 0.0)
             add(40, text.height_mm)
+            add(50, float(getattr(text, "rotation_deg", 0.0) or 0.0))
             add(1, _dxf_escape_text(text.text))
             align = text.align.upper()
             if align == "CENTER":
@@ -267,6 +268,7 @@ def write_cad_scenes_to_dxf(scenes: list[CadScene], out_path: str | Path, *, x_s
                     "height": text.height_mm,
                     "color": (int(text.color_aci) if text.color_aci is not None else 256),
                     "style": "ZE_CYR",
+                    "rotation": float(getattr(text, "rotation_deg", 0.0) or 0.0),
                 },
             )
             align = text.align.upper()

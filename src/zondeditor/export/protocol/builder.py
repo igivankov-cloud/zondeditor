@@ -16,6 +16,7 @@ from .models import ProtocolBuildPack, ProtocolDocument, ProtocolLayerRow
 PROTOCOL_LAYERS: tuple[CadLayerSpec, ...] = (
     CadLayerSpec("ZE_PROTO_FRAME", color_aci=7),
     CadLayerSpec("ZE_PROTO_TEXT", color_aci=7),
+    CadLayerSpec("ZE_PROTO_GRID", color_aci=8, rgb=(186, 186, 186)),
     CadLayerSpec("ZE_PROTO_QC", color_aci=1, rgb=(230, 61, 61), lineweight=30),
     CadLayerSpec("ZE_PROTO_FS", color_aci=5, rgb=(37, 99, 235), lineweight=30),
     CadLayerSpec("ZE_PROTO_CUT", color_aci=8),
@@ -108,27 +109,37 @@ def _hatch_rect_lines(*, x0: float, x1: float, y_top: float, y_bot: float, spaci
     out: list[CadLine] = []
     if x1 <= x0 or y_top <= y_bot:
         return out
-    # Generate diagonal guide lines clipped to rectangle for "engineering hatch" feel.
-    ang = math.radians(float(angle_deg))
-    dx = math.cos(ang)
-    dy = math.sin(ang)
-    length = (x1 - x0) + (y_top - y_bot) + 10.0
-    steps = int(max(1.0, ((x1 - x0) + (y_top - y_bot)) / max(0.6, spacing))) + 4
-    for i in range(-2, steps):
-        ox = x0 - 4.0 + i * spacing
-        sx = ox
-        sy = y_bot - 2.0
-        ex = sx + length * dx
-        ey = sy + length * dy
-        # coarse clip against box via parametric sampling (enough for DXF preview).
-        pts: list[tuple[float, float]] = []
-        for t in (j / 12.0 for j in range(13)):
-            px = sx + (ex - sx) * t
-            py = sy + (ey - sy) * t
-            if x0 <= px <= x1 and y_bot <= py <= y_top:
-                pts.append((px, py))
-        if len(pts) >= 2:
-            out.append(CadLine("ZE_PROTO_CUT", pts[0], pts[-1]))
+    # Clean deterministic hatch (no random/zig-zag artifacts).
+    step = max(0.8, float(spacing))
+    direction = 1.0 if math.cos(math.radians(angle_deg)) >= 0 else -1.0
+    offset = -(y_top - y_bot)
+    while offset <= (x1 - x0) + (y_top - y_bot):
+        if direction > 0:
+            sx = x0 + offset
+            sy = y_bot
+            ex = sx + (y_top - y_bot)
+            ey = y_top
+        else:
+            sx = x1 - offset
+            sy = y_bot
+            ex = sx - (y_top - y_bot)
+            ey = y_top
+        # clip to x-range
+        if sx < x0:
+            sy += (x0 - sx)
+            sx = x0
+        if sx > x1:
+            sy += (sx - x1)
+            sx = x1
+        if ex < x0:
+            ey -= (x0 - ex)
+            ex = x0
+        if ex > x1:
+            ey -= (ex - x1)
+            ex = x1
+        if y_bot <= sy <= y_top and y_bot <= ey <= y_top and abs(ex - sx) > 0.05:
+            out.append(CadLine("ZE_PROTO_CUT", (sx, sy), (ex, ey)))
+        offset += step
     return out
 
 
@@ -140,9 +151,12 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
     y_bottom = layout.y_for_depth(doc.max_depth_m)
 
     # frame
-    x_columns = [layout.x_no, layout.x_abs, layout.x_thickness, layout.x_description, layout.x_section, layout.x_depth, layout.x_graph, layout.x_right]
-    for x in x_columns:
+    # Header stays visually clean: only outer frame + split between table and graph.
+    for x in (layout.x_no, layout.x_graph, layout.x_right):
         lines.append(CadLine("ZE_PROTO_FRAME", (x, layout.top_y_mm), (x, y_bottom)))
+    # Inner table columns only in body (under header)
+    for x in (layout.x_abs, layout.x_thickness, layout.x_description, layout.x_section, layout.x_depth):
+        lines.append(CadLine("ZE_PROTO_FRAME", (x, layout.header_bottom_y_mm), (x, y_bottom)))
     lines.append(CadLine("ZE_PROTO_FRAME", (layout.x_depth_ruler_black, layout.header_bottom_y_mm), (layout.x_depth_ruler_black, y_bottom)))
     lines.append(CadLine("ZE_PROTO_FRAME", (layout.x_depth_ruler_white, layout.header_bottom_y_mm), (layout.x_depth_ruler_white, y_bottom)))
     lines.append(CadLine("ZE_PROTO_FRAME", (layout.x_no, layout.top_y_mm), (layout.x_right, layout.top_y_mm)))
@@ -159,18 +173,18 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
             TextLabel("ZE_PROTO_TEXT", "Сопротивление конуса и муфты  Sf = 350 см.кв  Sq = 10 см.кв", 55.0, -26.8, 2.4, align="CENTER"),
             TextLabel("ZE_PROTO_TEXT", doc.date_text, 55.0, -34.8, 2.5, align="CENTER"),
             TextLabel("ZE_PROTO_TEXT", "Абс. отм, м", 5.0, -48.9, 1.8),
-            TextLabel("ZE_PROTO_TEXT", "Мощность", 16.5, -47.7, 1.8),
+            TextLabel("ZE_PROTO_TEXT", "Мощность", 16.5, -47.7, 1.8, rotation_deg=90.0, align="CENTER"),
             TextLabel("ZE_PROTO_TEXT", "Описание грунта", 44.8, -42.4, 1.8),
-            TextLabel("ZE_PROTO_TEXT", "Разрез", 93.8, -48.5, 1.8),
-            TextLabel("ZE_PROTO_TEXT", "Глубина", 103.0, -48.2, 1.8, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "Разрез", 93.8, -48.5, 1.8, rotation_deg=90.0, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "Глубина", 103.0, -48.2, 1.8, align="CENTER", rotation_deg=90.0),
         ]
     )
 
-    # depth grid
+    # depth grid (right graph area only, light-gray)
     max_int = int(math.ceil(max(doc.max_depth_m, 0.0)))
     for d in range(0, max_int + 1):
         y = layout.y_for_depth(float(d))
-        lines.append(CadLine("ZE_PROTO_FRAME", (layout.x_no, y), (layout.x_right, y)))
+        lines.append(CadLine("ZE_PROTO_GRID", (layout.x_graph, y), (layout.x_right, y)))
         # depth ruler: black/white alternating bars in 1m steps
         if d < max_int:
             y_next = layout.y_for_depth(float(d + 1))
@@ -193,6 +207,7 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
     for row in doc.layers:
         y0 = layout.y_for_depth(row.from_depth_m)
         y1 = layout.y_for_depth(row.to_depth_m)
+        # left body boundaries only by real geological intervals (no extra slicing)
         lines.append(CadLine("ZE_PROTO_FRAME", (layout.x_no, y1), (layout.x_graph, y1)))
         thickness = max(0.0, row.to_depth_m - row.from_depth_m)
         texts.append(TextLabel("ZE_PROTO_TEXT", str(row.idx), 1.4, y1 + 0.8, 1.8))
@@ -201,12 +216,23 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
 
         # section circle with IGE id number
         # section: green background + hatch per interval
-        lines.extend(_hatch_rect_lines(x0=layout.x_section + 0.2, x1=layout.x_depth - 0.2, y_top=y0, y_bot=y1, spacing=1.2))
+        lines.extend(_hatch_rect_lines(x0=layout.x_section + 0.2, x1=layout.x_depth_ruler_black - 0.2, y_top=y0, y_bot=y1, spacing=1.4))
         hatch = load_registered_hatch(row.soil_type)
         if hatch is not None:
-            for ln in list(hatch.lines)[:2]:
-                spacing = max(0.8, abs(float(ln.dx or 1.2)))
-                lines.extend(_hatch_rect_lines(x0=layout.x_section + 0.2, x1=layout.x_depth - 0.2, y_top=y0, y_bot=y1, spacing=spacing, angle_deg=float(ln.angle_deg)))
+            # keep hatch clean: only first line descriptor for angle/spacing
+            ln = list(hatch.lines)[0] if list(hatch.lines) else None
+            if ln is not None:
+                spacing = max(1.0, min(2.2, abs(float(ln.dx or 1.4))))
+                lines.extend(
+                    _hatch_rect_lines(
+                        x0=layout.x_section + 0.2,
+                        x1=layout.x_depth_ruler_black - 0.2,
+                        y_top=y0,
+                        y_bot=y1,
+                        spacing=spacing,
+                        angle_deg=float(ln.angle_deg),
+                    )
+                )
 
         circle_cx = 94.2
         circle_cy = (y0 + y1) / 2.0
@@ -226,12 +252,12 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
 
     # graph scales in header
     texts.append(TextLabel("ZE_PROTO_FS", "Сопротивление на боковой поверхности, Fs, кПа", 146.0, -16.5, 2.2, align="CENTER"))
-    for v in range(0, 151, 50):
-        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=150.0)
+    for v in range(0, 301, 50):
+        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=300.0)
         lines.append(CadLine("ZE_PROTO_FS", (x, layout.fs_axis_y - 1.8), (x, layout.fs_axis_y + 1.8)))
         texts.append(TextLabel("ZE_PROTO_FS", f"{v},0", x, layout.fs_axis_y - 4.0, 1.8, align="CENTER", color_aci=5))
-    for v in range(0, 151, 25):
-        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=150.0)
+    for v in range(0, 301, 25):
+        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=300.0)
         lines.append(CadLine("ZE_PROTO_FS", (x, layout.fs_axis_y - 1.0), (x, layout.fs_axis_y + 1.0)))
     texts.append(TextLabel("ZE_PROTO_TEXT", "КПа", 183.0, layout.fs_axis_y - 4.0, 3.0, align="RIGHT"))
 
@@ -248,13 +274,13 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
     # graph area frame and grid
     for d in range(0, max_int + 1):
         y = layout.y_for_depth(float(d))
-        lines.append(CadLine("ZE_PROTO_FRAME", (layout.x_graph, y), (layout.x_right, y)))
+        lines.append(CadLine("ZE_PROTO_GRID", (layout.x_graph, y), (layout.x_right, y)))
     for v in range(0, 31, 5):
         x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=30.0)
-        lines.append(CadLine("ZE_PROTO_FRAME", (x, layout.header_bottom_y_mm), (x, y_bottom)))
-    for v in range(0, 151, 25):
-        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=150.0)
-        lines.append(CadLine("ZE_PROTO_FRAME", (x, layout.header_bottom_y_mm), (x, y_bottom)))
+        lines.append(CadLine("ZE_PROTO_GRID", (x, layout.header_bottom_y_mm), (x, y_bottom)))
+    for v in range(0, 301, 25):
+        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=300.0)
+        lines.append(CadLine("ZE_PROTO_GRID", (x, layout.header_bottom_y_mm), (x, y_bottom)))
 
     # qc/fs curves (reuse existing calibration pipeline)
     depth_arr = list(getattr(doc.test, "depth", []) or [])
@@ -272,7 +298,7 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
         qc_mpa, fs_kpa = calc_qc_fs(int(round(q_raw)), int(round(f_raw)), cal=calibration)
         y = layout.y_for_depth(d)
         samples_qc.append((_value_to_x(qc_mpa, x0=layout.x_graph + 0.5, x1=180.0, vmax=30.0), y))
-        samples_fs.append((_value_to_x(fs_kpa, x0=layout.x_graph + 0.5, x1=180.0, vmax=150.0), y))
+        samples_fs.append((_value_to_x(fs_kpa, x0=layout.x_graph + 0.5, x1=180.0, vmax=300.0), y))
 
     if len(samples_qc) >= 2:
         polys.append(CadPolyline("ZE_PROTO_QC", samples_qc))

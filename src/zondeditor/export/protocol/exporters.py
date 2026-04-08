@@ -35,6 +35,8 @@ def export_protocols_to_pdf(*, scenes: list[CadScene], heights_mm: list[float], 
                     return "#0b8f2a"
                 if layer in {"ZE_PROTO_FS"}:
                     return "#0b45ff"
+                if layer in {"ZE_PROTO_GRID"}:
+                    return "#b7b7b7"
                 return "black"
 
             for ln in scene.block.lines:
@@ -51,7 +53,16 @@ def export_protocols_to_pdf(*, scenes: list[CadScene], heights_mm: list[float], 
                 ax.plot(xs, ys, color=color, linewidth=0.8)
             for txt in scene.block.texts:
                 ha = {"LEFT": "left", "CENTER": "center", "RIGHT": "right"}.get(txt.align, "left")
-                ax.text(txt.x_mm, txt.y_mm, txt.text, fontsize=5, ha=ha, va="center", color=_layer_color(txt.layer))
+                ax.text(
+                    txt.x_mm,
+                    txt.y_mm,
+                    txt.text,
+                    fontsize=5,
+                    ha=ha,
+                    va="center",
+                    color=_layer_color(txt.layer),
+                    rotation=float(getattr(txt, "rotation_deg", 0.0) or 0.0),
+                )
 
             ax.set_xlim(0.0, width_mm)
             ax.set_ylim(-float(h), 0.0)

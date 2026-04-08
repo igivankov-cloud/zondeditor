@@ -42,6 +42,7 @@ class TextLabel:
     height_mm: float
     align: Literal["LEFT", "CENTER", "RIGHT"] = "LEFT"
     color_aci: int | None = None
+    rotation_deg: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -97,4 +98,3 @@ class CadScene:
     layers: list[CadLayerSpec]
     block: CadBlock
     insertion_point: tuple[float, float, float] = (0.0, 0.0, 0.0)
-

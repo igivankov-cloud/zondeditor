@@ -21,8 +21,8 @@ class ProtocolLayout:
     x_depth: float = 99.1
     x_graph: float = 110.1
     x_right: float = 183.1
-    x_depth_ruler_black: float = 106.8
-    x_depth_ruler_white: float = 108.4
+    x_depth_ruler_black: float = 96.8
+    x_depth_ruler_white: float = 98.4
 
     # Graph scale rows in header area
     fs_axis_y: float = -21.5
