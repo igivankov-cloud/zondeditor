@@ -326,12 +326,23 @@ def write_cad_scenes_to_dxf(
                 },
             )
             align = text.align.upper()
-            if align == "CENTER":
-                entity.set_placement((text.x_mm, text.y_mm), align="MIDDLE_CENTER")
-            elif align == "RIGHT":
-                entity.set_placement((text.x_mm, text.y_mm), align="MIDDLE_RIGHT")
-            else:
-                entity.set_placement((text.x_mm, text.y_mm), align="MIDDLE_LEFT")
+            try:
+                from ezdxf.enums import TextEntityAlignment  # type: ignore
+
+                if align == "CENTER":
+                    entity.set_placement((text.x_mm, text.y_mm), align=TextEntityAlignment.MIDDLE_CENTER)
+                elif align == "RIGHT":
+                    entity.set_placement((text.x_mm, text.y_mm), align=TextEntityAlignment.MIDDLE_RIGHT)
+                else:
+                    entity.set_placement((text.x_mm, text.y_mm), align=TextEntityAlignment.MIDDLE_LEFT)
+            except Exception:
+                # compatibility with older ezdxf builds
+                if align == "CENTER":
+                    entity.set_placement((text.x_mm, text.y_mm), align="MIDDLE_CENTER")
+                elif align == "RIGHT":
+                    entity.set_placement((text.x_mm, text.y_mm), align="MIDDLE_RIGHT")
+                else:
+                    entity.set_placement((text.x_mm, text.y_mm), align="MIDDLE_LEFT")
 
     msp = doc.modelspace()
     for i, scene in enumerate(scenes):

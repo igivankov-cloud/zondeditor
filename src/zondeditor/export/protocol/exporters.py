@@ -15,7 +15,7 @@ def export_protocols_to_dxf(*, scenes: list[CadScene], heights_mm: list[float], 
     try:
         return write_cad_scenes_to_dxf(stacked, out_path, x_step_mm=0.0, require_ezdxf=True, validate_after_write=True)
     except Exception as exc:
-        raise RuntimeError(f"Protocol DXF export failed at writer stage: {exc}") from exc
+        raise RuntimeError(f"Protocol DXF export failed at writer stage: {type(exc).__name__}: {exc}") from exc
 
 
 def export_protocols_to_pdf(*, scenes: list[CadScene], heights_mm: list[float], out_path: str | Path) -> Path:
