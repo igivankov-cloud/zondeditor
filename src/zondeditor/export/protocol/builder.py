@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from datetime import datetime
 from dataclasses import dataclass
 
@@ -76,6 +77,35 @@ def _infer_soil_type(*, explicit: str, description: str, ige_name: str) -> str:
     return raw
 
 
+def _canonical_ige_key(value: str) -> str:
+    raw = str(value or "").strip().lower().replace("ё", "е")
+    return "".join(ch for ch in raw if ch.isalnum())
+
+
+def _extract_ige_num(value: str) -> str:
+    m = re.findall(r"\d+", str(value or ""))
+    return m[-1] if m else ""
+
+
+def _resolve_ige_entry(registry: dict[str, dict[str, object]], ige_id: str) -> dict[str, object]:
+    if ige_id in registry:
+        return dict(registry.get(ige_id) or {})
+    want_canon = _canonical_ige_key(ige_id)
+    want_num = _extract_ige_num(ige_id)
+    for key, ent in registry.items():
+        key_s = str(key or "")
+        if _canonical_ige_key(key_s) == want_canon:
+            return dict(ent or {})
+        if want_num and _extract_ige_num(key_s) == want_num:
+            return dict(ent or {})
+        label = str((ent or {}).get("label") or "")
+        if label and _canonical_ige_key(label) == want_canon:
+            return dict(ent or {})
+        if want_num and label and _extract_ige_num(label) == want_num:
+            return dict(ent or {})
+    return {}
+
+
 def build_protocol_documents(*, tests: list[TestData], ige_registry: dict[str, dict[str, object]] | None = None) -> ProtocolBuildPack:
     docs: list[ProtocolDocument] = []
     reg = dict(ige_registry or {})
@@ -86,7 +116,7 @@ def build_protocol_documents(*, tests: list[TestData], ige_registry: dict[str, d
         rows: list[ProtocolLayerRow] = []
         for idx, it in enumerate(list(getattr(col, "intervals", []) or []), start=1):
             ige_id = str(getattr(it, "ige_id", "") or "")
-            ent = dict(reg.get(ige_id) or {})
+            ent = _resolve_ige_entry(reg, ige_id)
             descr = str(ent.get("notes") or ent.get("manual_notes") or ent.get("note") or getattr(it, "ige_name", "") or ige_id)
             rows.append(
                 ProtocolLayerRow(

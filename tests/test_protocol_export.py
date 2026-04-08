@@ -1,4 +1,5 @@
 from src.zondeditor.domain.models import TestData
+from src.zondeditor.domain.experience_column import ColumnInterval, ExperienceColumn
 from src.zondeditor.processing.calibration import Calibration
 from src.zondeditor.export.protocol import build_protocol_documents, build_protocol_scene
 
@@ -79,3 +80,19 @@ def test_protocol_build_infers_soil_type_from_description_when_registry_field_mi
     assert pack.documents
     assert pack.documents[0].layers
     assert pack.documents[0].layers[0].soil_type == "суглинок"
+
+
+def test_protocol_build_resolves_soil_type_by_ige_number_when_id_formats_differ():
+    t = _test_data()
+    t.experience_column = ExperienceColumn(
+        column_depth_start=0.0,
+        column_depth_end=2.0,
+        intervals=[ColumnInterval(from_depth=0.0, to_depth=2.0, ige_id="ИГЭ-3", ige_name="")],
+    )
+    pack = build_protocol_documents(
+        tests=[t],
+        ige_registry={"ИГ-3": {"soil_type": "песок", "label": "ИГ-3"}},
+    )
+    assert pack.documents
+    assert pack.documents[0].layers
+    assert pack.documents[0].layers[0].soil_type == "песок"
