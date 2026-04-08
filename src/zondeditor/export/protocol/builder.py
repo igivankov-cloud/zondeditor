@@ -138,9 +138,10 @@ def _to_dxf_pattern_definition(soil_type: str) -> tuple[str, list[tuple[float, t
     hatch = load_registered_hatch(soil_type)
     if hatch is None:
         return None
-    scale = float(getattr(hatch, "scale", 1.0) or 1.0)
-    if scale <= 0.0:
-        scale = 1.0
+    # IMPORTANT:
+    # hatch.scale from JSON is UI render normalization (see resolve_hatch_render_scale),
+    # not a geometric multiplier for line dx/dy in protocol DXF units.
+    # For DXF we pass line geometry as-is to avoid accidental double scaling/dense hatches.
     rows: list[tuple[float, tuple[float, float], tuple[float, float], list[float]]] = []
     for line in list(getattr(hatch, "lines", ()) or ()):
         if not bool(getattr(line, "enabled", True)):
@@ -149,10 +150,10 @@ def _to_dxf_pattern_definition(soil_type: str) -> tuple[str, list[tuple[float, t
         for seg in list(getattr(line, "segments", ()) or ()):
             kind = str(getattr(seg, "kind", "") or "").strip()
             if kind == "Точка":
-                dash_items.extend([0.0, -max(1e-9, float(getattr(seg, "gap", 1.0) or 1.0) * scale)])
+                dash_items.extend([0.0, -max(1e-9, float(getattr(seg, "gap", 1.0) or 1.0))])
             else:
-                dash = max(0.0, float(getattr(seg, "dash", 0.0) or 0.0) * scale)
-                gap = max(0.0, float(getattr(seg, "gap", 0.0) or 0.0) * scale)
+                dash = max(0.0, float(getattr(seg, "dash", 0.0) or 0.0))
+                gap = max(0.0, float(getattr(seg, "gap", 0.0) or 0.0))
                 if dash > 0.0:
                     dash_items.append(dash)
                 if gap > 0.0:
@@ -160,8 +161,8 @@ def _to_dxf_pattern_definition(soil_type: str) -> tuple[str, list[tuple[float, t
         rows.append(
             (
                 float(getattr(line, "angle_deg", 0.0) or 0.0),
-                (float(getattr(line, "x", 0.0) or 0.0) * scale, float(getattr(line, "y", 0.0) or 0.0) * scale),
-                (float(getattr(line, "dx", 0.0) or 0.0) * scale, float(getattr(line, "dy", 0.0) or 0.0) * scale),
+                (float(getattr(line, "x", 0.0) or 0.0), float(getattr(line, "y", 0.0) or 0.0)),
+                (float(getattr(line, "dx", 0.0) or 0.0), float(getattr(line, "dy", 0.0) or 0.0)),
                 dash_items,
             )
         )

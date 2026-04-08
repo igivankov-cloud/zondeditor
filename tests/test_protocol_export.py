@@ -53,3 +53,19 @@ def test_protocol_scene_keeps_solid_hatches_for_masks_and_ruler():
     solid_layers = {h.layer for h in result.scene.block.hatches if h.solid and not h.pattern_definition}
     assert "ZE_PROTO_MASK" in solid_layers
     assert "ZE_PROTO_RULER" in solid_layers
+
+
+def test_protocol_suglinok_pattern_step_not_scaled_twice():
+    pack = build_protocol_documents(
+        tests=[_test_data()],
+        ige_registry={"ИГЭ-1": {"soil_type": "суглинок", "notes": "Суглинок"}},
+    )
+    cal = Calibration(scale_div=250, fcone_kn=30.0, fsleeve_kn=10.0, cone_area_cm2=10.0, sleeve_area_cm2=350.0)
+    result = build_protocol_scene(doc=pack.documents[0], calibration=cal, block_name="PROTO_SUG")
+    patterned = [h for h in result.scene.block.hatches if h.layer == "ZE_PROTO_CUT" and h.pattern_definition]
+    assert patterned
+    first_row = patterned[0].pattern_definition[0]
+    angle_deg, _base, offset, _dash_items = first_row
+    assert angle_deg == 45.0
+    # Suglinok JSON keeps dy around 5.65; export should not multiply by pattern.scale (14.0).
+    assert offset[1] == 5.65
