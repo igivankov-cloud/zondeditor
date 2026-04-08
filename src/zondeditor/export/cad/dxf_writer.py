@@ -311,6 +311,10 @@ def write_cad_scenes_to_dxf(
                         color=(int(hatch.color_aci) if hatch.color_aci is not None else 256),
                         angle=0.0,
                         scale=1.0,
+                        # Explicitly mark as custom pattern definition.
+                        # Without this, some CAD viewers may treat unknown names as predefined
+                        # and render a very dense fallback.
+                        pattern_type=2,
                         definition=definition,
                     )
                 else:
