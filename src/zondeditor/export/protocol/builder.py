@@ -134,42 +134,40 @@ def _split_text_lines(text: str, line_limit: int = 42) -> list[str]:
     return lines
 
 
-def _hatch_rect_lines(*, x0: float, x1: float, y_top: float, y_bot: float, spacing: float, angle_deg: float = 45.0) -> list[CadLine]:
-    out: list[CadLine] = []
-    if x1 <= x0 or y_top <= y_bot:
-        return out
-    # Clean deterministic hatch (no random/zig-zag artifacts).
-    step = max(0.8, float(spacing))
-    direction = 1.0 if math.cos(math.radians(angle_deg)) >= 0 else -1.0
-    offset = -(y_top - y_bot)
-    while offset <= (x1 - x0) + (y_top - y_bot):
-        if direction > 0:
-            sx = x0 + offset
-            sy = y_bot
-            ex = sx + (y_top - y_bot)
-            ey = y_top
-        else:
-            sx = x1 - offset
-            sy = y_bot
-            ex = sx - (y_top - y_bot)
-            ey = y_top
-        # clip to x-range
-        if sx < x0:
-            sy += (x0 - sx)
-            sx = x0
-        if sx > x1:
-            sy += (sx - x1)
-            sx = x1
-        if ex < x0:
-            ey -= (x0 - ex)
-            ex = x0
-        if ex > x1:
-            ey -= (ex - x1)
-            ex = x1
-        if y_bot <= sy <= y_top and y_bot <= ey <= y_top and abs(ex - sx) > 0.05:
-            out.append(CadLine("ZE_PROTO_CUT", (sx, sy), (ex, ey)))
-        offset += step
-    return out
+def _to_dxf_pattern_definition(soil_type: str) -> tuple[str, list[tuple[float, tuple[float, float], tuple[float, float], list[float]]]] | None:
+    hatch = load_registered_hatch(soil_type)
+    if hatch is None:
+        return None
+    scale = float(getattr(hatch, "scale", 1.0) or 1.0)
+    if scale <= 0.0:
+        scale = 1.0
+    rows: list[tuple[float, tuple[float, float], tuple[float, float], list[float]]] = []
+    for line in list(getattr(hatch, "lines", ()) or ()):
+        if not bool(getattr(line, "enabled", True)):
+            continue
+        dash_items: list[float] = []
+        for seg in list(getattr(line, "segments", ()) or ()):
+            kind = str(getattr(seg, "kind", "") or "").strip()
+            if kind == "Точка":
+                dash_items.extend([0.0, -max(1e-9, float(getattr(seg, "gap", 1.0) or 1.0) * scale)])
+            else:
+                dash = max(0.0, float(getattr(seg, "dash", 0.0) or 0.0) * scale)
+                gap = max(0.0, float(getattr(seg, "gap", 0.0) or 0.0) * scale)
+                if dash > 0.0:
+                    dash_items.append(dash)
+                if gap > 0.0:
+                    dash_items.append(-gap)
+        rows.append(
+            (
+                float(getattr(line, "angle_deg", 0.0) or 0.0),
+                (float(getattr(line, "x", 0.0) or 0.0) * scale, float(getattr(line, "y", 0.0) or 0.0) * scale),
+                (float(getattr(line, "dx", 0.0) or 0.0) * scale, float(getattr(line, "dy", 0.0) or 0.0) * scale),
+                dash_items,
+            )
+        )
+    if not rows:
+        return None
+    return (str(getattr(hatch, "name", "USER") or "USER"), rows)
 
 
 def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, block_name: str, layout: ProtocolLayout = DEFAULT_PROTOCOL_LAYOUT) -> ProtocolCadResult:
@@ -256,25 +254,25 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
         texts.append(TextLabel("ZE_PROTO_TEXT", row.abs_mark_text, (layout.x_abs + layout.x_thickness) / 2.0, y_cell, 1.8, align="CENTER"))
         texts.append(TextLabel("ZE_PROTO_TEXT", f"{thickness:.2f}".replace('.', ','), (layout.x_thickness + layout.x_description) / 2.0, y_cell, 1.8, align="CENTER"))
 
-        # section circle with IGE id number
-        # section: green background + hatch per interval
-        lines.extend(_hatch_rect_lines(x0=layout.x_section + 0.2, x1=layout.x_depth - 0.2, y_top=y0, y_bot=y1, spacing=1.4))
-        hatch = load_registered_hatch(row.soil_type)
-        if hatch is not None:
-            # keep hatch clean: only first line descriptor for angle/spacing
-            ln = list(hatch.lines)[0] if list(hatch.lines) else None
-            if ln is not None:
-                spacing = max(1.0, min(2.2, abs(float(ln.dx or 1.4))))
-                lines.extend(
-                    _hatch_rect_lines(
-                        x0=layout.x_section + 0.2,
-                        x1=layout.x_depth - 0.2,
-                        y_top=y0,
-                        y_bot=y1,
-                        spacing=spacing,
-                        angle_deg=float(ln.angle_deg),
-                    )
+        # section: area hatch per interval (no manual line bundles)
+        section_boundary = [
+            (layout.x_section + 0.2, y0),
+            (layout.x_depth - 0.2, y0),
+            (layout.x_depth - 0.2, y1),
+            (layout.x_section + 0.2, y1),
+        ]
+        dxf_pattern = _to_dxf_pattern_definition(row.soil_type)
+        if dxf_pattern is not None:
+            pattern_name, pattern_rows = dxf_pattern
+            hatches.append(
+                CadHatch(
+                    "ZE_PROTO_CUT",
+                    section_boundary,
+                    solid=False,
+                    pattern_name=pattern_name,
+                    pattern_definition=pattern_rows,
                 )
+            )
 
         circle_cx = 94.2
         circle_cy = (y0 + y1) / 2.0

@@ -27,3 +27,29 @@ def test_protocol_build_uses_selected_order():
     t2 = _test_data(5)
     pack = build_protocol_documents(tests=[t1, t2], ige_registry={})
     assert [d.test.tid for d in pack.documents] == [2, 5]
+
+
+def test_protocol_scene_uses_registered_hatch_patterns_for_section_layers():
+    pack = build_protocol_documents(
+        tests=[_test_data()],
+        ige_registry={"ИГЭ-1": {"soil_type": "глина", "notes": "Глина"}},
+    )
+    cal = Calibration(scale_div=250, fcone_kn=30.0, fsleeve_kn=10.0, cone_area_cm2=10.0, sleeve_area_cm2=350.0)
+    result = build_protocol_scene(doc=pack.documents[0], calibration=cal, block_name="PROTO_HATCH")
+    patterned = [
+        h
+        for h in result.scene.block.hatches
+        if h.layer == "ZE_PROTO_CUT" and bool(h.pattern_name or h.pattern_definition)
+    ]
+    assert patterned
+    assert all(len(h.boundary) >= 4 for h in patterned)
+    assert all(len(h.pattern_definition) > 0 for h in patterned)
+
+
+def test_protocol_scene_keeps_solid_hatches_for_masks_and_ruler():
+    pack = build_protocol_documents(tests=[_test_data()], ige_registry={})
+    cal = Calibration(scale_div=250, fcone_kn=30.0, fsleeve_kn=10.0, cone_area_cm2=10.0, sleeve_area_cm2=350.0)
+    result = build_protocol_scene(doc=pack.documents[0], calibration=cal, block_name="PROTO_SOLID")
+    solid_layers = {h.layer for h in result.scene.block.hatches if h.solid and not h.pattern_definition}
+    assert "ZE_PROTO_MASK" in solid_layers
+    assert "ZE_PROTO_RULER" in solid_layers

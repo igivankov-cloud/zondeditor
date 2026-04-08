@@ -294,10 +294,20 @@ def write_cad_scenes_to_dxf(
                     dxfattribs={"layer": hatch.layer},
                 )
                 hatch_entity.paths.add_polyline_path(hatch.boundary, is_closed=True)
-                hatch_entity.set_solid_fill(
-                    color=(int(hatch.color_aci) if hatch.color_aci is not None else 256),
-                    rgb=(tuple(int(c) for c in hatch.rgb) if hatch.rgb is not None else None),
-                )
+                has_pattern = bool(getattr(hatch, "pattern_name", None) or getattr(hatch, "pattern_definition", None))
+                if has_pattern:
+                    hatch_entity.set_pattern_fill(
+                        name=str(getattr(hatch, "pattern_name", None) or "USER"),
+                        color=(int(hatch.color_aci) if hatch.color_aci is not None else 256),
+                        angle=0.0,
+                        scale=1.0,
+                        definition=list(getattr(hatch, "pattern_definition", []) or []),
+                    )
+                else:
+                    hatch_entity.set_solid_fill(
+                        color=(int(hatch.color_aci) if hatch.color_aci is not None else 256),
+                        rgb=(tuple(int(c) for c in hatch.rgb) if hatch.rgb is not None else None),
+                    )
             except Exception as exc:
                 raise RuntimeError(
                     f"DXF hatch export failed (layer={hatch.layer}, points={len(hatch.boundary)}, block={scene.block.name})"
