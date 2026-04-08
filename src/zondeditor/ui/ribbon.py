@@ -798,10 +798,7 @@ class RibbonView(ttk.Frame):
         ptype = str(p.get("project_type", "") or "").strip()
         if ptype:
             self.set_project_type(ptype, mode_params=p)
-        controller_txt = str(p.get("controller_type", "") or "")
-        if self.project_type_mode == "type2_electric" and controller_txt.strip() == "ТЕСТ-К2М":
-            controller_txt = ""
-        self.controller_type_var.set(controller_txt)
+        self.controller_type_var.set(str(p.get("controller_type", "") or ""))
         self.controller_scale_div_var.set(str(p.get("controller_scale_div", "") or ""))
         self.probe_type_var.set(str(p.get("probe_type", "") or ""))
         self.cone_kn_var.set(str(p.get("cone_kn", "") or ""))
