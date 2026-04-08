@@ -21,10 +21,16 @@ class ProtocolLayout:
     x_depth: float = 99.1
     x_graph: float = 110.1
     x_right: float = 183.1
+    x_depth_ruler_black: float = 106.8
+    x_depth_ruler_white: float = 108.4
 
     # Graph scale rows in header area
-    qc_axis_y: float = -44.7
-    fs_axis_y: float = -25.3
+    fs_axis_y: float = -21.5
+    qc_axis_y: float = -36.5
+    header_row_1: float = -14.8
+    header_row_2: float = -22.8
+    header_row_3: float = -30.8
+    header_row_4: float = -38.8
 
     @property
     def table_bottom_y(self) -> float:

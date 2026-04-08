@@ -30,8 +30,15 @@ def export_protocols_to_pdf(*, scenes: list[CadScene], heights_mm: list[float], 
             fig, ax = plt.subplots(figsize=(fig_w, fig_h))
             ax.set_aspect("equal")
 
+            def _layer_color(layer: str) -> str:
+                if layer in {"ZE_PROTO_QC"}:
+                    return "#0b8f2a"
+                if layer in {"ZE_PROTO_FS"}:
+                    return "#0b45ff"
+                return "black"
+
             for ln in scene.block.lines:
-                ax.plot([ln.start[0], ln.end[0]], [ln.start[1], ln.end[1]], color="black", linewidth=0.5)
+                ax.plot([ln.start[0], ln.end[0]], [ln.start[1], ln.end[1]], color=_layer_color(ln.layer), linewidth=0.5)
             for pl in scene.block.polylines:
                 if not pl.points:
                     continue
@@ -40,15 +47,11 @@ def export_protocols_to_pdf(*, scenes: list[CadScene], heights_mm: list[float], 
                 if pl.closed and pl.points:
                     xs.append(pl.points[0][0])
                     ys.append(pl.points[0][1])
-                color = "black"
-                if pl.layer == "ZE_PROTO_QC":
-                    color = "#d62828"
-                elif pl.layer == "ZE_PROTO_FS":
-                    color = "#2563eb"
+                color = _layer_color(pl.layer)
                 ax.plot(xs, ys, color=color, linewidth=0.8)
             for txt in scene.block.texts:
                 ha = {"LEFT": "left", "CENTER": "center", "RIGHT": "right"}.get(txt.align, "left")
-                ax.text(txt.x_mm, txt.y_mm, txt.text, fontsize=5, ha=ha, va="center")
+                ax.text(txt.x_mm, txt.y_mm, txt.text, fontsize=5, ha=ha, va="center", color=_layer_color(txt.layer))
 
             ax.set_xlim(0.0, width_mm)
             ax.set_ylim(-float(h), 0.0)

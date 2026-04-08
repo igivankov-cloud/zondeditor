@@ -12,6 +12,7 @@ class ProtocolLayerRow:
     to_depth_m: float
     ige_id: str
     description: str
+    soil_type: str = ""
     abs_mark_text: str = ""
 
 
