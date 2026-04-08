@@ -113,3 +113,17 @@ def test_protocol_section_pattern_hatches_use_black_color():
     patterned = [h for h in result.scene.block.hatches if h.layer == "ZE_PROTO_CUT" and h.pattern_definition]
     assert patterned
     assert all(h.color_aci == 7 for h in patterned)
+
+
+def test_protocol_pesok_pattern_avoids_zero_length_dxf_dots():
+    pack = build_protocol_documents(
+        tests=[_test_data()],
+        ige_registry={"ИГЭ-1": {"soil_type": "песок", "notes": "Песок"}},
+    )
+    cal = Calibration(scale_div=250, fcone_kn=30.0, fsleeve_kn=10.0, cone_area_cm2=10.0, sleeve_area_cm2=350.0)
+    result = build_protocol_scene(doc=pack.documents[0], calibration=cal, block_name="PROTO_PESOK")
+    patterned = [h for h in result.scene.block.hatches if h.layer == "ZE_PROTO_CUT" and h.pattern_definition]
+    assert patterned
+    for _angle, _base, _offset, dash_items in patterned[0].pattern_definition:
+        if dash_items:
+            assert all(v != 0.0 for v in dash_items)

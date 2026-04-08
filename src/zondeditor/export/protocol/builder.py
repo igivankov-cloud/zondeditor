@@ -224,7 +224,12 @@ def _to_dxf_pattern_definition(soil_type: str) -> tuple[str, list[tuple[float, t
         for seg in list(getattr(line, "segments", ()) or ()):
             kind = str(getattr(seg, "kind", "") or "").strip()
             if kind == "Точка":
-                dash_items.extend([0.0, -max(1e-9, float(getattr(seg, "gap", 1.0) or 1.0))])
+                # DXF dot segments (`0.0`) can become very heavy in some CAD viewers.
+                # Export a tiny dash instead of true zero-length dot to keep visual intent
+                # while avoiding solid-black fallback on dense patterns (e.g. sand).
+                gap = max(1e-9, float(getattr(seg, "gap", 1.0) or 1.0))
+                tiny_dash = min(0.25, max(0.05, gap * 0.08))
+                dash_items.extend([tiny_dash, -gap])
             else:
                 dash = max(0.0, float(getattr(seg, "dash", 0.0) or 0.0))
                 gap = max(0.0, float(getattr(seg, "gap", 0.0) or 0.0))
