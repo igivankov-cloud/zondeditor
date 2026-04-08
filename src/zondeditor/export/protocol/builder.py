@@ -105,6 +105,14 @@ def _value_to_x(value: float, *, x0: float, x1: float, vmax: float) -> float:
     return x0 + (x1 - x0) * (v / vmax)
 
 
+def _fmt_tick(v: float | int) -> str:
+    try:
+        iv = int(round(float(v)))
+        return str(iv)
+    except Exception:
+        return str(v)
+
+
 def _split_text_lines(text: str, line_limit: int = 42) -> list[str]:
     words = str(text or "").split()
     if not words:
@@ -187,11 +195,11 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
     # header text
     texts.extend(
         [
-            TextLabel("ZE_PROTO_TEXT", "График статического зондирования", 55.0, -10.7, 2.5, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "График статического зондирования", 55.0, -10.7, 2.3, align="CENTER"),
             TextLabel("ZE_PROTO_TEXT", doc.title, 55.0, -18.8, 2.3, align="CENTER"),
             TextLabel("ZE_PROTO_TEXT", "Сопротивление конуса и муфты  Sf = 350 см.кв  Sq = 10 см.кв", 55.0, -26.8, 2.3, align="CENTER"),
             TextLabel("ZE_PROTO_TEXT", doc.date_text, 55.0, -34.8, 2.3, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", "№ п.п.", (layout.x_no + layout.x_abs) / 2.0, -47.5, 1.8, rotation_deg=90.0, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "№ п.п.", ((layout.x_no + layout.x_abs) / 2.0) + 0.25, -47.5, 1.8, rotation_deg=90.0, align="CENTER"),
             TextLabel("ZE_PROTO_TEXT", "Абс. отм, м", (layout.x_abs + layout.x_thickness) / 2.0, -47.5, 1.8, rotation_deg=90.0, align="CENTER"),
             TextLabel("ZE_PROTO_TEXT", "Мощность", (layout.x_thickness + layout.x_description) / 2.0, -47.5, 1.8, rotation_deg=90.0, align="CENTER"),
             TextLabel("ZE_PROTO_TEXT", "Описание грунта", (layout.x_description + layout.x_section) / 2.0, -42.4, 1.9, align="CENTER"),
@@ -199,7 +207,7 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
             TextLabel("ZE_PROTO_TEXT", "Глубина", (layout.x_depth + layout.x_graph) / 2.0, -47.5, 1.8, align="CENTER", rotation_deg=90.0),
         ]
     )
-    for x in (layout.x_no, layout.x_abs, layout.x_thickness, layout.x_description, layout.x_section, layout.x_graph):
+    for x in (layout.x_no, layout.x_abs, layout.x_thickness, layout.x_description, layout.x_section, layout.x_depth, layout.x_graph):
         lines.append(CadLine("ZE_PROTO_FRAME", (x, layout.header_row_4), (x, layout.header_bottom_y_mm)))
 
     # depth grid (right graph area only, light-gray)
@@ -222,8 +230,8 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
                 while yy > y_next:
                     lines.append(CadLine("ZE_PROTO_CUT", (layout.x_depth_ruler_black, yy), (layout.x_depth_ruler_white, yy)))
                     yy -= step
-        if d % 2 == 0:
-            texts.append(TextLabel("ZE_PROTO_TEXT", f"{d},0", 104.1, y, 1.8, align="CENTER"))
+        if d % 2 == 0 and d != 0:
+            texts.append(TextLabel("ZE_PROTO_TEXT", _fmt_tick(d), 104.1, y, 1.8, align="CENTER"))
 
     # layers table and section
     for row in doc.layers:
@@ -232,9 +240,10 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
         # left body boundaries only by real geological intervals (no extra slicing)
         lines.append(CadLine("ZE_PROTO_FRAME", (layout.x_no, y1), (layout.x_graph, y1)))
         thickness = max(0.0, row.to_depth_m - row.from_depth_m)
-        texts.append(TextLabel("ZE_PROTO_TEXT", str(row.idx), 1.4, y1 + 0.8, 1.8))
-        texts.append(TextLabel("ZE_PROTO_TEXT", row.abs_mark_text, 5.3, y1 + 0.8, 1.8))
-        texts.append(TextLabel("ZE_PROTO_TEXT", f"{thickness:.2f}".replace('.', ','), 16.8, y1 + 0.8, 1.8))
+        y_cell = (y0 + y1) / 2.0
+        texts.append(TextLabel("ZE_PROTO_TEXT", str(row.idx), (layout.x_no + layout.x_abs) / 2.0, y_cell, 1.8, align="CENTER"))
+        texts.append(TextLabel("ZE_PROTO_TEXT", row.abs_mark_text, (layout.x_abs + layout.x_thickness) / 2.0, y_cell, 1.8, align="CENTER"))
+        texts.append(TextLabel("ZE_PROTO_TEXT", f"{thickness:.2f}".replace('.', ','), (layout.x_thickness + layout.x_description) / 2.0, y_cell, 1.8, align="CENTER"))
 
         # section circle with IGE id number
         # section: green background + hatch per interval
@@ -281,34 +290,43 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
             texts.append(TextLabel("ZE_PROTO_TEXT", txt, 26.1, y0 - 2.9 * i - 2.6, 1.7))
 
     # graph scales in header
+    is_k4 = int(getattr(calibration, "scale_div", 250) or 250) >= 1000
+    fs_max = 500.0 if is_k4 else 300.0
+    qc_max = 50.0 if is_k4 else 30.0
+
     texts.append(TextLabel("ZE_PROTO_FS", "Сопротивление на боковой поверхности, Fs, кПа", 146.0, -16.5, 2.2, align="CENTER"))
     lines.append(CadLine("ZE_PROTO_FS", (layout.x_graph + 0.5, layout.fs_axis_y), (180.0, layout.fs_axis_y)))
-    for v in range(0, 301, 50):
-        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=300.0)
+    fs_major = 100 if is_k4 else 50
+    fs_minor = 50 if is_k4 else 25
+    for v in range(0, int(fs_max) + 1, fs_major):
+        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=fs_max)
         lines.append(CadLine("ZE_PROTO_FS", (x, layout.fs_axis_y - 1.8), (x, layout.fs_axis_y + 1.8)))
-        texts.append(TextLabel("ZE_PROTO_FS", f"{v},0", x, layout.fs_axis_y - 4.0, 1.8, align="CENTER", color_aci=5))
-    for v in range(0, 301, 25):
-        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=300.0)
+        if v != 0:
+            texts.append(TextLabel("ZE_PROTO_FS", _fmt_tick(v), x, layout.fs_axis_y - 4.0, 1.8, align="CENTER", color_aci=5))
+    for v in range(0, int(fs_max) + 1, fs_minor):
+        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=fs_max)
         lines.append(CadLine("ZE_PROTO_FS", (x, layout.fs_axis_y - 1.0), (x, layout.fs_axis_y + 1.0)))
-    texts.append(TextLabel("ZE_PROTO_QC", "Сопротивление под наконечником зонда, Qs, МПа", 146.0, -31.5, 2.2, align="CENTER"))
+    texts.append(TextLabel("ZE_PROTO_QC", "Сопротивление под наконечником, Qs, МПа", 146.0, -31.5, 2.2, align="CENTER"))
     lines.append(CadLine("ZE_PROTO_QC", (layout.x_graph + 0.5, layout.qc_axis_y), (180.0, layout.qc_axis_y)))
-    for v in range(0, 31, 5):
-        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=30.0)
+    qc_major = 10 if is_k4 else 5
+    for v in range(0, int(qc_max) + 1, qc_major):
+        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=qc_max)
         lines.append(CadLine("ZE_PROTO_QC", (x, layout.qc_axis_y - 1.8), (x, layout.qc_axis_y + 1.8)))
-        texts.append(TextLabel("ZE_PROTO_QC", f"{v},0", x, layout.qc_axis_y - 4.0, 1.8, align="CENTER", color_aci=3))
-    for v in range(0, 31):
-        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=30.0)
+        if v != 0:
+            texts.append(TextLabel("ZE_PROTO_QC", _fmt_tick(v), x, layout.qc_axis_y - 4.0, 1.8, align="CENTER", color_aci=3))
+    for v in range(0, int(qc_max) + 1):
+        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=qc_max)
         lines.append(CadLine("ZE_PROTO_QC", (x, layout.qc_axis_y - 1.0), (x, layout.qc_axis_y + 1.0)))
 
     # graph area frame and grid
     for d in range(0, max_int + 1):
         y = layout.y_for_depth(float(d))
         lines.append(CadLine("ZE_PROTO_GRID", (layout.x_graph, y), (layout.x_right, y)))
-    for v in range(0, 31, 5):
-        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=30.0)
+    for v in range(0, int(qc_max) + 1, qc_major):
+        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=qc_max)
         lines.append(CadLine("ZE_PROTO_GRID", (x, layout.header_bottom_y_mm), (x, y_bottom)))
-    for v in range(0, 301, 50):
-        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=300.0)
+    for v in range(0, int(fs_max) + 1, fs_major):
+        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=fs_max)
         lines.append(CadLine("ZE_PROTO_GRID", (x, layout.header_bottom_y_mm), (x, y_bottom)))
 
     # qc/fs curves (reuse existing calibration pipeline)
@@ -326,8 +344,8 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
             continue
         qc_mpa, fs_kpa = calc_qc_fs(int(round(q_raw)), int(round(f_raw)), cal=calibration)
         y = layout.y_for_depth(d)
-        samples_qc.append((_value_to_x(qc_mpa, x0=layout.x_graph + 0.5, x1=180.0, vmax=30.0), y))
-        samples_fs.append((_value_to_x(fs_kpa, x0=layout.x_graph + 0.5, x1=180.0, vmax=300.0), y))
+        samples_qc.append((_value_to_x(qc_mpa, x0=layout.x_graph + 0.5, x1=180.0, vmax=qc_max), y))
+        samples_fs.append((_value_to_x(fs_kpa, x0=layout.x_graph + 0.5, x1=180.0, vmax=fs_max), y))
 
     if len(samples_qc) >= 2:
         polys.append(CadPolyline("ZE_PROTO_QC", samples_qc))
