@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 from datetime import datetime
 from dataclasses import dataclass
 
@@ -178,6 +179,7 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
     polys: list[CadPolyline] = []
 
     y_bottom = layout.y_for_depth(doc.max_depth_m)
+    disable_solid = str(os.getenv("ZOND_PROTO_DISABLE_SOLID", "")).strip().lower() in {"1", "true", "yes", "on"}
 
     # frame
     # Header stays visually clean: only outer frame + split between table and graph.
@@ -222,7 +224,7 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
         if d < max_int:
             y_next = layout.y_for_depth(float(d + 1))
             # clean black rectangular fill for ruler band every second meter
-            if d % 2 == 0:
+            if d % 2 == 0 and not disable_solid:
                 hatches.append(
                     CadHatch(
                         "ZE_PROTO_RULER",
@@ -282,7 +284,8 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
         for i in range(24):
             a = 2.0 * math.pi * float(i) / 24.0
             circle_mask.append((circle_cx + radius * math.cos(a), circle_cy + radius * math.sin(a)))
-        hatches.append(CadHatch("ZE_PROTO_MASK", circle_mask, color_aci=7, rgb=(255, 255, 255), solid=True))
+        if not disable_solid:
+            hatches.append(CadHatch("ZE_PROTO_MASK", circle_mask, color_aci=7, rgb=(255, 255, 255), solid=True))
         circle_pts = []
         for i in range(20):
             a = 2.0 * math.pi * float(i) / 20.0

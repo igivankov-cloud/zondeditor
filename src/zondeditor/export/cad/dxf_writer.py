@@ -288,18 +288,20 @@ def write_cad_scenes_to_dxf(
         for hatch in getattr(scene.block, "hatches", []):
             if len(hatch.boundary) < 3:
                 continue
-            hatch_entity = block.add_hatch(
-                color=(int(hatch.color_aci) if hatch.color_aci is not None else 256),
-                dxfattribs={"layer": hatch.layer},
-            )
-            hatch_entity.paths.add_polyline_path(hatch.boundary, is_closed=True)
             try:
+                hatch_entity = block.add_hatch(
+                    color=(int(hatch.color_aci) if hatch.color_aci is not None else 256),
+                    dxfattribs={"layer": hatch.layer},
+                )
+                hatch_entity.paths.add_polyline_path(hatch.boundary, is_closed=True)
                 hatch_entity.set_solid_fill(
                     color=(int(hatch.color_aci) if hatch.color_aci is not None else 256),
                     rgb=(tuple(int(c) for c in hatch.rgb) if hatch.rgb is not None else None),
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                raise RuntimeError(
+                    f"DXF hatch export failed (layer={hatch.layer}, points={len(hatch.boundary)}, block={scene.block.name})"
+                ) from exc
         for poly in scene.block.polylines:
             if len(poly.points) < 2:
                 continue
@@ -339,9 +341,15 @@ def write_cad_scenes_to_dxf(
             dxfattribs={"layer": "ZE_CPT_TITLE", "color": 256},
         )
 
-    doc.saveas(target)
+    try:
+        doc.saveas(target)
+    except Exception as exc:
+        raise RuntimeError(f"DXF save failed for '{target}'") from exc
     if validate_after_write:
-        _validate_ezdxf_file(target)
+        try:
+            _validate_ezdxf_file(target)
+        except Exception as exc:
+            raise RuntimeError(f"DXF post-write validation failed for '{target}'") from exc
     _log.info("write_cad_scenes_to_dxf done target=%s mode=ezdxf", target)
     return target
 

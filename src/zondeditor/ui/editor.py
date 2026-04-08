@@ -10473,6 +10473,14 @@ class GeoCanvasEditor(tk.Tk):
                 gap_mm=10.0,
             )
         except Exception as exc:
+            try:
+                self.usage_logger.exception("Protocol DXF export failed")
+            except Exception:
+                pass
+            try:
+                traceback.print_exc()
+            except Exception:
+                pass
             messagebox.showerror("Протокол", f"Не удалось сохранить DXF:\n{exc}")
             return
         messagebox.showinfo("Протокол", f"DXF сохранён:\n{str(Path(out_path).with_suffix('.dxf'))}")
