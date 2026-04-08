@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from datetime import datetime
 from dataclasses import dataclass
 
 from src.zondeditor.domain.experience_column import ExperienceColumn, build_column_from_layers
@@ -17,7 +18,7 @@ PROTOCOL_LAYERS: tuple[CadLayerSpec, ...] = (
     CadLayerSpec("ZE_PROTO_FRAME", color_aci=7),
     CadLayerSpec("ZE_PROTO_TEXT", color_aci=7),
     CadLayerSpec("ZE_PROTO_GRID", color_aci=8, rgb=(186, 186, 186)),
-    CadLayerSpec("ZE_PROTO_QC", color_aci=1, rgb=(230, 61, 61), lineweight=30),
+    CadLayerSpec("ZE_PROTO_QC", color_aci=3, rgb=(22, 163, 74), lineweight=30),
     CadLayerSpec("ZE_PROTO_FS", color_aci=5, rgb=(37, 99, 235), lineweight=30),
     CadLayerSpec("ZE_PROTO_CUT", color_aci=8),
 )
@@ -41,6 +42,23 @@ def _max_depth(test: TestData) -> float:
     depths = [_parse_float(v) for v in list(getattr(test, "depth", []) or [])]
     depths = [v for v in depths if v is not None]
     return max(depths) if depths else 0.0
+
+
+def _format_test_date(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    for fmt in ("%d.%m.%Y %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d.%m.%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt).strftime("%d.%m.%Y")
+        except Exception:
+            pass
+    if " " in raw:
+        raw = raw.split(" ", 1)[0]
+    try:
+        return datetime.fromisoformat(raw).strftime("%d.%m.%Y")
+    except Exception:
+        return raw
 
 
 def build_protocol_documents(*, tests: list[TestData], ige_registry: dict[str, dict[str, object]] | None = None) -> ProtocolBuildPack:
@@ -71,7 +89,7 @@ def build_protocol_documents(*, tests: list[TestData], ige_registry: dict[str, d
             ProtocolDocument(
                 test=test,
                 title=f"Точка испытания: ТСЗ {int(getattr(test, 'tid', 0) or 0)}",
-                date_text=f"Дата испытания: {str(getattr(test, 'dt', '') or '')}",
+                date_text=f"Дата испытания: {_format_test_date(str(getattr(test, 'dt', '') or ''))}",
                 max_depth_m=max_depth,
                 layers=rows,
             )
@@ -168,17 +186,20 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
     # header text
     texts.extend(
         [
-            TextLabel("ZE_PROTO_TEXT", "График статического зондирования", 55.0, -10.7, 3.0, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", doc.title, 55.0, -18.8, 2.5, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", "Сопротивление конуса и муфты  Sf = 350 см.кв  Sq = 10 см.кв", 55.0, -26.8, 2.4, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", doc.date_text, 55.0, -34.8, 2.5, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", "Абс. отм, м", 5.0, -48.9, 1.8),
-            TextLabel("ZE_PROTO_TEXT", "Мощность", 16.5, -47.7, 1.8, rotation_deg=90.0, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", "Описание грунта", 44.8, -42.4, 1.8),
-            TextLabel("ZE_PROTO_TEXT", "Разрез", 93.8, -48.5, 1.8, rotation_deg=90.0, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", "Глубина", 103.0, -48.2, 1.8, align="CENTER", rotation_deg=90.0),
+            TextLabel("ZE_PROTO_TEXT", "График статического зондирования", 55.0, -10.7, 2.6, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", doc.title, 55.0, -18.8, 2.3, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "Сопротивление конуса и муфты  Sf = 350 см.кв  Sq = 10 см.кв", 55.0, -26.8, 2.3, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", doc.date_text, 55.0, -34.8, 2.3, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "№ п.п.", 1.9, -48.8, 1.9, rotation_deg=90.0, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "Абс. отм, м", 5.8, -48.9, 1.9, rotation_deg=90.0, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "Мощность", 16.5, -47.7, 1.9, rotation_deg=90.0, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "Описание грунта", 44.8, -42.4, 1.9),
+            TextLabel("ZE_PROTO_TEXT", "Разрез", 93.8, -48.5, 1.9, rotation_deg=90.0, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "Глубина", 103.0, -48.2, 1.9, align="CENTER", rotation_deg=90.0),
         ]
     )
+    for x in (layout.x_no, layout.x_abs, layout.x_thickness, layout.x_section, layout.x_depth_ruler_black, layout.x_depth_ruler_white, layout.x_graph):
+        lines.append(CadLine("ZE_PROTO_FRAME", (x, layout.header_row_4), (x, layout.header_bottom_y_mm)))
 
     # depth grid (right graph area only, light-gray)
     max_int = int(math.ceil(max(doc.max_depth_m, 0.0)))
@@ -252,6 +273,7 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
 
     # graph scales in header
     texts.append(TextLabel("ZE_PROTO_FS", "Сопротивление на боковой поверхности, Fs, кПа", 146.0, -16.5, 2.2, align="CENTER"))
+    lines.append(CadLine("ZE_PROTO_FS", (layout.x_graph + 0.5, layout.fs_axis_y), (180.0, layout.fs_axis_y)))
     for v in range(0, 301, 50):
         x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=300.0)
         lines.append(CadLine("ZE_PROTO_FS", (x, layout.fs_axis_y - 1.8), (x, layout.fs_axis_y + 1.8)))
@@ -259,9 +281,8 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
     for v in range(0, 301, 25):
         x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=300.0)
         lines.append(CadLine("ZE_PROTO_FS", (x, layout.fs_axis_y - 1.0), (x, layout.fs_axis_y + 1.0)))
-    texts.append(TextLabel("ZE_PROTO_TEXT", "КПа", 183.0, layout.fs_axis_y - 4.0, 3.0, align="RIGHT"))
-
-    texts.append(TextLabel("ZE_PROTO_QC", "Сопротивление под наконечником, Qs", 146.0, -31.5, 2.2, align="CENTER"))
+    texts.append(TextLabel("ZE_PROTO_QC", "Сопротивление под наконечником зонда, Qs, МПа", 146.0, -31.5, 2.2, align="CENTER"))
+    lines.append(CadLine("ZE_PROTO_QC", (layout.x_graph + 0.5, layout.qc_axis_y), (180.0, layout.qc_axis_y)))
     for v in range(0, 31, 5):
         x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=30.0)
         lines.append(CadLine("ZE_PROTO_QC", (x, layout.qc_axis_y - 1.8), (x, layout.qc_axis_y + 1.8)))
@@ -269,7 +290,6 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
     for v in range(0, 31):
         x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=30.0)
         lines.append(CadLine("ZE_PROTO_QC", (x, layout.qc_axis_y - 1.0), (x, layout.qc_axis_y + 1.0)))
-    texts.append(TextLabel("ZE_PROTO_TEXT", "МПа", 183.0, layout.qc_axis_y - 4.0, 3.0, align="RIGHT"))
 
     # graph area frame and grid
     for d in range(0, max_int + 1):
@@ -278,7 +298,7 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
     for v in range(0, 31, 5):
         x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=30.0)
         lines.append(CadLine("ZE_PROTO_GRID", (x, layout.header_bottom_y_mm), (x, y_bottom)))
-    for v in range(0, 301, 25):
+    for v in range(0, 301, 50):
         x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=300.0)
         lines.append(CadLine("ZE_PROTO_GRID", (x, layout.header_bottom_y_mm), (x, y_bottom)))
 
