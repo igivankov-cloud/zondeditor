@@ -22,6 +22,7 @@ PROTOCOL_LAYERS: tuple[CadLayerSpec, ...] = (
     CadLayerSpec("ZE_PROTO_FS", color_aci=5, rgb=(37, 99, 235), lineweight=30),
     CadLayerSpec("ZE_PROTO_CUT", color_aci=8),
     CadLayerSpec("ZE_PROTO_MASK", color_aci=7, rgb=(255, 255, 255)),
+    CadLayerSpec("ZE_PROTO_RULER", color_aci=7, rgb=(0, 0, 0)),
 )
 
 
@@ -214,22 +215,19 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
     max_int = int(math.floor(max(doc.max_depth_m, 0.0)))
     for d in range(0, max_int + 1):
         y = layout.y_for_depth(float(d))
-        lines.append(CadLine("ZE_PROTO_GRID", (layout.x_graph, y), (layout.x_right, y)))
+        if d != 0:
+            lines.append(CadLine("ZE_PROTO_GRID", (layout.x_graph, y), (layout.x_right, y)))
         # depth ruler: black/white alternating bars in 1m steps
         if d < max_int:
             y_next = layout.y_for_depth(float(d + 1))
+            # clean black rectangular fill for ruler band every second meter
             if d % 2 == 0:
-                lines.extend(
-                    [
-                        CadLine("ZE_PROTO_CUT", (layout.x_depth_ruler_black, y), (layout.x_depth_ruler_white, y)),
-                        CadLine("ZE_PROTO_CUT", (layout.x_depth_ruler_black, y_next), (layout.x_depth_ruler_white, y_next)),
-                    ]
-                )
-                step = 0.22
                 yy = y
                 while yy > y_next:
-                    lines.append(CadLine("ZE_PROTO_CUT", (layout.x_depth_ruler_black, yy), (layout.x_depth_ruler_white, yy)))
-                    yy -= step
+                    lines.append(CadLine("ZE_PROTO_RULER", (layout.x_depth_ruler_black, yy), (layout.x_depth_ruler_white, yy)))
+                    yy -= 0.10
+            lines.append(CadLine("ZE_PROTO_CUT", (layout.x_depth_ruler_black, y), (layout.x_depth_ruler_white, y)))
+            lines.append(CadLine("ZE_PROTO_CUT", (layout.x_depth_ruler_black, y_next), (layout.x_depth_ruler_white, y_next)))
         if d % 2 == 0 and d != 0:
             texts.append(TextLabel("ZE_PROTO_TEXT", _fmt_tick(d), 104.1, y, 1.8, align="CENTER"))
 
@@ -238,7 +236,7 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
         y0 = layout.y_for_depth(row.from_depth_m)
         y1 = layout.y_for_depth(row.to_depth_m)
         # left body boundaries only by real geological intervals (no extra slicing)
-        lines.append(CadLine("ZE_PROTO_FRAME", (layout.x_no, y1), (layout.x_graph, y1)))
+        lines.append(CadLine("ZE_PROTO_FRAME", (layout.x_no, y1), (layout.x_depth, y1)))
         thickness = max(0.0, row.to_depth_m - row.from_depth_m)
         y_cell = (y0 + y1) / 2.0
         texts.append(TextLabel("ZE_PROTO_TEXT", str(row.idx), (layout.x_no + layout.x_abs) / 2.0, y_cell, 1.8, align="CENTER"))
@@ -274,7 +272,7 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
         while yy <= circle_cy + radius:
             dx = max(0.0, radius * radius - (yy - circle_cy) ** 2) ** 0.5
             circle_fill_lines.append(CadLine("ZE_PROTO_MASK", (circle_cx - dx, yy), (circle_cx + dx, yy)))
-            yy += 0.24
+            yy += 0.08
         lines.extend(circle_fill_lines)
         circle_pts = []
         for i in range(20):
@@ -314,14 +312,13 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
         lines.append(CadLine("ZE_PROTO_QC", (x, layout.qc_axis_y - 1.8), (x, layout.qc_axis_y + 1.8)))
         if v != 0:
             texts.append(TextLabel("ZE_PROTO_QC", _fmt_tick(v), x, layout.qc_axis_y - 4.0, 1.8, align="CENTER", color_aci=3))
-    for v in range(0, int(qc_max) + 1):
-        x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=qc_max)
-        lines.append(CadLine("ZE_PROTO_QC", (x, layout.qc_axis_y - 1.0), (x, layout.qc_axis_y + 1.0)))
+    # no dense intermediate ticks for Qs: keep only major marks
 
     # graph area frame and grid
     for d in range(0, max_int + 1):
         y = layout.y_for_depth(float(d))
-        lines.append(CadLine("ZE_PROTO_GRID", (layout.x_graph, y), (layout.x_right, y)))
+        if d != 0:
+            lines.append(CadLine("ZE_PROTO_GRID", (layout.x_graph, y), (layout.x_right, y)))
     for v in range(0, int(qc_max) + 1, qc_major):
         x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=qc_max)
         lines.append(CadLine("ZE_PROTO_GRID", (x, layout.header_bottom_y_mm), (x, y_bottom)))

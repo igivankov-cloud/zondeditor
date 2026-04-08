@@ -254,7 +254,10 @@ def write_cad_scenes_to_dxf(scenes: list[CadScene], out_path: str | Path, *, x_s
         for poly in scene.block.polylines:
             if len(poly.points) < 2:
                 continue
-            block.add_lwpolyline(poly.points, close=bool(poly.closed), dxfattribs={"layer": poly.layer, "color": 256})
+            p_attr = {"layer": poly.layer, "color": 256}
+            if poly.layer in {"ZE_PROTO_QC", "ZE_PROTO_FS"}:
+                p_attr["lineweight"] = 30
+            block.add_lwpolyline(poly.points, close=bool(poly.closed), dxfattribs=p_attr)
         for point in scene.block.points:
             block.add_point(
                 point.position,
