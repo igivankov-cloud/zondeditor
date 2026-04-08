@@ -21,6 +21,7 @@ PROTOCOL_LAYERS: tuple[CadLayerSpec, ...] = (
     CadLayerSpec("ZE_PROTO_QC", color_aci=3, rgb=(22, 163, 74), lineweight=30),
     CadLayerSpec("ZE_PROTO_FS", color_aci=5, rgb=(37, 99, 235), lineweight=30),
     CadLayerSpec("ZE_PROTO_CUT", color_aci=8),
+    CadLayerSpec("ZE_PROTO_MASK", color_aci=7, rgb=(255, 255, 255)),
 )
 
 
@@ -186,23 +187,23 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
     # header text
     texts.extend(
         [
-            TextLabel("ZE_PROTO_TEXT", "График статического зондирования", 55.0, -10.7, 2.6, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "График статического зондирования", 55.0, -10.7, 2.5, align="CENTER"),
             TextLabel("ZE_PROTO_TEXT", doc.title, 55.0, -18.8, 2.3, align="CENTER"),
             TextLabel("ZE_PROTO_TEXT", "Сопротивление конуса и муфты  Sf = 350 см.кв  Sq = 10 см.кв", 55.0, -26.8, 2.3, align="CENTER"),
             TextLabel("ZE_PROTO_TEXT", doc.date_text, 55.0, -34.8, 2.3, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", "№ п.п.", 1.9, -48.8, 1.9, rotation_deg=90.0, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", "Абс. отм, м", 5.8, -48.9, 1.9, rotation_deg=90.0, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", "Мощность", 16.5, -47.7, 1.9, rotation_deg=90.0, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", "Описание грунта", 44.8, -42.4, 1.9),
-            TextLabel("ZE_PROTO_TEXT", "Разрез", 93.8, -48.5, 1.9, rotation_deg=90.0, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", "Глубина", 103.0, -48.2, 1.9, align="CENTER", rotation_deg=90.0),
+            TextLabel("ZE_PROTO_TEXT", "№ п.п.", (layout.x_no + layout.x_abs) / 2.0, -47.5, 1.8, rotation_deg=90.0, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "Абс. отм, м", (layout.x_abs + layout.x_thickness) / 2.0, -47.5, 1.8, rotation_deg=90.0, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "Мощность", (layout.x_thickness + layout.x_description) / 2.0, -47.5, 1.8, rotation_deg=90.0, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "Описание грунта", (layout.x_description + layout.x_section) / 2.0, -42.4, 1.9, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "Разрез", (layout.x_section + layout.x_depth) / 2.0, -47.5, 1.8, rotation_deg=90.0, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "Глубина", (layout.x_depth + layout.x_graph) / 2.0, -47.5, 1.8, align="CENTER", rotation_deg=90.0),
         ]
     )
-    for x in (layout.x_no, layout.x_abs, layout.x_thickness, layout.x_section, layout.x_depth_ruler_black, layout.x_depth_ruler_white, layout.x_graph):
+    for x in (layout.x_no, layout.x_abs, layout.x_thickness, layout.x_description, layout.x_section, layout.x_graph):
         lines.append(CadLine("ZE_PROTO_FRAME", (x, layout.header_row_4), (x, layout.header_bottom_y_mm)))
 
     # depth grid (right graph area only, light-gray)
-    max_int = int(math.ceil(max(doc.max_depth_m, 0.0)))
+    max_int = int(math.floor(max(doc.max_depth_m, 0.0)))
     for d in range(0, max_int + 1):
         y = layout.y_for_depth(float(d))
         lines.append(CadLine("ZE_PROTO_GRID", (layout.x_graph, y), (layout.x_right, y)))
@@ -237,7 +238,7 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
 
         # section circle with IGE id number
         # section: green background + hatch per interval
-        lines.extend(_hatch_rect_lines(x0=layout.x_section + 0.2, x1=layout.x_depth_ruler_black - 0.2, y_top=y0, y_bot=y1, spacing=1.4))
+        lines.extend(_hatch_rect_lines(x0=layout.x_section + 0.2, x1=layout.x_depth - 0.2, y_top=y0, y_bot=y1, spacing=1.4))
         hatch = load_registered_hatch(row.soil_type)
         if hatch is not None:
             # keep hatch clean: only first line descriptor for angle/spacing
@@ -247,7 +248,7 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
                 lines.extend(
                     _hatch_rect_lines(
                         x0=layout.x_section + 0.2,
-                        x1=layout.x_depth_ruler_black - 0.2,
+                        x1=layout.x_depth - 0.2,
                         y_top=y0,
                         y_bot=y1,
                         spacing=spacing,
@@ -258,6 +259,14 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
         circle_cx = 94.2
         circle_cy = (y0 + y1) / 2.0
         radius = 2.2
+        # white mask under circle so hatch does not shine through
+        circle_fill_lines: list[CadLine] = []
+        yy = circle_cy - radius
+        while yy <= circle_cy + radius:
+            dx = max(0.0, radius * radius - (yy - circle_cy) ** 2) ** 0.5
+            circle_fill_lines.append(CadLine("ZE_PROTO_MASK", (circle_cx - dx, yy), (circle_cx + dx, yy)))
+            yy += 0.24
+        lines.extend(circle_fill_lines)
         circle_pts = []
         for i in range(20):
             a = 2.0 * math.pi * float(i) / 20.0
