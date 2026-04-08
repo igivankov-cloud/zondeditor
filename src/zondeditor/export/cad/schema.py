@@ -90,6 +90,9 @@ class CadHatch:
     color_aci: int | None = None
     rgb: tuple[int, int, int] | None = None
     solid: bool = True
+    pattern_name: str | None = None
+    # ezdxf hatch definition rows: (angle, base_point(x,y), offset(x,y), dash_items[])
+    pattern_definition: list[tuple[float, tuple[float, float], tuple[float, float], list[float]]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
