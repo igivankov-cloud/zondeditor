@@ -46,6 +46,7 @@ def test_protocol_scene_uses_registered_hatch_patterns_for_section_layers():
     assert patterned
     assert all(len(h.boundary) >= 4 for h in patterned)
     assert all(len(h.pattern_definition) > 0 for h in patterned)
+    assert all(str(h.pattern_name or "").startswith("ZE_") for h in patterned)
 
 
 def test_protocol_scene_keeps_solid_hatches_for_masks_and_ruler():

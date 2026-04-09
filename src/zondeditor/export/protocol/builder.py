@@ -248,8 +248,10 @@ def _to_dxf_pattern_definition(soil_type: str) -> tuple[str, list[tuple[float, t
     if not rows:
         _hatch_debug("pattern_empty_rows", soil_type=soil_type, pattern_name=str(getattr(hatch, "name", "")))
         return None
-    _hatch_debug("pattern_built", soil_type=soil_type, pattern_name=str(getattr(hatch, "name", "USER")), rows=len(rows))
-    return (str(getattr(hatch, "name", "USER") or "USER"), rows)
+    raw_name = str(getattr(hatch, "name", "USER") or "USER")
+    safe_name = "ZE_" + "".join(ch for ch in raw_name.upper() if ch.isalnum() or ch == "_")
+    _hatch_debug("pattern_built", soil_type=soil_type, pattern_name=safe_name, rows=len(rows))
+    return (safe_name, rows)
 
 
 def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, block_name: str, layout: ProtocolLayout = DEFAULT_PROTOCOL_LAYOUT) -> ProtocolCadResult:
