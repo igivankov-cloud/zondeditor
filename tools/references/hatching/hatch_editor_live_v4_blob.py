@@ -948,12 +948,23 @@ class HatchEditorApp(tk.Tk):
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
     def _row_to_pat_descriptor(self, row):
-        angle = parse_angle_deg(row.get("angle"), 0.0)
+        # Editor math:
+        # - angle 0° points UP and grows clockwise
+        # - local X/dX are along line direction
+        # - local Y/dY are across line direction
+        #
+        # AutoCAD PAT expects:
+        # - angle from +X axis, CCW
+        # - base point and offsets in world XY
+        angle_editor = parse_angle_deg(row.get("angle"), 0.0)
+        angle_pat = (90.0 - angle_editor) % 360.0
         x = parse_float(row.get("x"), 0.0)
         y = parse_float(row.get("y"), 0.0)
         dx = parse_float(row.get("dx"), 0.0)
         dy = parse_float(row.get("dy"), 0.0)
-        parts = [fmt6(angle), fmt6(x), fmt6(y), fmt6(dx), fmt6(dy)]
+        wx, wy = local_to_world(angle_editor, x, y)
+        wdx, wdy = local_to_world(angle_editor, dx, dy)
+        parts = [fmt6(angle_pat), fmt6(wx), fmt6(wy), fmt6(wdx), fmt6(wdy)]
         segments = list(row.get("segments") or [])
         if segments:
             for seg in segments:
