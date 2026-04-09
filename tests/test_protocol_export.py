@@ -125,6 +125,9 @@ def test_protocol_pesok_pattern_avoids_zero_length_dxf_dots():
     result = build_protocol_scene(doc=pack.documents[0], calibration=cal, block_name="PROTO_PESOK")
     patterned = [h for h in result.scene.block.hatches if h.layer == "ZE_PROTO_CUT" and h.pattern_definition]
     assert patterned
+    first_row = patterned[0].pattern_definition[0]
+    _angle0, _base0, offset0, _dash0 = first_row
+    assert offset0[1] == 60.0  # Pesok dy=6 with protocol DXF multiplier x10.
     for _angle, _base, _offset, dash_items in patterned[0].pattern_definition:
         if dash_items:
             assert all(v != 0.0 for v in dash_items)

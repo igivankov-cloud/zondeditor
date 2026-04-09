@@ -56,6 +56,14 @@ def _hatch_debug(event: str, **payload: object) -> None:
     _log.info("proto_hatch_debug %s %s", event, " ".join(parts))
 
 
+def _dxf_soil_scale_multiplier(soil_type: str) -> float:
+    raw = normalize_soil_type(soil_type)
+    # Sand dot hatch is heavy in CAD viewers; use coarser DXF spacing.
+    if raw in {"песок", "песчаный грунт"}:
+        return 10.0
+    return 1.0
+
+
 def _max_depth(test: TestData) -> float:
     depths = [_parse_float(v) for v in list(getattr(test, "depth", []) or [])]
     depths = [v for v in depths if v is not None]
@@ -217,6 +225,7 @@ def _to_dxf_pattern_definition(soil_type: str) -> tuple[str, list[tuple[float, t
     # not a geometric multiplier for line dx/dy in protocol DXF units.
     # For DXF we pass line geometry as-is to avoid accidental double scaling/dense hatches.
     rows: list[tuple[float, tuple[float, float], tuple[float, float], list[float]]] = []
+    dxf_mul = _dxf_soil_scale_multiplier(soil_type)
     for line in list(getattr(hatch, "lines", ()) or ()):
         if not bool(getattr(line, "enabled", True)):
             continue
@@ -229,10 +238,10 @@ def _to_dxf_pattern_definition(soil_type: str) -> tuple[str, list[tuple[float, t
                 # while avoiding solid-black fallback on dense patterns (e.g. sand).
                 gap = max(1e-9, float(getattr(seg, "gap", 1.0) or 1.0))
                 tiny_dash = min(0.25, max(0.05, gap * 0.08))
-                dash_items.extend([tiny_dash, -gap])
+                dash_items.extend([tiny_dash * dxf_mul, -(gap * dxf_mul)])
             else:
-                dash = max(0.0, float(getattr(seg, "dash", 0.0) or 0.0))
-                gap = max(0.0, float(getattr(seg, "gap", 0.0) or 0.0))
+                dash = max(0.0, float(getattr(seg, "dash", 0.0) or 0.0)) * dxf_mul
+                gap = max(0.0, float(getattr(seg, "gap", 0.0) or 0.0)) * dxf_mul
                 if dash > 0.0:
                     dash_items.append(dash)
                 if gap > 0.0:
@@ -240,8 +249,8 @@ def _to_dxf_pattern_definition(soil_type: str) -> tuple[str, list[tuple[float, t
         rows.append(
             (
                 float(getattr(line, "angle_deg", 0.0) or 0.0),
-                (float(getattr(line, "x", 0.0) or 0.0), float(getattr(line, "y", 0.0) or 0.0)),
-                (float(getattr(line, "dx", 0.0) or 0.0), float(getattr(line, "dy", 0.0) or 0.0)),
+                (float(getattr(line, "x", 0.0) or 0.0) * dxf_mul, float(getattr(line, "y", 0.0) or 0.0) * dxf_mul),
+                (float(getattr(line, "dx", 0.0) or 0.0) * dxf_mul, float(getattr(line, "dy", 0.0) or 0.0) * dxf_mul),
                 dash_items,
             )
         )
@@ -250,7 +259,7 @@ def _to_dxf_pattern_definition(soil_type: str) -> tuple[str, list[tuple[float, t
         return None
     raw_name = str(getattr(hatch, "name", "USER") or "USER")
     safe_name = "ZE_" + "".join(ch for ch in raw_name.upper() if ch.isalnum() or ch == "_")
-    _hatch_debug("pattern_built", soil_type=soil_type, pattern_name=safe_name, rows=len(rows))
+    _hatch_debug("pattern_built", soil_type=soil_type, pattern_name=safe_name, rows=len(rows), dxf_mul=dxf_mul)
     return (safe_name, rows)
 
 
