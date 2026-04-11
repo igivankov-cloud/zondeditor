@@ -13,9 +13,9 @@ SEGMENT_TYPES = ["Штрих", "Точка"]
 DEFAULT_DASH = "0.300000"
 DEFAULT_GAP = "3.856920"
 DEFAULT_POINT_GAP = "1.000000"
-# Historical compatibility mode for PAT export:
-# hatch editor stores legacy local origin with swapped axes vs AutoCAD PAT basis.
-PAT_SWAP_LOCAL_AXES = True
+# Keep disabled by default: PAT rows are emitted from the same local coordinates
+# (X/dX along stroke, Y/dY across stroke) as used by the editor itself.
+PAT_SWAP_LOCAL_AXES = False
 
 
 def parse_float(value: str, default: float = 0.0) -> float:
@@ -969,13 +969,13 @@ class HatchEditorApp(tk.Tk):
         y = parse_float(row.get("y"), 0.0)
         dx = parse_float(row.get("dx"), 0.0)
         dy = parse_float(row.get("dy"), 0.0)
-        # Keep editor rendering math and PAT conversion consistent:
-        # swap only local origin axes (X/Y), but preserve dX/dY step semantics.
+        # Optional legacy compatibility switch for very old blobs.
+        # Main path keeps coordinates unchanged.
         if PAT_SWAP_LOCAL_AXES:
             x, y = y, x
-        wx, wy = local_to_world(angle_editor, x, y)
-        wdx, wdy = local_to_world(angle_editor, dx, dy)
-        parts = [fmt6(angle_pat), fmt6(wx), fmt6(wy), fmt6(wdx), fmt6(wdy)]
+        # PAT expects local definition row values after angle conversion:
+        # use editor-local X/Y/dX/dY directly to preserve pattern phase.
+        parts = [fmt6(angle_pat), fmt6(x), fmt6(y), fmt6(dx), fmt6(dy)]
         segments = list(row.get("segments") or [])
         if segments:
             for seg in segments:
