@@ -13,6 +13,9 @@ SEGMENT_TYPES = ["Штрих", "Точка"]
 DEFAULT_DASH = "0.300000"
 DEFAULT_GAP = "3.856920"
 DEFAULT_POINT_GAP = "1.000000"
+# Historical compatibility mode for PAT export:
+# hatch editor stores legacy local origin with swapped axes vs AutoCAD PAT basis.
+PAT_SWAP_LOCAL_AXES = True
 
 
 def parse_float(value: str, default: float = 0.0) -> float:
@@ -966,6 +969,10 @@ class HatchEditorApp(tk.Tk):
         y = parse_float(row.get("y"), 0.0)
         dx = parse_float(row.get("dx"), 0.0)
         dy = parse_float(row.get("dy"), 0.0)
+        # Keep editor rendering math and PAT conversion consistent:
+        # swap only local origin axes (X/Y), but preserve dX/dY step semantics.
+        if PAT_SWAP_LOCAL_AXES:
+            x, y = y, x
         wx, wy = local_to_world(angle_editor, x, y)
         wdx, wdy = local_to_world(angle_editor, dx, dy)
         parts = [fmt6(angle_pat), fmt6(wx), fmt6(wy), fmt6(wdx), fmt6(wdy)]
