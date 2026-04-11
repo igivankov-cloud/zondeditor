@@ -134,6 +134,14 @@ class PreviewRowGeometry:
     segments: list[dict]
 
 
+@dataclass(frozen=True)
+class PatRowGeometry:
+    angle_pat_deg: float
+    origin_world: tuple[float, float]
+    offset_local: tuple[float, float]
+    segments: list[dict]
+
+
 def _dot2(a: tuple[float, float], b: tuple[float, float]) -> float:
     return a[0] * b[0] + a[1] * b[1]
 
@@ -157,25 +165,32 @@ def build_preview_row_geometry(row: dict, *, swap_local_axes: bool = False) -> P
     )
 
 
-def row_to_pat_descriptor(row: dict, *, swap_local_axes: bool = PAT_SWAP_LOCAL_AXES) -> str:
-    """Convert one hatch-editor row to one AutoCAD PAT descriptor line."""
-    angle_editor = parse_angle_deg(row.get("angle"), 0.0)
-    angle_pat = (90.0 - angle_editor) % 360.0
-
-    # Build world geometry from preview math first (single source of truth).
+def build_pat_row_geometry(row: dict, *, swap_local_axes: bool = PAT_SWAP_LOCAL_AXES) -> PatRowGeometry:
+    """Convert preview-equivalent row geometry into explicit AutoCAD PAT semantics."""
     preview_geom = build_preview_row_geometry(row, swap_local_axes=swap_local_axes)
-
-    # PAT row is represented in PAT local basis (derived from PAT angle).
+    angle_pat = (90.0 - preview_geom.angle_editor_deg) % 360.0
     theta = math.radians(angle_pat)
     ex_pat = (math.cos(theta), math.sin(theta))
     ey_pat = (-math.sin(theta), math.cos(theta))
-    x_pat = _dot2(preview_geom.base_world, ex_pat)
-    y_pat = _dot2(preview_geom.base_world, ey_pat)
     dx_pat = _dot2(preview_geom.step_world, ex_pat)
     dy_pat = _dot2(preview_geom.step_world, ey_pat)
+    return PatRowGeometry(
+        angle_pat_deg=angle_pat,
+        # AutoCAD PAT stores the seed point in drawing/world coordinates.
+        origin_world=preview_geom.base_world,
+        # The family offset is expressed in the PAT row local basis.
+        offset_local=(dx_pat, dy_pat),
+        segments=preview_geom.segments,
+    )
 
-    parts = [fmt6(angle_pat), fmt6(x_pat), fmt6(y_pat), fmt6(dx_pat), fmt6(dy_pat)]
-    segments = preview_geom.segments
+
+def row_to_pat_descriptor(row: dict, *, swap_local_axes: bool = PAT_SWAP_LOCAL_AXES) -> str:
+    """Convert one hatch-editor row to one AutoCAD PAT descriptor line."""
+    pat_geom = build_pat_row_geometry(row, swap_local_axes=swap_local_axes)
+    x_pat, y_pat = pat_geom.origin_world
+    dx_pat, dy_pat = pat_geom.offset_local
+    parts = [fmt6(pat_geom.angle_pat_deg), fmt6(x_pat), fmt6(y_pat), fmt6(dx_pat), fmt6(dy_pat)]
+    segments = pat_geom.segments
     if segments:
         for seg in segments:
             kind = (seg.get("kind") or "Штрих").strip()
