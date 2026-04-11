@@ -1,6 +1,6 @@
 # run_zondeditor.py
 # Single-file start for Windows:
-#   py run_zondeditor.py
+#   py -3.14 run_zondeditor.py
 
 from src.zondeditor.app import main
 

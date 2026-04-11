@@ -5,7 +5,7 @@ cd /d "%~dp0"
 rem Quick launcher: allows running the app by typing "go" in repo root.
 where py >nul 2>nul
 if %ERRORLEVEL% EQU 0 (
-    py run_zondeditor.py
+    py -3.14 run_zondeditor.py
     goto :eof
 )
 

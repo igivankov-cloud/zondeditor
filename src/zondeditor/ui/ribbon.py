@@ -509,10 +509,8 @@ class RibbonView(ttk.Frame):
 
         controls = ttk.LabelFrame(host, text="Выпуск", padding=4)
         controls.pack(side="left", anchor="nw", padx=(0, 4))
-        self._add_btn(controls, "protocol_build", "Сформировать протокол", "Собрать протоколы по отмеченным опытам", width=24)
-        self._add_btn(controls, "protocol_export_dxf", "Экспорт в DXF", "Экспорт сформированных протоколов в DXF", width=24)
-        self._add_btn(controls, "protocol_export_pdf", "Экспорт в PDF", "Экспорт сформированных протоколов в PDF", width=24)
-        self.set_protocol_export_enabled(False)
+        self._add_btn(controls, "protocol_export_dxf", "Экспорт протокола в DXF", "Сформировать и сразу сохранить протоколы в DXF", width=24)
+        self._add_btn(controls, "protocol_export_pdf", "Экспорт протокола в PDF", "Сформировать и сразу сохранить протоколы в PDF", width=24)
 
     def set_protocol_export_enabled(self, enabled: bool):
         state = "normal" if bool(enabled) else "disabled"

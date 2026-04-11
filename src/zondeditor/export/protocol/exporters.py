@@ -13,7 +13,14 @@ def export_protocols_to_dxf(*, scenes: list[CadScene], heights_mm: list[float], 
         stacked.append(CadScene(layers=scene.layers, block=scene.block, insertion_point=(0.0, y_cursor, 0.0)))
         y_cursor -= float(h) + float(gap_mm)
     try:
-        return write_cad_scenes_to_dxf(stacked, out_path, x_step_mm=0.0, require_ezdxf=True, validate_after_write=True)
+        return write_cad_scenes_to_dxf(
+            stacked,
+            out_path,
+            x_step_mm=0.0,
+            require_ezdxf=True,
+            validate_after_write=True,
+            explode_blocks=True,
+        )
     except Exception as exc:
         raise RuntimeError(f"Protocol DXF export failed at writer stage: {type(exc).__name__}: {exc}") from exc
 

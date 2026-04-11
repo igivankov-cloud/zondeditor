@@ -7,7 +7,7 @@ from datetime import datetime
 from dataclasses import dataclass
 
 from src.zondeditor.domain.experience_column import ExperienceColumn, build_column_from_layers
-from src.zondeditor.domain.hatching.registry import SOIL_TYPE_TO_HATCH_FILE, load_registered_hatch, normalize_soil_type
+from src.zondeditor.domain.hatching.registry import SOIL_TYPE_TO_HATCH_FILE, load_registered_pat_pattern, normalize_soil_type, resolve_hatch_asset
 from src.zondeditor.domain.models import TestData
 from src.zondeditor.export.cad.logging import get_cad_logger
 from src.zondeditor.processing.calibration import Calibration, calc_qc_fs
@@ -23,8 +23,8 @@ PROTOCOL_LAYERS: tuple[CadLayerSpec, ...] = (
     CadLayerSpec("ZE_PROTO_FRAME", color_aci=7),
     CadLayerSpec("ZE_PROTO_TEXT", color_aci=7),
     CadLayerSpec("ZE_PROTO_GRID", color_aci=8, rgb=(186, 186, 186)),
-    CadLayerSpec("ZE_PROTO_QC", color_aci=3, rgb=(22, 163, 74), lineweight=30),
-    CadLayerSpec("ZE_PROTO_FS", color_aci=5, rgb=(37, 99, 235), lineweight=30),
+    CadLayerSpec("ZE_PROTO_QC", color_aci=3, rgb=(22, 163, 74)),
+    CadLayerSpec("ZE_PROTO_FS", color_aci=5, rgb=(37, 99, 235)),
     CadLayerSpec("ZE_PROTO_CUT", color_aci=8),
     CadLayerSpec("ZE_PROTO_MASK", color_aci=7, rgb=(255, 255, 255)),
     CadLayerSpec("ZE_PROTO_RULER", color_aci=7, rgb=(0, 0, 0)),
@@ -56,14 +56,6 @@ def _hatch_debug(event: str, **payload: object) -> None:
     _log.info("proto_hatch_debug %s %s", event, " ".join(parts))
 
 
-def _dxf_soil_scale_multiplier(soil_type: str) -> float:
-    raw = normalize_soil_type(soil_type)
-    # Sand dot hatch is heavy in CAD viewers; use coarser DXF spacing.
-    if raw in {"песок", "песчаный грунт"}:
-        return 10.0
-    return 1.0
-
-
 def _max_depth(test: TestData) -> float:
     depths = [_parse_float(v) for v in list(getattr(test, "depth", []) or [])]
     depths = [v for v in depths if v is not None]
@@ -91,8 +83,8 @@ def _infer_soil_type(*, explicit: str, description: str, ige_name: str) -> str:
     raw = normalize_soil_type(explicit)
     if raw in SOIL_TYPE_TO_HATCH_FILE:
         return raw
-    hay = " ".join([str(description or ""), str(ige_name or "")]).lower().replace("ё", "е")
-    # Prefer longer keys first to avoid partial clashes (e.g., "песок" inside longer aliases).
+    hay = " ".join([str(description or ""), str(ige_name or "")]).lower().replace("\u0451", "\u0435")
+    # Prefer longer keys first to avoid partial clashes (e.g., "\u043f\u0435\u0441\u043e\u043a" inside longer aliases).
     for soil_key in sorted(SOIL_TYPE_TO_HATCH_FILE.keys(), key=len, reverse=True):
         if soil_key in hay:
             return soil_key
@@ -100,7 +92,7 @@ def _infer_soil_type(*, explicit: str, description: str, ige_name: str) -> str:
 
 
 def _canonical_ige_key(value: str) -> str:
-    raw = str(value or "").strip().lower().replace("ё", "е")
+    raw = str(value or "").strip().lower().replace("\u0451", "\u0435")
     return "".join(ch for ch in raw if ch.isalnum())
 
 
@@ -172,8 +164,8 @@ def build_protocol_documents(*, tests: list[TestData], ige_registry: dict[str, d
         docs.append(
             ProtocolDocument(
                 test=test,
-                title=f"Точка испытания: ТСЗ {int(getattr(test, 'tid', 0) or 0)}",
-                date_text=f"Дата испытания: {_format_test_date(str(getattr(test, 'dt', '') or ''))}",
+                title=f"\u0422\u043e\u0447\u043a\u0430 \u0438\u0441\u043f\u044b\u0442\u0430\u043d\u0438\u044f: \u0422\u0421\u0417 {int(getattr(test, 'tid', 0) or 0)}",
+                date_text=f"\u0414\u0430\u0442\u0430 \u0438\u0441\u043f\u044b\u0442\u0430\u043d\u0438\u044f: {_format_test_date(str(getattr(test, 'dt', '') or ''))}",
                 max_depth_m=max_depth,
                 layers=rows,
             )
@@ -216,54 +208,80 @@ def _split_text_lines(text: str, line_limit: int = 42) -> list[str]:
 
 
 def _to_dxf_pattern_definition(soil_type: str) -> tuple[str, list[tuple[float, tuple[float, float], tuple[float, float], list[float]]]] | None:
-    hatch = load_registered_hatch(soil_type)
-    if hatch is None:
+    pat = load_registered_pat_pattern(soil_type)
+    if pat is None:
         _hatch_debug("pattern_not_found", soil_type=soil_type)
         return None
-    # IMPORTANT:
-    # hatch.scale from JSON is UI render normalization (see resolve_hatch_render_scale),
-    # not a geometric multiplier for line dx/dy in protocol DXF units.
-    # For DXF we pass line geometry as-is to avoid accidental double scaling/dense hatches.
     rows: list[tuple[float, tuple[float, float], tuple[float, float], list[float]]] = []
-    dxf_mul = _dxf_soil_scale_multiplier(soil_type)
-    for line in list(getattr(hatch, "lines", ()) or ()):
-        if not bool(getattr(line, "enabled", True)):
-            continue
-        dash_items: list[float] = []
-        for seg in list(getattr(line, "segments", ()) or ()):
-            kind = str(getattr(seg, "kind", "") or "").strip()
-            if kind == "Точка":
-                # DXF dot segments (`0.0`) can become very heavy in some CAD viewers.
-                # Export a tiny dash instead of true zero-length dot to keep visual intent
-                # while avoiding solid-black fallback on dense patterns (e.g. sand).
-                gap = max(1e-9, float(getattr(seg, "gap", 1.0) or 1.0))
-                tiny_dash = min(0.25, max(0.05, gap * 0.08))
-                dash_items.extend([tiny_dash * dxf_mul, -(gap * dxf_mul)])
-            else:
-                dash = max(0.0, float(getattr(seg, "dash", 0.0) or 0.0)) * dxf_mul
-                gap = max(0.0, float(getattr(seg, "gap", 0.0) or 0.0)) * dxf_mul
-                if dash > 0.0:
-                    dash_items.append(dash)
-                if gap > 0.0:
-                    dash_items.append(-gap)
+    for angle_deg, base_point, offset, dash_items in list(getattr(pat, "definition", ()) or ()):
+        angle_rad = math.radians(float(angle_deg))
+        ex_x = math.cos(angle_rad)
+        ex_y = math.sin(angle_rad)
+        ey_x = -math.sin(angle_rad)
+        ey_y = math.cos(angle_rad)
+        offset_x = float(offset[0]) * ex_x + float(offset[1]) * ey_x
+        offset_y = float(offset[0]) * ex_y + float(offset[1]) * ey_y
         rows.append(
             (
-                float(getattr(line, "angle_deg", 0.0) or 0.0),
-                (float(getattr(line, "x", 0.0) or 0.0) * dxf_mul, float(getattr(line, "y", 0.0) or 0.0) * dxf_mul),
-                (float(getattr(line, "dx", 0.0) or 0.0) * dxf_mul, float(getattr(line, "dy", 0.0) or 0.0) * dxf_mul),
-                dash_items,
+                float(angle_deg),
+                (float(base_point[0]), float(base_point[1])),
+                (float(offset_x), float(offset_y)),
+                [float(item) for item in dash_items],
             )
         )
     if not rows:
-        _hatch_debug("pattern_empty_rows", soil_type=soil_type, pattern_name=str(getattr(hatch, "name", "")))
+        _hatch_debug("pattern_empty_rows", soil_type=soil_type, pattern_name=str(getattr(pat, "name", "")))
         return None
-    raw_name = str(getattr(hatch, "name", "USER") or "USER")
-    safe_name = "ZE_" + "".join(ch for ch in raw_name.upper() if ch.isalnum() or ch == "_")
-    _hatch_debug("pattern_built", soil_type=soil_type, pattern_name=safe_name, rows=len(rows), dxf_mul=dxf_mul)
+    # DXF custom PATs should keep the real PAT name, not an internal UI alias.
+    raw_name = str(getattr(pat, "name", "USER") or "USER")
+    safe_name = "".join(ch for ch in raw_name if ch.isalnum() or ch == "_") or "USER"
+    _hatch_debug(
+        "pattern_built",
+        soil_type=soil_type,
+        pattern_name=safe_name,
+        rows=len(rows),
+        pat_source=str(getattr(pat, "source_file", "")),
+    )
     return (safe_name, rows)
 
 
-def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, block_name: str, layout: ProtocolLayout = DEFAULT_PROTOCOL_LAYOUT) -> ProtocolCadResult:
+def _hex_to_rgb(value: str | None) -> tuple[int, int, int] | None:
+    raw = str(value or "").strip()
+    if not raw.startswith("#") or len(raw) != 7:
+        return None
+    try:
+        return (int(raw[1:3], 16), int(raw[3:5], 16), int(raw[5:7], 16))
+    except Exception:
+        return None
+
+
+def _section_fill_rgb(soil_type: str) -> tuple[int, int, int] | None:
+    asset = resolve_hatch_asset(soil_type)
+    if asset is None:
+        return None
+    fill_by_stem = {
+        "Glina": (168, 142, 122),
+        "Suglinok": (201, 162, 126),
+        "Supes": (217, 194, 163),
+        "Pesok": (238, 216, 168),
+        "PesokGraviy": (217, 196, 140),
+        "Torf": (110, 79, 58),
+        "graviy": (167, 155, 138),
+        "Peschanik": (207, 165, 109),
+        "Argillit": (156, 107, 90),
+        "Nasipnoy": (178, 154, 132),
+    }
+    return fill_by_stem.get(str(getattr(asset, "stem", "") or ""))
+
+
+def build_protocol_scene(
+    *,
+    doc: ProtocolDocument,
+    calibration: Calibration,
+    block_name: str,
+    layout: ProtocolLayout = DEFAULT_PROTOCOL_LAYOUT,
+    colorize_sections: bool = False,
+) -> ProtocolCadResult:
     lines: list[CadLine] = []
     hatches: list[CadHatch] = []
     texts: list[TextLabel] = []
@@ -290,16 +308,16 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
     # header text
     texts.extend(
         [
-            TextLabel("ZE_PROTO_TEXT", "График статического зондирования", 55.0, -10.7, 2.3, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "\u0413\u0440\u0430\u0444\u0438\u043a \u0441\u0442\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u043e\u0433\u043e \u0437\u043e\u043d\u0434\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f", 55.0, -10.7, 2.3, align="CENTER"),
             TextLabel("ZE_PROTO_TEXT", doc.title, 55.0, -18.8, 2.3, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", "Сопротивление конуса и муфты  Sf = 350 см.кв  Sq = 10 см.кв", 55.0, -26.8, 2.3, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "\u0421\u043e\u043f\u0440\u043e\u0442\u0438\u0432\u043b\u0435\u043d\u0438\u0435 \u043a\u043e\u043d\u0443\u0441\u0430 \u0438 \u043c\u0443\u0444\u0442\u044b  Sf = 350 \u0441\u043c.\u043a\u0432  Sq = 10 \u0441\u043c.\u043a\u0432", 55.0, -26.8, 2.3, align="CENTER"),
             TextLabel("ZE_PROTO_TEXT", doc.date_text, 55.0, -34.8, 2.3, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", "№ п.п.", ((layout.x_no + layout.x_abs) / 2.0) + 0.25, -47.5, 1.8, rotation_deg=90.0, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", "Абс. отм, м", (layout.x_abs + layout.x_thickness) / 2.0, -47.5, 1.8, rotation_deg=90.0, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", "Мощность", (layout.x_thickness + layout.x_description) / 2.0, -47.5, 1.8, rotation_deg=90.0, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", "Описание грунта", (layout.x_description + layout.x_section) / 2.0, -42.4, 1.9, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", "Разрез", (layout.x_section + layout.x_depth) / 2.0, -47.5, 1.8, rotation_deg=90.0, align="CENTER"),
-            TextLabel("ZE_PROTO_TEXT", "Глубина", (layout.x_depth + layout.x_graph) / 2.0, -47.5, 1.8, align="CENTER", rotation_deg=90.0),
+            TextLabel("ZE_PROTO_TEXT", "\u2116 \u043f.\u043f.", ((layout.x_no + layout.x_abs) / 2.0) + 0.25, -47.5, 1.8, rotation_deg=90.0, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "\u0410\u0431\u0441. \u043e\u0442\u043c, \u043c", (layout.x_abs + layout.x_thickness) / 2.0, -47.5, 1.8, rotation_deg=90.0, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "\u041c\u043e\u0449\u043d\u043e\u0441\u0442\u044c", (layout.x_thickness + layout.x_description) / 2.0, -47.5, 1.8, rotation_deg=90.0, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "\u041e\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u0433\u0440\u0443\u043d\u0442\u0430", (layout.x_description + layout.x_section) / 2.0, -42.4, 1.9, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "\u0420\u0430\u0437\u0440\u0435\u0437", (layout.x_section + layout.x_depth) / 2.0, -47.5, 1.8, rotation_deg=90.0, align="CENTER"),
+            TextLabel("ZE_PROTO_TEXT", "\u0413\u043b\u0443\u0431\u0438\u043d\u0430", (layout.x_depth + layout.x_graph) / 2.0, -47.5, 1.8, align="CENTER", rotation_deg=90.0),
         ]
     )
     for x in (layout.x_no, layout.x_abs, layout.x_thickness, layout.x_description, layout.x_section, layout.x_depth, layout.x_graph):
@@ -354,6 +372,18 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
             (layout.x_depth - 0.2, y1),
             (layout.x_section + 0.2, y1),
         ]
+        if colorize_sections:
+            fill_rgb = _section_fill_rgb(row.soil_type)
+            if fill_rgb is not None:
+                hatches.append(
+                    CadHatch(
+                        "ZE_PROTO_CUT",
+                        section_boundary,
+                        color_aci=7,
+                        rgb=fill_rgb,
+                        solid=True,
+                    )
+                )
         dxf_pattern = _to_dxf_pattern_definition(row.soil_type)
         if dxf_pattern is not None:
             pattern_name, pattern_rows = dxf_pattern
@@ -406,7 +436,7 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
     fs_max = 500.0 if is_k4 else 300.0
     qc_max = 50.0 if is_k4 else 30.0
 
-    texts.append(TextLabel("ZE_PROTO_FS", "Сопротивление на боковой поверхности, Fs, кПа", 146.0, -16.5, 2.2, align="CENTER"))
+    texts.append(TextLabel("ZE_PROTO_FS", "\u0421\u043e\u043f\u0440\u043e\u0442\u0438\u0432\u043b\u0435\u043d\u0438\u0435 \u043d\u0430 \u0431\u043e\u043a\u043e\u0432\u043e\u0439 \u043f\u043e\u0432\u0435\u0440\u0445\u043d\u043e\u0441\u0442\u0438, Fs, \u043a\u041f\u0430", 146.0, -16.5, 2.2, align="CENTER"))
     lines.append(CadLine("ZE_PROTO_FS", (layout.x_graph + 0.5, layout.fs_axis_y), (180.0, layout.fs_axis_y)))
     fs_major = 100 if is_k4 else 50
     fs_minor = 50 if is_k4 else 25
@@ -418,14 +448,14 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
     for v in range(0, int(fs_max) + 1, fs_minor):
         x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=fs_max)
         lines.append(CadLine("ZE_PROTO_FS", (x, layout.fs_axis_y - 1.0), (x, layout.fs_axis_y + 1.0)))
-    texts.append(TextLabel("ZE_PROTO_QC", "Сопротивление под наконечником, Qs, МПа", 146.0, -31.5, 2.2, align="CENTER"))
+    texts.append(TextLabel("ZE_PROTO_QC", "\u0421\u043e\u043f\u0440\u043e\u0442\u0438\u0432\u043b\u0435\u043d\u0438\u0435 \u043f\u043e\u0434 \u043d\u0430\u043a\u043e\u043d\u0435\u0447\u043d\u0438\u043a\u043e\u043c, Qs, \u041c\u041f\u0430", 146.0, -31.5, 2.2, align="CENTER"))
     lines.append(CadLine("ZE_PROTO_QC", (layout.x_graph + 0.5, layout.qc_axis_y), (180.0, layout.qc_axis_y)))
     qc_major = 10 if is_k4 else 5
     for v in range(0, int(qc_max) + 1, qc_major):
         x = _value_to_x(v, x0=layout.x_graph + 0.5, x1=180.0, vmax=qc_max)
         lines.append(CadLine("ZE_PROTO_QC", (x, layout.qc_axis_y - 1.8), (x, layout.qc_axis_y + 1.8)))
         if v != 0:
-            texts.append(TextLabel("ZE_PROTO_QC", _fmt_tick(v), x, layout.qc_axis_y - 4.0, 1.8, align="CENTER", color_aci=3))
+            texts.append(TextLabel("ZE_PROTO_QC", _fmt_tick(v), x, layout.qc_axis_y - 4.0, 1.8, align="CENTER"))
     # no dense intermediate ticks for Qs: keep only major marks
 
     # graph area frame and grid
@@ -468,3 +498,4 @@ def build_protocol_scene(*, doc: ProtocolDocument, calibration: Calibration, blo
         block=CadBlock(name=block_name, base_point=(0.0, 0.0, 0.0), lines=lines, polylines=polys, hatches=hatches, texts=texts),
     )
     return ProtocolCadResult(document=doc, scene=scene, height_mm=layout.total_height_for_depth(doc.max_depth_m))
+

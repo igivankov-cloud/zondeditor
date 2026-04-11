@@ -8,6 +8,36 @@ from .schema import CadLayerSpec, CadScene
 
 _log = get_cad_logger()
 
+# Geological protocol hatches embed full PAT line descriptors, so AutoCAD
+# should treat them as custom-defined patterns rather than simple user-defined
+# angle/spacing hatches.
+EMBEDDED_PAT_PATTERN_TYPE = 2
+
+
+def _entity_polyline_lineweight(layer_name: str) -> int | None:
+    if layer_name in {"ZE_PROTO_QC", "ZE_PROTO_FS"}:
+        return 30
+    return None
+
+
+def _offset_pattern_definition(
+    definition: list[tuple[float, tuple[float, float], tuple[float, float], list[float]]] | tuple,
+    *,
+    dx: float,
+    dy: float,
+) -> list[tuple[float, tuple[float, float], tuple[float, float], list[float]]]:
+    rows: list[tuple[float, tuple[float, float], tuple[float, float], list[float]]] = []
+    for angle_deg, base_point, offset, dash_items in list(definition or []):
+        rows.append(
+            (
+                float(angle_deg),
+                (float(base_point[0]) + float(dx), float(base_point[1]) + float(dy)),
+                (float(offset[0]), float(offset[1])),
+                [float(item) for item in dash_items],
+            )
+        )
+    return rows
+
 
 def _pair(code: int, value: object) -> list[str]:
     return [f"{int(code)}\n", f"{value}\n"]
@@ -147,6 +177,9 @@ def _write_ascii_fallback(scenes: list[CadScene], target: Path, x_step_mm: float
             add(0, "POLYLINE")
             add(8, poly.layer)
             add(62, 256)
+            poly_lineweight = _entity_polyline_lineweight(poly.layer)
+            if poly_lineweight is not None:
+                add(370, poly_lineweight)
             add(66, 1)
             add(70, 1 if poly.closed else 0)
             for p in poly.points:
@@ -226,6 +259,152 @@ def _write_ascii_fallback(scenes: list[CadScene], target: Path, x_step_mm: float
     target.write_text("".join(lines), encoding="utf-8")
 
 
+def _write_ascii_exploded(scenes: list[CadScene], target: Path, x_step_mm: float) -> None:
+    lines: list[str] = []
+    ext_min_x, ext_min_y, ext_max_x, ext_max_y = _scene_extents(scenes, x_step_mm)
+
+    def add(code: int, value: object):
+        lines.extend(_pair(code, value))
+
+    layers_map: dict[str, CadLayerSpec] = {"0": CadLayerSpec("0", color_aci=7)}
+    for scene in scenes:
+        for layer in scene.layers:
+            layers_map[layer.name] = layer
+
+    add(0, "SECTION")
+    add(2, "HEADER")
+    add(9, "$INSUNITS")
+    add(70, 4)
+    add(9, "$EXTMIN")
+    add(10, ext_min_x)
+    add(20, ext_min_y)
+    add(30, 0.0)
+    add(9, "$EXTMAX")
+    add(10, ext_max_x)
+    add(20, ext_max_y)
+    add(30, 0.0)
+    add(0, "ENDSEC")
+
+    add(0, "SECTION")
+    add(2, "TABLES")
+    add(0, "TABLE")
+    add(2, "LAYER")
+    add(70, len(layers_map))
+    for layer in layers_map.values():
+        add(0, "LAYER")
+        add(2, layer.name)
+        add(70, 0)
+        add(62, int(layer.color_aci))
+        add(6, layer.linetype)
+        if layer.lineweight is not None:
+            add(370, int(layer.lineweight))
+    add(0, "ENDTAB")
+
+    add(0, "TABLE")
+    add(2, "STYLE")
+    add(70, 1)
+    add(0, "STYLE")
+    add(2, "ZE_CYR")
+    add(70, 0)
+    add(40, 0)
+    add(41, 1)
+    add(50, 0)
+    add(71, 0)
+    add(42, 2.5)
+    add(3, "arial.ttf")
+    add(4, "")
+    add(0, "ENDTAB")
+    add(0, "ENDSEC")
+
+    add(0, "SECTION")
+    add(2, "ENTITIES")
+    for i, scene in enumerate(scenes):
+        dx = float(scene.insertion_point[0]) + float(i * x_step_mm)
+        dy = float(scene.insertion_point[1])
+        for line in scene.block.lines:
+            add(0, "LINE")
+            add(8, line.layer)
+            add(62, 256)
+            add(10, dx + line.start[0])
+            add(20, dy + line.start[1])
+            add(30, 0.0)
+            add(11, dx + line.end[0])
+            add(21, dy + line.end[1])
+            add(31, 0.0)
+
+        for poly in scene.block.polylines:
+            if len(poly.points) < 2:
+                continue
+            add(0, "POLYLINE")
+            add(8, poly.layer)
+            add(62, 256)
+            poly_lineweight = _entity_polyline_lineweight(poly.layer)
+            if poly_lineweight is not None:
+                add(370, poly_lineweight)
+            add(66, 1)
+            add(70, 1 if poly.closed else 0)
+            for px, py in poly.points:
+                add(0, "VERTEX")
+                add(8, poly.layer)
+                add(10, dx + px)
+                add(20, dy + py)
+                add(30, 0.0)
+            add(0, "SEQEND")
+            add(8, poly.layer)
+
+        for hatch in getattr(scene.block, "hatches", []):
+            if len(hatch.boundary) < 3:
+                continue
+            add(0, "POLYLINE")
+            add(8, hatch.layer)
+            add(62, int(hatch.color_aci) if hatch.color_aci is not None else 256)
+            add(66, 1)
+            add(70, 1)
+            for px, py in hatch.boundary:
+                add(0, "VERTEX")
+                add(8, hatch.layer)
+                add(10, dx + px)
+                add(20, dy + py)
+                add(30, 0.0)
+            add(0, "SEQEND")
+            add(8, hatch.layer)
+
+        for point in scene.block.points:
+            add(0, "POINT")
+            add(8, point.layer)
+            add(62, int(point.color_aci) if point.color_aci is not None else 256)
+            add(10, dx + point.position[0])
+            add(20, dy + point.position[1])
+            add(30, point.position[2])
+
+        for text in scene.block.texts:
+            add(0, "TEXT")
+            add(8, text.layer)
+            add(7, "ZE_CYR")
+            add(62, int(text.color_aci) if text.color_aci is not None else 256)
+            add(10, dx + text.x_mm)
+            add(20, dy + text.y_mm)
+            add(30, 0.0)
+            add(40, text.height_mm)
+            add(50, float(getattr(text, "rotation_deg", 0.0) or 0.0))
+            add(1, _dxf_escape_text(text.text))
+            align = text.align.upper()
+            if align == "CENTER":
+                add(72, 1)
+                add(11, dx + text.x_mm)
+                add(21, dy + text.y_mm)
+                add(31, 0.0)
+            elif align == "RIGHT":
+                add(72, 2)
+                add(11, dx + text.x_mm)
+                add(21, dy + text.y_mm)
+                add(31, 0.0)
+    add(0, "ENDSEC")
+    add(0, "EOF")
+
+    target.write_text("".join(lines), encoding="utf-8")
+
+
 def _ensure_text_style(doc) -> None:
     if "ZE_CYR" in doc.styles:
         return
@@ -251,6 +430,7 @@ def write_cad_scenes_to_dxf(
     x_step_mm: float = 120.0,
     require_ezdxf: bool = False,
     validate_after_write: bool = False,
+    explode_blocks: bool = False,
 ) -> Path:
     if not scenes:
         raise ValueError("No CAD scenes to write")
@@ -265,7 +445,10 @@ def write_cad_scenes_to_dxf(
         if require_ezdxf:
             raise RuntimeError("DXF export requires ezdxf runtime (fallback writer disabled for this export mode).") from exc
         _log.warning("ezdxf unavailable (%s), using ascii fallback writer", exc)
-        _write_ascii_fallback(scenes, target, x_step_mm)
+        if explode_blocks:
+            _write_ascii_exploded(scenes, target, x_step_mm)
+        else:
+            _write_ascii_fallback(scenes, target, x_step_mm)
         if validate_after_write:
             _validate_ascii_structure(target)
         _log.info("write_cad_scenes_to_dxf done target=%s mode=fallback", target)
@@ -278,26 +461,26 @@ def write_cad_scenes_to_dxf(
     doc.header["$EXTMAX"] = (ext_max_x, ext_max_y, 0.0)
     _ensure_text_style(doc)
 
-    for scene in scenes:
-        for layer in scene.layers:
-            _apply_layer(doc, layer)
-
-        block = doc.blocks.new(name=scene.block.name, base_point=scene.block.base_point)
+    def _add_scene_entities(container, scene: CadScene, *, dx: float = 0.0, dy: float = 0.0) -> None:
         for line in scene.block.lines:
-            block.add_line(line.start, line.end, dxfattribs={"layer": line.layer, "color": 256})
+            container.add_line((dx + line.start[0], dy + line.start[1]), (dx + line.end[0], dy + line.end[1]), dxfattribs={"layer": line.layer, "color": 256})
         for hatch in getattr(scene.block, "hatches", []):
             if len(hatch.boundary) < 3:
                 continue
             try:
-                hatch_entity = block.add_hatch(
+                hatch_entity = container.add_hatch(
                     color=(int(hatch.color_aci) if hatch.color_aci is not None else 256),
                     dxfattribs={"layer": hatch.layer},
                 )
-                hatch_entity.paths.add_polyline_path(hatch.boundary, is_closed=True)
+                hatch_entity.paths.add_polyline_path([(dx + px, dy + py) for px, py in hatch.boundary], is_closed=True)
                 has_pattern = bool(getattr(hatch, "pattern_name", None) or getattr(hatch, "pattern_definition", None))
                 if has_pattern:
                     pattern_name = str(getattr(hatch, "pattern_name", None) or "USER")
-                    definition = list(getattr(hatch, "pattern_definition", []) or [])
+                    definition = _offset_pattern_definition(
+                        list(getattr(hatch, "pattern_definition", []) or []),
+                        dx=dx,
+                        dy=dy,
+                    )
                     _log.info(
                         "dxf_hatch_pattern layer=%s block=%s pattern=%s rows=%s boundary_points=%s",
                         hatch.layer,
@@ -311,10 +494,10 @@ def write_cad_scenes_to_dxf(
                         color=(int(hatch.color_aci) if hatch.color_aci is not None else 256),
                         angle=0.0,
                         scale=1.0,
-                        # Explicitly mark as custom pattern definition.
-                        # Without this, some CAD viewers may treat unknown names as predefined
-                        # and render a very dense fallback.
-                        pattern_type=2,
+                        # Complex PAT rows should stay a custom hatch definition so
+                        # AutoCAD preserves the PAT semantics instead of collapsing
+                        # them into a simple user-defined hatch.
+                        pattern_type=EMBEDDED_PAT_PATTERN_TYPE,
                         definition=definition,
                     )
                 else:
@@ -330,16 +513,17 @@ def write_cad_scenes_to_dxf(
             if len(poly.points) < 2:
                 continue
             p_attr = {"layer": poly.layer, "color": 256}
-            if poly.layer in {"ZE_PROTO_QC", "ZE_PROTO_FS"}:
-                p_attr["lineweight"] = 30
-            block.add_lwpolyline(poly.points, close=bool(poly.closed), dxfattribs=p_attr)
+            poly_lineweight = _entity_polyline_lineweight(poly.layer)
+            if poly_lineweight is not None:
+                p_attr["lineweight"] = poly_lineweight
+            container.add_lwpolyline([(dx + px, dy + py) for px, py in poly.points], close=bool(poly.closed), dxfattribs=p_attr)
         for point in scene.block.points:
-            block.add_point(
-                point.position,
+            container.add_point(
+                (dx + point.position[0], dy + point.position[1], point.position[2]),
                 dxfattribs={"layer": point.layer, "color": (int(point.color_aci) if point.color_aci is not None else 256)},
             )
         for text in scene.block.texts:
-            entity = block.add_text(
+            entity = container.add_text(
                 text.text,
                 dxfattribs={
                     "layer": text.layer,
@@ -354,27 +538,42 @@ def write_cad_scenes_to_dxf(
                 from ezdxf.enums import TextEntityAlignment  # type: ignore
 
                 if align == "CENTER":
-                    entity.set_placement((text.x_mm, text.y_mm), align=TextEntityAlignment.MIDDLE_CENTER)
+                    entity.set_placement((dx + text.x_mm, dy + text.y_mm), align=TextEntityAlignment.MIDDLE_CENTER)
                 elif align == "RIGHT":
-                    entity.set_placement((text.x_mm, text.y_mm), align=TextEntityAlignment.MIDDLE_RIGHT)
+                    entity.set_placement((dx + text.x_mm, dy + text.y_mm), align=TextEntityAlignment.MIDDLE_RIGHT)
                 else:
-                    entity.set_placement((text.x_mm, text.y_mm), align=TextEntityAlignment.MIDDLE_LEFT)
+                    entity.set_placement((dx + text.x_mm, dy + text.y_mm), align=TextEntityAlignment.MIDDLE_LEFT)
             except Exception:
-                # compatibility with older ezdxf builds
                 if align == "CENTER":
-                    entity.set_placement((text.x_mm, text.y_mm), align="MIDDLE_CENTER")
+                    entity.set_placement((dx + text.x_mm, dy + text.y_mm), align="MIDDLE_CENTER")
                 elif align == "RIGHT":
-                    entity.set_placement((text.x_mm, text.y_mm), align="MIDDLE_RIGHT")
+                    entity.set_placement((dx + text.x_mm, dy + text.y_mm), align="MIDDLE_RIGHT")
                 else:
-                    entity.set_placement((text.x_mm, text.y_mm), align="MIDDLE_LEFT")
+                    entity.set_placement((dx + text.x_mm, dy + text.y_mm), align="MIDDLE_LEFT")
+
+    for scene in scenes:
+        for layer in scene.layers:
+            _apply_layer(doc, layer)
 
     msp = doc.modelspace()
-    for i, scene in enumerate(scenes):
-        msp.add_blockref(
-            scene.block.name,
-            (scene.insertion_point[0] + i * x_step_mm, scene.insertion_point[1], scene.insertion_point[2]),
-            dxfattribs={"layer": "ZE_CPT_TITLE", "color": 256},
-        )
+    if explode_blocks:
+        for i, scene in enumerate(scenes):
+            _add_scene_entities(
+                msp,
+                scene,
+                dx=scene.insertion_point[0] + i * x_step_mm,
+                dy=scene.insertion_point[1],
+            )
+    else:
+        for scene in scenes:
+            block = doc.blocks.new(name=scene.block.name, base_point=scene.block.base_point)
+            _add_scene_entities(block, scene)
+        for i, scene in enumerate(scenes):
+            msp.add_blockref(
+                scene.block.name,
+                (scene.insertion_point[0] + i * x_step_mm, scene.insertion_point[1], scene.insertion_point[2]),
+                dxfattribs={"layer": "ZE_CPT_TITLE", "color": 256},
+            )
 
     try:
         doc.saveas(target)
