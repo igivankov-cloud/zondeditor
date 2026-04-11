@@ -137,6 +137,11 @@ def row_to_pat_descriptor(row: dict, *, swap_local_axes: bool = PAT_SWAP_LOCAL_A
     if swap_local_axes:
         x, y = y, x
 
+    # PAT local Y-axis has opposite normal direction relative to editor local Y.
+    # Convert local coordinates so PAT line families match preview phase.
+    y = -y
+    dy = -dy
+
     # PAT expects row values in local pattern space after angle conversion.
     parts = [fmt6(angle_pat), fmt6(x), fmt6(y), fmt6(dx), fmt6(dy)]
     segments = list(row.get("segments") or [])
