@@ -2316,10 +2316,6 @@ class GeoCanvasEditor(tk.Tk):
                 self.ribbon_view.calc_alluvial_sands_var.set(bool(getattr(self, "cpt_calc_settings", {}).get("alluvial_sands", True)))
             except Exception:
                 pass
-            try:
-                self.ribbon_view.set_protocol_export_enabled(False)
-            except Exception:
-                pass
             ribbon.pack_forget()
             self.after_idle(self._sync_workspace_visibility)
         self._ui_ready_for_mode_validation = True
@@ -10426,16 +10422,24 @@ class GeoCanvasEditor(tk.Tk):
                     break
         return (len(invalid_tids) == 0, invalid_tids)
 
-    def build_sounding_protocols(self):
+    def _protocol_export_stem(self) -> str:
+        raw_name = str(getattr(self, "object_name", "") or "").strip() or str(getattr(self, "project_name", "") or "").strip() or "project"
+        safe_name = re.sub(r'[\\/:*?"<>|]+', "_", raw_name)
+        safe_name = re.sub(r"\s+", "_", safe_name).strip("._ ")
+        if not safe_name:
+            safe_name = "project"
+        return f"protocol_{safe_name}"
+
+    def _build_protocol_cad_results(self, *, colorize_sections: bool = False) -> list:
         tests_to_export = self._collect_protocol_tests()
         if not tests_to_export:
             messagebox.showerror("Протокол", "Не выбрано ни одного опыта для формирования протокола.")
-            return
+            return []
         ok, invalid_tids = self._validate_protocol_tests(tests_to_export)
         if not ok:
             joined = ", ".join(f"№{x}" for x in invalid_tids)
             messagebox.showerror("Протокол", f"Формирование невозможно: в опытах {joined} есть неполные строки qc/fs.")
-            return
+            return []
 
         cp = self._current_common_params()
         calibration = calibration_from_common_params(cp, geo_kind=str(getattr(self, "geo_kind", "K2") or "K2"))
@@ -10444,29 +10448,40 @@ class GeoCanvasEditor(tk.Tk):
         results = []
         for doc in docs_pack.documents:
             block_name = f"ZE_PROTOCOL_T{int(getattr(doc.test, 'tid', 0) or 0)}"
-            results.append(build_protocol_scene(doc=doc, calibration=calibration, block_name=block_name))
+            results.append(
+                build_protocol_scene(
+                    doc=doc,
+                    calibration=calibration,
+                    block_name=block_name,
+                    colorize_sections=bool(colorize_sections),
+                )
+            )
         self._protocol_cad_results = results
+        return results
+
+    def build_sounding_protocols(self):
+        results = self._build_protocol_cad_results(colorize_sections=bool(getattr(self, "show_layer_colors", False)))
+        if not results:
+            return
         try:
-            if getattr(self, "ribbon_view", None) is not None:
-                self.ribbon_view.set_protocol_export_enabled(bool(results))
+            self.status.config(text=f"Протоколы подготовлены: {len(results)}")
         except Exception:
             pass
-        messagebox.showinfo("Протокол", f"Сформировано протоколов: {len(results)}")
 
     def export_sounding_protocols_dxf(self):
-        results = list(getattr(self, "_protocol_cad_results", []) or [])
-        if not results:
-            messagebox.showwarning("Протокол", "Сначала сформируйте протокол.")
-            return
         out_path = filedialog.asksaveasfilename(
             title="Сохранить протоколы в DXF",
             defaultextension=".dxf",
             filetypes=[("CAD DXF", "*.dxf"), ("All files", "*.*")],
+            initialfile=f"{self._protocol_export_stem()}.dxf",
         )
         if not out_path:
             return
+        results = self._build_protocol_cad_results(colorize_sections=bool(getattr(self, "show_layer_colors", False)))
+        if not results:
+            return
         try:
-            export_protocols_to_dxf(
+            final_path = export_protocols_to_dxf(
                 scenes=[x.scene for x in results],
                 heights_mm=[x.height_mm for x in results],
                 out_path=Path(out_path).with_suffix('.dxf'),
@@ -10483,22 +10498,25 @@ class GeoCanvasEditor(tk.Tk):
                 pass
             messagebox.showerror("Протокол", f"Не удалось сохранить DXF:\n{exc}")
             return
-        messagebox.showinfo("Протокол", f"DXF сохранён:\n{str(Path(out_path).with_suffix('.dxf'))}")
+        try:
+            self.status.config(text=f"DXF сохранён: {final_path}")
+        except Exception:
+            pass
 
     def export_sounding_protocols_pdf(self):
-        results = list(getattr(self, "_protocol_cad_results", []) or [])
-        if not results:
-            messagebox.showwarning("Протокол", "Сначала сформируйте протокол.")
-            return
         out_path = filedialog.asksaveasfilename(
             title="Сохранить протоколы в PDF",
             defaultextension=".pdf",
             filetypes=[("PDF", "*.pdf"), ("All files", "*.*")],
+            initialfile=f"{self._protocol_export_stem()}.pdf",
         )
         if not out_path:
             return
+        results = self._build_protocol_cad_results(colorize_sections=False)
+        if not results:
+            return
         try:
-            export_protocols_to_pdf(
+            final_path = export_protocols_to_pdf(
                 scenes=[x.scene for x in results],
                 heights_mm=[x.height_mm for x in results],
                 out_path=Path(out_path).with_suffix('.pdf'),
@@ -10506,7 +10524,10 @@ class GeoCanvasEditor(tk.Tk):
         except Exception as exc:
             messagebox.showerror("Протокол", f"Не удалось сохранить PDF:\n{exc}")
             return
-        messagebox.showinfo("Протокол", f"PDF сохранён:\n{str(Path(out_path).with_suffix('.pdf'))}")
+        try:
+            self.status.config(text=f"PDF сохранён: {final_path}")
+        except Exception:
+            pass
 
     def export_excel(self):
         if not self.tests:

@@ -37,3 +37,14 @@ class HatchPattern:
     source_file: str
     scale: float = 1.0
     lines: tuple[HatchLine, ...] = field(default_factory=tuple)
+
+
+PatPatternDefinitionRow = tuple[float, tuple[float, float], tuple[float, float], tuple[float, ...]]
+
+
+@dataclass(frozen=True)
+class PatPattern:
+    name: str
+    title: str
+    source_file: str
+    definition: tuple[PatPatternDefinitionRow, ...] = field(default_factory=tuple)

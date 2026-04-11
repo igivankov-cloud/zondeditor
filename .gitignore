@@ -10,6 +10,8 @@ __pycache__/
 *.pyd
 .DS_Store
 Thumbs.db
+.vs/
+tmp_*.png
 
 # build/test artifacts
 tools/_selfcheck_out/
