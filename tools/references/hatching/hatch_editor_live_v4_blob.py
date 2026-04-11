@@ -126,25 +126,56 @@ def local_to_world(angle_deg: float, lx: float, ly: float):
     return lx * ex[0] + ly * ey[0], lx * ex[1] + ly * ey[1]
 
 
-def row_to_pat_descriptor(row: dict, *, swap_local_axes: bool = PAT_SWAP_LOCAL_AXES) -> str:
-    """Convert one hatch-editor row to one AutoCAD PAT descriptor line."""
+@dataclass(frozen=True)
+class PreviewRowGeometry:
+    angle_editor_deg: float
+    base_world: tuple[float, float]
+    step_world: tuple[float, float]
+    segments: list[dict]
+
+
+def _dot2(a: tuple[float, float], b: tuple[float, float]) -> float:
+    return a[0] * b[0] + a[1] * b[1]
+
+
+def build_preview_row_geometry(row: dict, *, swap_local_axes: bool = False) -> PreviewRowGeometry:
+    """Build row geometry exactly as preview renderer interprets it."""
     angle_editor = parse_angle_deg(row.get("angle"), 0.0)
-    angle_pat = (90.0 - angle_editor) % 360.0
     x = parse_float(row.get("x"), 0.0)
     y = parse_float(row.get("y"), 0.0)
     dx = parse_float(row.get("dx"), 0.0)
     dy = parse_float(row.get("dy"), 0.0)
     if swap_local_axes:
         x, y = y, x
+    base_world = local_to_world(angle_editor, x, y)
+    step_world = local_to_world(angle_editor, dx, dy)
+    return PreviewRowGeometry(
+        angle_editor_deg=angle_editor,
+        base_world=base_world,
+        step_world=step_world,
+        segments=list(row.get("segments") or []),
+    )
 
-    # PAT local Y-axis has opposite normal direction relative to editor local Y.
-    # Convert local coordinates so PAT line families match preview phase.
-    y = -y
-    dy = -dy
 
-    # PAT expects row values in local pattern space after angle conversion.
-    parts = [fmt6(angle_pat), fmt6(x), fmt6(y), fmt6(dx), fmt6(dy)]
-    segments = list(row.get("segments") or [])
+def row_to_pat_descriptor(row: dict, *, swap_local_axes: bool = PAT_SWAP_LOCAL_AXES) -> str:
+    """Convert one hatch-editor row to one AutoCAD PAT descriptor line."""
+    angle_editor = parse_angle_deg(row.get("angle"), 0.0)
+    angle_pat = (90.0 - angle_editor) % 360.0
+
+    # Build world geometry from preview math first (single source of truth).
+    preview_geom = build_preview_row_geometry(row, swap_local_axes=swap_local_axes)
+
+    # PAT row is represented in PAT local basis (derived from PAT angle).
+    theta = math.radians(angle_pat)
+    ex_pat = (math.cos(theta), math.sin(theta))
+    ey_pat = (-math.sin(theta), math.cos(theta))
+    x_pat = _dot2(preview_geom.base_world, ex_pat)
+    y_pat = _dot2(preview_geom.base_world, ey_pat)
+    dx_pat = _dot2(preview_geom.step_world, ex_pat)
+    dy_pat = _dot2(preview_geom.step_world, ey_pat)
+
+    parts = [fmt6(angle_pat), fmt6(x_pat), fmt6(y_pat), fmt6(dx_pat), fmt6(dy_pat)]
+    segments = preview_geom.segments
     if segments:
         for seg in segments:
             kind = (seg.get("kind") or "Штрих").strip()
