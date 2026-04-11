@@ -1,4 +1,5 @@
 import math
+from pathlib import Path
 
 from src.zondeditor.domain.experience_column import ColumnInterval, ExperienceColumn
 from src.zondeditor.domain.hatching.registry import SOIL_TYPE_TO_PAT_FILE, load_registered_hatch, load_registered_pat_pattern
@@ -409,3 +410,142 @@ def test_protocol_diagonal_offsets_match_autocad_reference_examples():
     assert round(peschanik[2][2][1], 6) == 11.999996
     assert round(peschanik[3][2][0], 6) == -10.392302
     assert round(peschanik[3][2][1], 6) == 5.999996
+
+
+def test_protocol_pdf_export_keeps_one_protocol_per_page_and_uses_a4_minimum(monkeypatch, tmp_path):
+    import matplotlib.pyplot as plt
+    from matplotlib.backends import backend_pdf
+
+    docs = build_protocol_documents(tests=[_test_data(1), _test_data(2)], ige_registry={}).documents
+    scenes = []
+    heights = []
+    for idx, doc in enumerate(docs, start=1):
+        result = build_protocol_scene(doc=doc, calibration=_calibration(), block_name=f"PROTO_PDF_{idx}")
+        scenes.append(result.scene)
+        heights.append(result.height_mm if idx == 1 else 420.0)
+
+    original_subplots = plt.subplots
+    captured_sizes = []
+    saved_pages = []
+
+    def _wrapped_subplots(*args, **kwargs):
+        fig, ax = original_subplots(*args, **kwargs)
+        captured_sizes.append(fig.get_size_inches())
+        return fig, ax
+
+    class _FakePdfPages:
+        def __init__(self, path):
+            self.path = Path(path)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def savefig(self, fig, *args, **kwargs):
+            saved_pages.append(fig.get_size_inches())
+
+    monkeypatch.setattr(plt, "subplots", _wrapped_subplots)
+    monkeypatch.setattr(backend_pdf, "PdfPages", _FakePdfPages)
+
+    protocol_exporters.export_protocols_to_pdf(
+        scenes=scenes,
+        heights_mm=heights,
+        out_path=tmp_path / "protocols.pdf",
+    )
+
+    assert len(saved_pages) == 2
+    assert len(captured_sizes) == 2
+    assert round(captured_sizes[0][0] * 25.4, 1) == 210.0
+    assert round(captured_sizes[0][1] * 25.4, 1) == 297.0
+    assert round(captured_sizes[1][0] * 25.4, 1) == 210.0
+    assert round(captured_sizes[1][1] * 25.4, 1) == 440.0
+
+
+def test_protocol_pdf_export_handles_patterned_section_hatches(tmp_path):
+    pack = build_protocol_documents(
+        tests=[_test_data()],
+        ige_registry={"РР“Р­-1": {"soil_type": "РіР»РёРЅР°", "notes": "Р“Р»РёРЅР°"}},
+    )
+    result = build_protocol_scene(doc=pack.documents[0], calibration=_calibration(), block_name="PROTO_PDF_HATCH")
+
+    out_path = protocol_exporters.export_protocols_to_pdf(
+        scenes=[result.scene],
+        heights_mm=[result.height_mm],
+        out_path=tmp_path / "patterned.pdf",
+    )
+
+    assert out_path.exists()
+    assert out_path.stat().st_size > 0
+
+
+def test_protocol_pdf_export_draws_white_mask_above_pattern(monkeypatch, tmp_path):
+    import matplotlib.pyplot as plt
+    from matplotlib.backends import backend_pdf
+
+    pack = build_protocol_documents(
+        tests=[_test_data()],
+        ige_registry={"РР“Р­-1": {"soil_type": "РіР»РёРЅР°", "notes": "Р“Р»РёРЅР°"}},
+    )
+    result = build_protocol_scene(doc=pack.documents[0], calibration=_calibration(), block_name="PROTO_MASK_ZORDER")
+
+    class _FakeAxis:
+        def __init__(self):
+            self.fill_calls = []
+
+        def set_aspect(self, *_args, **_kwargs):
+            return None
+
+        def plot(self, *_args, **_kwargs):
+            return None
+
+        def fill(self, *args, **kwargs):
+            self.fill_calls.append((args, kwargs))
+            return None
+
+        def add_patch(self, *_args, **_kwargs):
+            return None
+
+        def text(self, *_args, **_kwargs):
+            return None
+
+        def set_xlim(self, *_args, **_kwargs):
+            return None
+
+        def set_ylim(self, *_args, **_kwargs):
+            return None
+
+        def axis(self, *_args, **_kwargs):
+            return None
+
+    class _FakeFigure:
+        pass
+
+    class _FakePdfPages:
+        def __init__(self, path):
+            self.path = Path(path)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def savefig(self, *_args, **_kwargs):
+            return None
+
+    fake_ax = _FakeAxis()
+    monkeypatch.setattr(plt, "subplots", lambda *args, **kwargs: (_FakeFigure(), fake_ax))
+    monkeypatch.setattr(plt, "close", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(backend_pdf, "PdfPages", _FakePdfPages)
+
+    protocol_exporters.export_protocols_to_pdf(
+        scenes=[result.scene],
+        heights_mm=[result.height_mm],
+        out_path=tmp_path / "mask.pdf",
+    )
+
+    white_fills = [kwargs for _args, kwargs in fake_ax.fill_calls if kwargs.get("color") == "#ffffff"]
+    assert white_fills
+    assert all(kwargs.get("zorder") == 3.5 for kwargs in white_fills)

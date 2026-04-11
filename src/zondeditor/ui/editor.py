@@ -10512,7 +10512,7 @@ class GeoCanvasEditor(tk.Tk):
         )
         if not out_path:
             return
-        results = self._build_protocol_cad_results(colorize_sections=False)
+        results = self._build_protocol_cad_results(colorize_sections=bool(getattr(self, "show_layer_colors", False)))
         if not results:
             return
         try:
