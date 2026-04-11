@@ -504,7 +504,25 @@ class RibbonView(ttk.Frame):
     def _build_protocol_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
         self.tabs.add(tab, text="Протокол")
-        ttk.Label(tab, text="Раздел протокола будет реализован на следующем этапе.", anchor="w").pack(fill="x")
+        host = ttk.Frame(tab)
+        host.pack(side="top", anchor="w")
+
+        controls = ttk.LabelFrame(host, text="Выпуск", padding=4)
+        controls.pack(side="left", anchor="nw", padx=(0, 4))
+        self._add_btn(controls, "protocol_build", "Сформировать протокол", "Собрать протоколы по отмеченным опытам", width=24)
+        self._add_btn(controls, "protocol_export_dxf", "Экспорт в DXF", "Экспорт сформированных протоколов в DXF", width=24)
+        self._add_btn(controls, "protocol_export_pdf", "Экспорт в PDF", "Экспорт сформированных протоколов в PDF", width=24)
+        self.set_protocol_export_enabled(False)
+
+    def set_protocol_export_enabled(self, enabled: bool):
+        state = "normal" if bool(enabled) else "disabled"
+        for key in ("protocol_export_dxf", "protocol_export_pdf"):
+            btn = self._buttons.get(key)
+            if btn is not None:
+                try:
+                    btn.configure(state=state)
+                except Exception:
+                    pass
 
     def _sync_ige_canvas(self):
         cnv = getattr(self, "_ige_canvas", None)

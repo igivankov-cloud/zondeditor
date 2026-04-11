@@ -10,6 +10,7 @@ ASSET_DIR = Path(__file__).resolve().parents[2] / 'assets' / 'hatches'
 SOIL_TYPE_TO_HATCH_FILE: dict[str, str] = {
     'песчаник': 'Peschanik.json',
     'аргиллит': 'Argillit.json',
+    'аргилит': 'Argillit.json',
     'глина': 'Glina.json',
     'гравий': 'graviy.json',
     'гравийный грунт': 'graviy.json',

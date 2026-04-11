@@ -46,6 +46,9 @@ def _scene_extents(scenes: list[CadScene], x_step_mm: float) -> tuple[float, flo
         for poly in scene.block.polylines:
             for px, py in poly.points:
                 _touch(dx + float(px), dy + float(py))
+        for hatch in getattr(scene.block, "hatches", []):
+            for px, py in hatch.boundary:
+                _touch(dx + float(px), dy + float(py))
         for point in scene.block.points:
             _touch(dx + float(point.position[0]), dy + float(point.position[1]))
         for text in scene.block.texts:
@@ -94,6 +97,8 @@ def _write_ascii_fallback(scenes: list[CadScene], target: Path, x_step_mm: float
         add(70, 0)
         add(62, int(layer.color_aci))
         add(6, layer.linetype)
+        if layer.lineweight is not None:
+            add(370, int(layer.lineweight))
     add(0, "ENDTAB")
 
     add(0, "TABLE")
@@ -153,6 +158,24 @@ def _write_ascii_fallback(scenes: list[CadScene], target: Path, x_step_mm: float
             add(0, "SEQEND")
             add(8, poly.layer)
 
+        # ASCII fallback keeps solid areas as closed polylines only.
+        for hatch in getattr(scene.block, "hatches", []):
+            if len(hatch.boundary) < 3:
+                continue
+            add(0, "POLYLINE")
+            add(8, hatch.layer)
+            add(62, int(hatch.color_aci) if hatch.color_aci is not None else 256)
+            add(66, 1)
+            add(70, 1)
+            for p in hatch.boundary:
+                add(0, "VERTEX")
+                add(8, hatch.layer)
+                add(10, p[0])
+                add(20, p[1])
+                add(30, 0.0)
+            add(0, "SEQEND")
+            add(8, hatch.layer)
+
         for point in scene.block.points:
             add(0, "POINT")
             add(8, point.layer)
@@ -170,6 +193,7 @@ def _write_ascii_fallback(scenes: list[CadScene], target: Path, x_step_mm: float
             add(20, text.y_mm)
             add(30, 0.0)
             add(40, text.height_mm)
+            add(50, float(getattr(text, "rotation_deg", 0.0) or 0.0))
             add(1, _dxf_escape_text(text.text))
             align = text.align.upper()
             if align == "CENTER":
@@ -220,7 +244,14 @@ def _apply_layer(doc, layer: CadLayerSpec) -> None:
         layer_obj.rgb = tuple(int(c) for c in layer.rgb)
 
 
-def write_cad_scenes_to_dxf(scenes: list[CadScene], out_path: str | Path, *, x_step_mm: float = 120.0) -> Path:
+def write_cad_scenes_to_dxf(
+    scenes: list[CadScene],
+    out_path: str | Path,
+    *,
+    x_step_mm: float = 120.0,
+    require_ezdxf: bool = False,
+    validate_after_write: bool = False,
+) -> Path:
     if not scenes:
         raise ValueError("No CAD scenes to write")
 
@@ -231,8 +262,12 @@ def write_cad_scenes_to_dxf(scenes: list[CadScene], out_path: str | Path, *, x_s
     try:
         import ezdxf  # type: ignore
     except Exception as exc:  # pragma: no cover
+        if require_ezdxf:
+            raise RuntimeError("DXF export requires ezdxf runtime (fallback writer disabled for this export mode).") from exc
         _log.warning("ezdxf unavailable (%s), using ascii fallback writer", exc)
         _write_ascii_fallback(scenes, target, x_step_mm)
+        if validate_after_write:
+            _validate_ascii_structure(target)
         _log.info("write_cad_scenes_to_dxf done target=%s mode=fallback", target)
         return target
 
@@ -250,10 +285,54 @@ def write_cad_scenes_to_dxf(scenes: list[CadScene], out_path: str | Path, *, x_s
         block = doc.blocks.new(name=scene.block.name, base_point=scene.block.base_point)
         for line in scene.block.lines:
             block.add_line(line.start, line.end, dxfattribs={"layer": line.layer, "color": 256})
+        for hatch in getattr(scene.block, "hatches", []):
+            if len(hatch.boundary) < 3:
+                continue
+            try:
+                hatch_entity = block.add_hatch(
+                    color=(int(hatch.color_aci) if hatch.color_aci is not None else 256),
+                    dxfattribs={"layer": hatch.layer},
+                )
+                hatch_entity.paths.add_polyline_path(hatch.boundary, is_closed=True)
+                has_pattern = bool(getattr(hatch, "pattern_name", None) or getattr(hatch, "pattern_definition", None))
+                if has_pattern:
+                    pattern_name = str(getattr(hatch, "pattern_name", None) or "USER")
+                    definition = list(getattr(hatch, "pattern_definition", []) or [])
+                    _log.info(
+                        "dxf_hatch_pattern layer=%s block=%s pattern=%s rows=%s boundary_points=%s",
+                        hatch.layer,
+                        scene.block.name,
+                        pattern_name,
+                        len(definition),
+                        len(hatch.boundary),
+                    )
+                    hatch_entity.set_pattern_fill(
+                        name=pattern_name,
+                        color=(int(hatch.color_aci) if hatch.color_aci is not None else 256),
+                        angle=0.0,
+                        scale=1.0,
+                        # Explicitly mark as custom pattern definition.
+                        # Without this, some CAD viewers may treat unknown names as predefined
+                        # and render a very dense fallback.
+                        pattern_type=2,
+                        definition=definition,
+                    )
+                else:
+                    hatch_entity.set_solid_fill(
+                        color=(int(hatch.color_aci) if hatch.color_aci is not None else 256),
+                        rgb=(tuple(int(c) for c in hatch.rgb) if hatch.rgb is not None else None),
+                    )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"DXF hatch export failed (layer={hatch.layer}, points={len(hatch.boundary)}, block={scene.block.name})"
+                ) from exc
         for poly in scene.block.polylines:
             if len(poly.points) < 2:
                 continue
-            block.add_lwpolyline(poly.points, close=bool(poly.closed), dxfattribs={"layer": poly.layer, "color": 256})
+            p_attr = {"layer": poly.layer, "color": 256}
+            if poly.layer in {"ZE_PROTO_QC", "ZE_PROTO_FS"}:
+                p_attr["lineweight"] = 30
+            block.add_lwpolyline(poly.points, close=bool(poly.closed), dxfattribs=p_attr)
         for point in scene.block.points:
             block.add_point(
                 point.position,
@@ -267,15 +346,27 @@ def write_cad_scenes_to_dxf(scenes: list[CadScene], out_path: str | Path, *, x_s
                     "height": text.height_mm,
                     "color": (int(text.color_aci) if text.color_aci is not None else 256),
                     "style": "ZE_CYR",
+                    "rotation": float(getattr(text, "rotation_deg", 0.0) or 0.0),
                 },
             )
             align = text.align.upper()
-            if align == "CENTER":
-                entity.set_placement((text.x_mm, text.y_mm), align="MIDDLE_CENTER")
-            elif align == "RIGHT":
-                entity.set_placement((text.x_mm, text.y_mm), align="MIDDLE_RIGHT")
-            else:
-                entity.set_placement((text.x_mm, text.y_mm), align="MIDDLE_LEFT")
+            try:
+                from ezdxf.enums import TextEntityAlignment  # type: ignore
+
+                if align == "CENTER":
+                    entity.set_placement((text.x_mm, text.y_mm), align=TextEntityAlignment.MIDDLE_CENTER)
+                elif align == "RIGHT":
+                    entity.set_placement((text.x_mm, text.y_mm), align=TextEntityAlignment.MIDDLE_RIGHT)
+                else:
+                    entity.set_placement((text.x_mm, text.y_mm), align=TextEntityAlignment.MIDDLE_LEFT)
+            except Exception:
+                # compatibility with older ezdxf builds
+                if align == "CENTER":
+                    entity.set_placement((text.x_mm, text.y_mm), align="MIDDLE_CENTER")
+                elif align == "RIGHT":
+                    entity.set_placement((text.x_mm, text.y_mm), align="MIDDLE_RIGHT")
+                else:
+                    entity.set_placement((text.x_mm, text.y_mm), align="MIDDLE_LEFT")
 
     msp = doc.modelspace()
     for i, scene in enumerate(scenes):
@@ -285,10 +376,41 @@ def write_cad_scenes_to_dxf(scenes: list[CadScene], out_path: str | Path, *, x_s
             dxfattribs={"layer": "ZE_CPT_TITLE", "color": 256},
         )
 
-    doc.saveas(target)
+    try:
+        doc.saveas(target)
+    except Exception as exc:
+        raise RuntimeError(f"DXF save failed for '{target}'") from exc
+    if validate_after_write:
+        try:
+            _validate_ezdxf_file(target)
+        except Exception as exc:
+            raise RuntimeError(f"DXF post-write validation failed for '{target}'") from exc
     _log.info("write_cad_scenes_to_dxf done target=%s mode=ezdxf", target)
     return target
 
 
 def write_cad_scene_to_dxf(scene: CadScene, out_path: str | Path) -> Path:
     return write_cad_scenes_to_dxf([scene], out_path)
+
+
+def _validate_ascii_structure(path: Path) -> None:
+    raw = path.read_bytes()
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raise RuntimeError("DXF contains UTF-8 BOM header, which is not allowed for fallback ASCII DXF.")
+    text = raw.decode("utf-8", errors="strict")
+    lines = text.splitlines()
+    if not lines or lines[-1].strip() != "EOF":
+        raise RuntimeError("DXF fallback file is missing EOF terminator.")
+    if "SECTION" not in text or "ENDSEC" not in text:
+        raise RuntimeError("DXF fallback file has invalid section structure.")
+    if "ENTITIES" not in text:
+        raise RuntimeError("DXF fallback file has no ENTITIES section.")
+
+
+def _validate_ezdxf_file(path: Path) -> None:
+    import ezdxf  # type: ignore
+
+    doc = ezdxf.readfile(path)
+    msp = doc.modelspace()
+    if len(msp) <= 0:
+        raise RuntimeError("DXF validation failed: ENTITIES section is empty.")

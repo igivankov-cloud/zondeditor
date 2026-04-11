@@ -3,6 +3,7 @@ import math
 import struct
 import tkinter as tk
 import zlib
+from pathlib import Path
 from dataclasses import dataclass, field, asdict
 from tkinter import filedialog, messagebox, ttk
 
@@ -12,6 +13,9 @@ SEGMENT_TYPES = ["Штрих", "Точка"]
 DEFAULT_DASH = "0.300000"
 DEFAULT_GAP = "3.856920"
 DEFAULT_POINT_GAP = "1.000000"
+# Keep disabled by default: PAT rows are emitted from the same local coordinates
+# (X/dX along stroke, Y/dY across stroke) as used by the editor itself.
+PAT_SWAP_LOCAL_AXES = False
 
 
 def parse_float(value: str, default: float = 0.0) -> float:
@@ -120,6 +124,88 @@ def clock_basis(angle_deg: float):
 def local_to_world(angle_deg: float, lx: float, ly: float):
     ex, ey = clock_basis(angle_deg)
     return lx * ex[0] + ly * ey[0], lx * ex[1] + ly * ey[1]
+
+
+@dataclass(frozen=True)
+class PreviewRowGeometry:
+    angle_editor_deg: float
+    base_world: tuple[float, float]
+    step_world: tuple[float, float]
+    segments: list[dict]
+
+
+@dataclass(frozen=True)
+class PatRowGeometry:
+    angle_pat_deg: float
+    origin_world: tuple[float, float]
+    offset_local: tuple[float, float]
+    segments: list[dict]
+
+
+def _dot2(a: tuple[float, float], b: tuple[float, float]) -> float:
+    return a[0] * b[0] + a[1] * b[1]
+
+
+def build_preview_row_geometry(row: dict, *, swap_local_axes: bool = False) -> PreviewRowGeometry:
+    """Build row geometry exactly as preview renderer interprets it."""
+    angle_editor = parse_angle_deg(row.get("angle"), 0.0)
+    x = parse_float(row.get("x"), 0.0)
+    y = parse_float(row.get("y"), 0.0)
+    dx = parse_float(row.get("dx"), 0.0)
+    dy = parse_float(row.get("dy"), 0.0)
+    if swap_local_axes:
+        x, y = y, x
+    base_world = local_to_world(angle_editor, x, y)
+    step_world = local_to_world(angle_editor, dx, dy)
+    return PreviewRowGeometry(
+        angle_editor_deg=angle_editor,
+        base_world=base_world,
+        step_world=step_world,
+        segments=list(row.get("segments") or []),
+    )
+
+
+def build_pat_row_geometry(row: dict, *, swap_local_axes: bool = PAT_SWAP_LOCAL_AXES) -> PatRowGeometry:
+    """Convert preview-equivalent row geometry into explicit AutoCAD PAT semantics."""
+    preview_geom = build_preview_row_geometry(row, swap_local_axes=swap_local_axes)
+    angle_pat = (90.0 - preview_geom.angle_editor_deg) % 360.0
+    theta = math.radians(angle_pat)
+    ex_pat = (math.cos(theta), math.sin(theta))
+    ey_pat = (-math.sin(theta), math.cos(theta))
+    dx_pat = _dot2(preview_geom.step_world, ex_pat)
+    dy_pat = _dot2(preview_geom.step_world, ey_pat)
+    return PatRowGeometry(
+        angle_pat_deg=angle_pat,
+        # AutoCAD PAT stores the seed point in drawing/world coordinates.
+        origin_world=preview_geom.base_world,
+        # The family offset is expressed in the PAT row local basis.
+        offset_local=(dx_pat, dy_pat),
+        segments=preview_geom.segments,
+    )
+
+
+def row_to_pat_descriptor(row: dict, *, swap_local_axes: bool = PAT_SWAP_LOCAL_AXES) -> str:
+    """Convert one hatch-editor row to one AutoCAD PAT descriptor line."""
+    pat_geom = build_pat_row_geometry(row, swap_local_axes=swap_local_axes)
+    x_pat, y_pat = pat_geom.origin_world
+    dx_pat, dy_pat = pat_geom.offset_local
+    parts = [fmt6(pat_geom.angle_pat_deg), fmt6(x_pat), fmt6(y_pat), fmt6(dx_pat), fmt6(dy_pat)]
+    segments = pat_geom.segments
+    if segments:
+        for seg in segments:
+            kind = (seg.get("kind") or "Штрих").strip()
+            if kind == "Точка":
+                gap = max(1e-9, parse_float(seg.get("gap"), 1.0))
+                parts.append("0")
+                parts.append(fmt6(-gap))
+            else:
+                dash = max(0.0, parse_float(seg.get("dash"), 0.3))
+                gap = max(0.0, parse_float(seg.get("gap"), 3.85692))
+                if dash > 0.0:
+                    parts.append(fmt6(dash))
+                if gap > 0.0:
+                    parts.append(fmt6(-gap))
+    return ", ".join(parts)
 
 
 @dataclass
@@ -318,6 +404,7 @@ class HatchEditorApp(tk.Tk):
         self._suspend_selected_sync = False
         self._suspend_segment_sync = False
         self.selected_segment_index = None
+        self.current_json_path: Path | None = None
 
         self._build_ui()
         for row in DEFAULT_ROWS:
@@ -339,6 +426,7 @@ class HatchEditorApp(tk.Tk):
         ttk.Button(topbar, text="Сбросить пример", command=self.reset_default).pack(side="left", padx=6)
         ttk.Button(topbar, text="Сохранить JSON", command=self.save_json).pack(side="left")
         ttk.Button(topbar, text="Загрузить JSON", command=self.load_json).pack(side="left", padx=6)
+        ttk.Button(topbar, text="Экспорт AutoCAD PAT", command=self.save_autocad_pat).pack(side="left", padx=6)
         ttk.Separator(topbar, orient="vertical").pack(side="left", fill="y", padx=10)
         ttk.Label(topbar, text="Масштаб, px/мм:").pack(side="left")
         scale_spin = ttk.Spinbox(topbar, from_=2, to=40, increment=1, textvariable=self.preview_scale, width=6, command=self.schedule_preview_update)
@@ -934,16 +1022,44 @@ class HatchEditorApp(tk.Tk):
         return [self.get_row_data(i) for i in range(len(self.rows))]
 
     def save_json(self):
+        initial_name = self.current_json_path.name if self.current_json_path else None
         path = filedialog.asksaveasfilename(
             title="Сохранить параметры",
             defaultextension=".json",
             filetypes=[("JSON", "*.json"), ("Все файлы", "*.*")],
+            initialfile=initial_name,
         )
         if not path:
             return
         payload = {"rows": self.collect_data(), "scale": self.preview_scale.get()}
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
+        self.current_json_path = Path(path)
+
+    def _row_to_pat_descriptor(self, row):
+        return row_to_pat_descriptor(row, swap_local_axes=PAT_SWAP_LOCAL_AXES)
+
+    def save_autocad_pat(self):
+        initial_pat_name = f"{self.current_json_path.stem}.pat" if self.current_json_path else None
+        path = filedialog.asksaveasfilename(
+            title="Экспорт AutoCAD PAT",
+            defaultextension=".pat",
+            filetypes=[("AutoCAD Pattern", "*.pat"), ("Все файлы", "*.*")],
+            initialfile=initial_pat_name,
+        )
+        if not path:
+            return
+        rows = [r for r in self.collect_data() if bool(r.get("enabled", True))]
+        if not rows:
+            messagebox.showerror(APP_TITLE, "Нет включённых строк для экспорта в PAT.")
+            return
+        pat_name = Path(path).stem
+        lines = [f"*{pat_name}, Generated by {APP_TITLE}"]
+        for row in rows:
+            lines.append(self._row_to_pat_descriptor(row))
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write("\n".join(lines) + "\n")
+        messagebox.showinfo(APP_TITLE, f"PAT сохранён:\n{path}")
 
     def _load_payload(self, payload):
         rows = payload.get("rows", [])
@@ -969,6 +1085,7 @@ class HatchEditorApp(tk.Tk):
         with open(path, "r", encoding="utf-8") as f:
             payload = json.load(f)
         self._load_payload(payload)
+        self.current_json_path = Path(path)
 
     def import_blob_file(self):
         path = filedialog.askopenfilename(

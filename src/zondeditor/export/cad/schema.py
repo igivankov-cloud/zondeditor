@@ -42,6 +42,7 @@ class TextLabel:
     height_mm: float
     align: Literal["LEFT", "CENTER", "RIGHT"] = "LEFT"
     color_aci: int | None = None
+    rotation_deg: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -83,11 +84,24 @@ class CadPolyline:
 
 
 @dataclass(frozen=True)
+class CadHatch:
+    layer: str
+    boundary: list[tuple[float, float]]
+    color_aci: int | None = None
+    rgb: tuple[int, int, int] | None = None
+    solid: bool = True
+    pattern_name: str | None = None
+    # ezdxf hatch definition rows: (angle, base_point(x,y), offset(x,y), dash_items[])
+    pattern_definition: list[tuple[float, tuple[float, float], tuple[float, float], list[float]]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class CadBlock:
     name: str
     base_point: tuple[float, float, float]
     lines: list[CadLine] = field(default_factory=list)
     polylines: list[CadPolyline] = field(default_factory=list)
+    hatches: list[CadHatch] = field(default_factory=list)
     points: list[CadPoint] = field(default_factory=list)
     texts: list[TextLabel] = field(default_factory=list)
 
@@ -97,4 +111,3 @@ class CadScene:
     layers: list[CadLayerSpec]
     block: CadBlock
     insertion_point: tuple[float, float, float] = (0.0, 0.0, 0.0)
-
