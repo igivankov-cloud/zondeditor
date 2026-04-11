@@ -126,6 +126,37 @@ def local_to_world(angle_deg: float, lx: float, ly: float):
     return lx * ex[0] + ly * ey[0], lx * ex[1] + ly * ey[1]
 
 
+def row_to_pat_descriptor(row: dict, *, swap_local_axes: bool = PAT_SWAP_LOCAL_AXES) -> str:
+    """Convert one hatch-editor row to one AutoCAD PAT descriptor line."""
+    angle_editor = parse_angle_deg(row.get("angle"), 0.0)
+    angle_pat = (90.0 - angle_editor) % 360.0
+    x = parse_float(row.get("x"), 0.0)
+    y = parse_float(row.get("y"), 0.0)
+    dx = parse_float(row.get("dx"), 0.0)
+    dy = parse_float(row.get("dy"), 0.0)
+    if swap_local_axes:
+        x, y = y, x
+
+    # PAT expects row values in local pattern space after angle conversion.
+    parts = [fmt6(angle_pat), fmt6(x), fmt6(y), fmt6(dx), fmt6(dy)]
+    segments = list(row.get("segments") or [])
+    if segments:
+        for seg in segments:
+            kind = (seg.get("kind") or "Штрих").strip()
+            if kind == "Точка":
+                gap = max(1e-9, parse_float(seg.get("gap"), 1.0))
+                parts.append("0")
+                parts.append(fmt6(-gap))
+            else:
+                dash = max(0.0, parse_float(seg.get("dash"), 0.3))
+                gap = max(0.0, parse_float(seg.get("gap"), 3.85692))
+                if dash > 0.0:
+                    parts.append(fmt6(dash))
+                if gap > 0.0:
+                    parts.append(fmt6(-gap))
+    return ", ".join(parts)
+
+
 @dataclass
 class SegmentData:
     kind: str = "Штрих"
@@ -955,43 +986,7 @@ class HatchEditorApp(tk.Tk):
         self.current_json_path = Path(path)
 
     def _row_to_pat_descriptor(self, row):
-        # Editor math:
-        # - angle 0° points UP and grows clockwise
-        # - local X/dX are along line direction
-        # - local Y/dY are across line direction
-        #
-        # AutoCAD PAT expects:
-        # - angle from +X axis, CCW
-        # - base point and offsets in world XY
-        angle_editor = parse_angle_deg(row.get("angle"), 0.0)
-        angle_pat = (90.0 - angle_editor) % 360.0
-        x = parse_float(row.get("x"), 0.0)
-        y = parse_float(row.get("y"), 0.0)
-        dx = parse_float(row.get("dx"), 0.0)
-        dy = parse_float(row.get("dy"), 0.0)
-        # Optional legacy compatibility switch for very old blobs.
-        # Main path keeps coordinates unchanged.
-        if PAT_SWAP_LOCAL_AXES:
-            x, y = y, x
-        # PAT expects local definition row values after angle conversion:
-        # use editor-local X/Y/dX/dY directly to preserve pattern phase.
-        parts = [fmt6(angle_pat), fmt6(x), fmt6(y), fmt6(dx), fmt6(dy)]
-        segments = list(row.get("segments") or [])
-        if segments:
-            for seg in segments:
-                kind = (seg.get("kind") or "Штрих").strip()
-                if kind == "Точка":
-                    gap = max(1e-9, parse_float(seg.get("gap"), 1.0))
-                    parts.append("0")
-                    parts.append(fmt6(-gap))
-                else:
-                    dash = max(0.0, parse_float(seg.get("dash"), 0.3))
-                    gap = max(0.0, parse_float(seg.get("gap"), 3.85692))
-                    if dash > 0.0:
-                        parts.append(fmt6(dash))
-                    if gap > 0.0:
-                        parts.append(fmt6(-gap))
-        return ", ".join(parts)
+        return row_to_pat_descriptor(row, swap_local_axes=PAT_SWAP_LOCAL_AXES)
 
     def save_autocad_pat(self):
         initial_pat_name = f"{self.current_json_path.stem}.pat" if self.current_json_path else None
