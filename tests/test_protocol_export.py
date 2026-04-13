@@ -95,6 +95,16 @@ def test_protocol_build_uses_selected_order():
     assert [doc.test.tid for doc in pack.documents] == [2, 5]
 
 
+def test_protocol_build_uses_official_tsz_title_and_elevation_mark():
+    test = _test_data(7)
+    test.elevation_m = 123.456
+    test.experience_column = ExperienceColumn(0.0, 2.0, [ColumnInterval(0.0, 2.0, "ИГЭ-1")])
+    pack = build_protocol_documents(tests=[test], ige_registry={})
+
+    assert pack.documents[0].title == "Точка статического зондирования № 7"
+    assert pack.documents[0].layers[0].abs_mark_text == "123,46"
+
+
 def test_protocol_scene_uses_registered_pat_patterns_for_section_layers():
     pack = build_protocol_documents(
         tests=[_test_data()],
@@ -549,3 +559,58 @@ def test_protocol_pdf_export_draws_white_mask_above_pattern(monkeypatch, tmp_pat
     white_fills = [kwargs for _args, kwargs in fake_ax.fill_calls if kwargs.get("color") == "#ffffff"]
     assert white_fills
     assert all(kwargs.get("zorder") == 3.5 for kwargs in white_fills)
+
+
+def test_protocol_build_uses_layer_top_absolute_marks():
+    test = _test_data(4)
+    test.elevation_m = 100.87
+    test.experience_column = ExperienceColumn(
+        0.0,
+        13.3,
+        [
+            ColumnInterval(0.0, 4.4, "???-1"),
+            ColumnInterval(4.4, 8.9, "???-2"),
+            ColumnInterval(8.9, 13.3, "???-3"),
+        ],
+    )
+    pack = build_protocol_documents(tests=[test], ige_registry={})
+    rows = pack.documents[0].layers
+
+    assert rows[0].abs_mark_text == "100,87"
+    assert rows[1].abs_mark_text == "96,47"
+    assert rows[2].abs_mark_text == "91,97"
+
+
+def test_protocol_build_uses_full_generated_ige_description_when_notes_empty():
+    test = _test_data(5)
+    test.experience_column = ExperienceColumn(
+        0.0,
+        4.1,
+        [ColumnInterval(0.0, 4.1, "ИГЭ-2")],
+    )
+    pack = build_protocol_documents(
+        tests=[test],
+        ige_registry={
+            "ИГЭ-2": {
+                "soil_type": "песок",
+                "sand_kind": "мелкий",
+                "sand_water_saturation": "влажный",
+                "density_state": "средней плотности",
+            }
+        },
+    )
+    assert pack.documents[0].layers[0].description == "песок мелкий, влажный, средней плотности"
+
+
+def test_protocol_build_preserves_letter_suffix_for_circle_marker():
+    test = _test_data(3)
+    test.experience_column = ExperienceColumn(
+        0.0,
+        2.0,
+        [ColumnInterval(0.0, 2.0, "ИГЭ-3")],
+    )
+    pack = build_protocol_documents(
+        tests=[test],
+        ige_registry={"ИГЭ-3": {"label": "ИГЭ-3а", "soil_type": "суглинок"}},
+    )
+    assert pack.documents[0].layers[0].marker_text == "3А"

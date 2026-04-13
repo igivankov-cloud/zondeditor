@@ -74,5 +74,5 @@ def export_credo_zip(
                 qc_lines.append(f"{_fmt_depth(d)};{_fmt_comma(qc_mpa, 2)}")
                 fs_lines.append(f"{_fmt_depth(d)};{int(round(fs_kpa))}")
 
-            z.writestr(f"СЗ-{tid} лоб.csv", "\n".join(qc_lines))
-            z.writestr(f"СЗ-{tid} бок.csv", "\n".join(fs_lines))
+            z.writestr(f"ТСЗ-{tid} лоб.csv", "\n".join(qc_lines))
+            z.writestr(f"ТСЗ-{tid} бок.csv", "\n".join(fs_lines))

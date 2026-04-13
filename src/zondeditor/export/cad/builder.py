@@ -164,7 +164,7 @@ def build_cpt_cad_scene(
         qc_points.append((_value_to_x_mm(qc_mpa, qc_scale), y_mm))
         fs_points.append((_value_to_x_mm(fs_kpa, fs_scale), y_mm))
 
-    title = title_text or f"Зондирование {int(getattr(test, 'tid', 0) or 0)}"
+    title = title_text or f"ТСЗ-{int(getattr(test, 'tid', 0) or 0)}"
 
     # Header is moved up by +20 units compared to previous baseline around y=0..5
     qc_axis_y = 22.0

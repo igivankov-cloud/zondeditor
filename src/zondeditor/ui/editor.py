@@ -6,6 +6,8 @@
 # - _next_free_ige_ordinal/_next_free_ige_id: L1341–L1376 — генерация ближайшего свободного базового имени ИГЭ.
 # - _add_unassigned_ige_from_ribbon: L1582–L1594 — добавление нового ИГЭ с пустым типом грунта.
 # - _rename_ige_from_ribbon: L1846–L1881 — переименование ИГЭ с проверкой уникальности и обновлением ссылок в слоях.
+# - _format_tsz_header_title/_format_tsz_header_date/_format_tsz_elevation — единое отображение ТСЗ в шапке и смежных UI-текстах.
+# - _current_elevation_for_test/_set_elevation_for_test/_edit_header — единый источник истины для высотной отметки в модели, шапке и протоколе.
 # - _focus_params_tab_after_successful_import: L3910–L3926 — единый хук переключения на вкладку «Параметры» после успешного импорта.
 # - open_excel_import_dialog: L9871–L9989 — импорт Excel (БЕТА): выбор файла, импорт, авто-подстановка шага и добавление опытов.
 # - hatching integration: _draw_layer_hatch/_draw_layers_overlay_for_test — применение встроенной библиотеки hatch-паттернов.
@@ -277,7 +279,7 @@ class GeoCanvasEditor(tk.Tk):
         # (по запросу пользователей ~1 см на типичном DPI).
         self.row_h_compact_1m = 38
         self.row_h = self.row_h_default
-        self.hdr_h = 64
+        self.hdr_h = 78
         self.col_gap = 12
         self.w_depth = 64
         self.w_val = 56
@@ -634,6 +636,7 @@ class GeoCanvasEditor(tk.Tk):
             tests_snap.append({
                 "tid": t.tid,
                 "dt": t.dt,
+                "elevation_m": getattr(t, "elevation_m", None),
                 "depth": list(t.depth),
                 "qc": list(t.qc),
                 "fs": list(t.fs),
@@ -848,6 +851,7 @@ class GeoCanvasEditor(tk.Tk):
             t = TestData(
                 tid=int(d["tid"]),
                 dt=d["dt"],
+                elevation_m=self._parse_elevation_value(d.get("elevation_m", d.get("elevation", d.get("abs_mark")))),
                 depth=list(d["depth"]),
                 qc=list(d["qc"]),
                 fs=list(d["fs"]),
@@ -1395,15 +1399,13 @@ class GeoCanvasEditor(tk.Tk):
 
     def _ige_sort_key(self, ige_id: str) -> tuple[int, str]:
         ent = self._ensure_ige_entry(str(ige_id or ""))
-        try:
-            ord_num = int(ent.get("ordinal", self._ige_id_to_num(ige_id)) or self._ige_id_to_num(ige_id))
-        except Exception:
-            ord_num = self._ige_id_to_num(ige_id)
-        return max(1, ord_num), str(ige_id or "")
+        label = str(ent.get("label") or ige_id or "").strip()
+        num, suffix, raw = self._parse_ige_visual_order(label, fallback=str(ige_id or ""))
+        return num, f"{suffix}|{raw}"
 
     def _extract_base_ige_num(self, raw_name: str) -> int | None:
         name = str(raw_name or "").strip()
-        m = re.fullmatch(r"ИГЭ-(\d+)", name)
+        m = re.fullmatch(r"\u0418\u0413\u042d-(\d+)[A-Za-z\u0410-\u042f\u0430-\u044f]*", name)
         if not m:
             return None
         try:
@@ -1411,6 +1413,18 @@ class GeoCanvasEditor(tk.Tk):
         except Exception:
             return None
         return n if n > 0 else None
+
+    def _parse_ige_visual_order(self, raw_name: str, *, fallback: str = "") -> tuple[int, str, str]:
+        source = str(raw_name or "").strip() or str(fallback or "").strip()
+        match = re.fullmatch(r"\u0418\u0413\u042d-(\d+)([A-Za-z\u0410-\u042f\u0430-\u044f]*)", source)
+        if match:
+            try:
+                num = max(1, int(match.group(1)))
+            except Exception:
+                num = self._ige_id_to_num(source)
+            suffix = str(match.group(2) or "").strip().upper()
+            return num, suffix, source
+        return self._ige_id_to_num(source), "", source
 
     def _used_base_ige_ordinals(self) -> set[int]:
         used: set[int] = set()
@@ -2189,7 +2203,7 @@ class GeoCanvasEditor(tk.Tk):
         compact_chk = ttk.Checkbutton(btns, text="Свернуть 1 м", variable=self._compact_1m_var, command=self._toggle_compact_1m_from_ui)
         compact_chk.grid(row=0, column=5, padx=6)
         ToolTip(compact_chk, "Свернуть таблицу/графики в интервалы 1 м")
-        make_btn(btns, "➕", "Добавить зондирование", self.add_test).grid(row=0, column=6, padx=4)
+        make_btn(btns, "➕", "Добавить ТСЗ", self.add_test).grid(row=0, column=6, padx=4)
 
         # Right: calc params
         right = ttk.Frame(ribbon)
@@ -2492,7 +2506,7 @@ class GeoCanvasEditor(tk.Tk):
         _leg_item(leg, GUI_PURPLE, "исправлено")
         _leg_item(leg, GUI_YELLOW, "отсутствуют значения")
         _leg_item(leg, GUI_GREEN, "откорректировано")
-        _leg_item(leg, GUI_RED, "некорректный опыт")
+        _leg_item(leg, GUI_RED, "некорректная ТСЗ")
 
         self.status = ttk.Label(self, text="Готов.", padding=(12, 6))
 
@@ -2730,6 +2744,60 @@ class GeoCanvasEditor(tk.Tk):
                 self.step_by_tid[int(tid)] = step_f
         except Exception:
             pass
+
+    def _format_tsz_header_title(self, t) -> str:
+        tid = str(getattr(t, "tid", "") or "").strip()
+        return f"ТСЗ-{tid}" if tid else "ТСЗ"
+
+    def _format_tsz_long_title(self, t) -> str:
+        tid = str(getattr(t, "tid", "") or "").strip()
+        return f"Точка статического зондирования № {tid}" if tid else "Точка статического зондирования"
+
+    def _format_tsz_header_date(self, value) -> str:
+        parsed = value if isinstance(value, (_dt.date, _dt.datetime)) else _try_parse_dt(str(value or ""))
+        if isinstance(parsed, _dt.datetime):
+            return parsed.strftime("%d.%m.%Y")
+        if isinstance(parsed, _dt.date):
+            return parsed.strftime("%d.%m.%Y")
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        for fmt in ("%d.%m.%Y", "%d.%m.%y", "%Y-%m-%d"):
+            try:
+                return _dt.datetime.strptime(raw, fmt).strftime("%d.%m.%Y")
+            except Exception:
+                pass
+        if " " in raw:
+            raw = raw.split(" ", 1)[0]
+        return raw
+
+    def _parse_elevation_value(self, value) -> float | None:
+        if value in (None, ""):
+            return None
+        try:
+            parsed = float(str(value).strip().replace(",", "."))
+        except Exception:
+            return None
+        if parsed < -100.0 or parsed > 4000.0:
+            return None
+        return round(parsed, 2)
+
+    def _current_elevation_for_test(self, t) -> float | None:
+        for key in ("elevation_m", "elevation", "abs_mark", "absolute_mark"):
+            parsed = self._parse_elevation_value(getattr(t, key, None))
+            if parsed is not None:
+                return parsed
+        return None
+
+    def _set_elevation_for_test(self, t, value) -> None:
+        setattr(t, "elevation_m", self._parse_elevation_value(value))
+
+    def _format_tsz_elevation(self, t) -> str:
+        elevation = self._current_elevation_for_test(t)
+        if elevation is None:
+            return "Отм.: —"
+        text = f"{elevation:.2f}"
+        return f"Отм.: {text}"
 
     def _default_common_params(self, geo_kind: str | None = None) -> dict[str, str]:
         g = str(geo_kind or getattr(self, "geo_kind", "K2") or "K2").upper()
@@ -3765,7 +3833,7 @@ class GeoCanvasEditor(tk.Tk):
         frm.pack(fill="both", expand=True)
 
         ntests = len(tests_list or [])
-        ttk.Label(frm, text=f"В файле GEO {ntests} опытов статического зондирования.", font=("Segoe UI", 10, "bold"))\
+        ttk.Label(frm, text=f"В файле GEO {ntests} точек статического зондирования.", font=("Segoe UI", 10, "bold"))\
             .grid(row=0, column=0, columnspan=5, sticky="w", pady=(0, 8))
 
         # --- переменные ---
@@ -3845,7 +3913,7 @@ class GeoCanvasEditor(tk.Tk):
         else:
             table = table_wrap
 
-        ttk.Label(table, text="Опыт", font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w", padx=(0, 10))
+        ttk.Label(table, text="ТСЗ", font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w", padx=(0, 10))
         ttk.Label(table, text="Нач. глубина, м", font=("Segoe UI", 9, "bold")).grid(row=0, column=1, sticky="w")
         ttk.Label(table, text="Шаг, см", font=("Segoe UI", 9, "bold")).grid(row=0, column=2, sticky="w", padx=(12, 0))
         ttk.Label(table, text="Дата/время", font=("Segoe UI", 9, "bold")).grid(row=0, column=3, sticky="w", padx=(12, 0))
@@ -3890,7 +3958,7 @@ class GeoCanvasEditor(tk.Tk):
         for i, t in enumerate(tests_list or [], start=1):
             tid = int(getattr(t, "tid", 0) or 0)
 
-            ttk.Label(table, text=f"СЗ-{tid}").grid(row=i, column=0, sticky="w", padx=(0, 10), pady=2)
+            ttk.Label(table, text=f"ТСЗ-{tid}").grid(row=i, column=0, sticky="w", padx=(0, 10), pady=2)
 
             try:
                 init_v = float(self._current_start_depth_for_test(t))
@@ -4127,7 +4195,7 @@ class GeoCanvasEditor(tk.Tk):
                     except Exception:
                         dv = float(self._current_start_depth_for_test(t))
                 if not (0.0 <= dv <= 4.0):
-                    msg_var.set(f"СЗ-{tid}: начальная глубина должна быть 0..4 м.")
+                    msg_var.set(f"ТСЗ-{tid}: начальная глубина должна быть 0..4 м.")
                     return
                 new_depth0[int(tid)] = float(dv)
             self.depth0_by_tid = new_depth0
@@ -4143,14 +4211,14 @@ class GeoCanvasEditor(tk.Tk):
                         try:
                             step_cm_row = float(raw_step)
                         except Exception:
-                            msg_var.set(f"СЗ-{tid}: шаг должен быть числом (см).")
+                            msg_var.set(f"ТСЗ-{tid}: шаг должен быть числом (см).")
                             return
                         if step_cm_row <= 0:
-                            msg_var.set(f"СЗ-{tid}: шаг должен быть больше 0.")
+                            msg_var.set(f"ТСЗ-{tid}: шаг должен быть больше 0.")
                             return
                         step_m_row = float(step_cm_row) / 100.0
                     if k4_mode and abs(float(source_step_by_tid.get(int(tid), step_m_row)) - 0.05) < 1e-6 and float(step_m_row) > 0.05:
-                        msg_var.set(f"СЗ-{tid}: для K4 нельзя менять шаг 0.05 → 0.10.")
+                        msg_var.set(f"ТСЗ-{tid}: для K4 нельзя менять шаг 0.05 → 0.10.")
                         return
                     new_step_by_tid[int(tid)] = float(step_m_row)
                     self._set_step_for_test(t, step_m_row)
@@ -4207,7 +4275,7 @@ class GeoCanvasEditor(tk.Tk):
                         try:
                             gval = float(raw)
                         except Exception:
-                            msg_var.set(f"СЗ-{tid}: УГВ должен быть числом (например 2.5).")
+                            msg_var.set(f"ТСЗ-{tid}: УГВ должен быть числом (например 2.5).")
                             return
                     new_gwl[int(tid)] = {"enabled": enabled, "value": gval}
                 self.gwl_by_tid = new_gwl
@@ -4396,7 +4464,7 @@ class GeoCanvasEditor(tk.Tk):
                 self._sync_mode_step_from_loaded_tests()
                 if getattr(self, "ribbon_view", None):
                     self.ribbon_view.set_common_params(self._current_common_params(), geo_kind=str(self.geo_kind))
-                self._update_status_loaded(prefix=f"GXL: загружено опытов {len(self.tests)}")
+                self._update_status_loaded(prefix=f"GXL: загружено ТСЗ {len(self.tests)}")
 
                 self._auto_scan_after_load()
                 self._focus_params_tab_after_successful_import("GXL")
@@ -4514,7 +4582,7 @@ class GeoCanvasEditor(tk.Tk):
             self._apply_calibration_from_meta(meta_rows)
 
             self._sync_mode_step_from_loaded_tests()
-            self._update_status_loaded(prefix=f"GEO: загружено опытов {len(self.tests)}")
+            self._update_status_loaded(prefix=f"GEO: загружено ТСЗ {len(self.tests)}")
 
             self._auto_scan_after_load()
             self._focus_params_tab_after_successful_import("GEO")
@@ -4566,7 +4634,7 @@ class GeoCanvasEditor(tk.Tk):
 
             self.redo_stack.clear()
 
-            self._update_status_loaded(f"Загружено опытов {len(self.tests)} шт.")
+            self._update_status_loaded(f"Загружено ТСЗ {len(self.tests)} шт.")
 
     def _focus_params_tab_after_successful_import(self, source: str = "") -> None:
         """Единый post-import хук: переводим UI на вкладку «Параметры» только при успешном импорте."""
@@ -4684,7 +4752,7 @@ class GeoCanvasEditor(tk.Tk):
     def _footer_text_from_report(report) -> str:
         parts = []
         if int(getattr(report, "tests_invalid", 0) or 0):
-            parts.append(f"Некорректный опыт {int(report.tests_invalid)}")
+            parts.append(f"Некорректная ТСЗ {int(report.tests_invalid)}")
         if int(getattr(report, "cells_missing", 0) or 0):
             parts.append(f"отсутствуют значения {int(report.cells_missing)}")
         return ", ".join(parts)
@@ -4783,13 +4851,13 @@ class GeoCanvasEditor(tk.Tk):
             if entry.type == "invalid_zero_run":
                 d0 = _depth_text(t, int(entry.row))
                 d1 = _depth_text(t, int(entry.row_end))
-                text = f"Опыт {entry.test_id} — некорректный: нули более 5 раз подряд, интервал {d0}–{d1}"
+                text = f"ТСЗ-{entry.test_id} — некорректная: нули более 5 раз подряд, интервал {d0}–{d1}"
             elif entry.type == "missing_qc":
-                text = f"Опыт {entry.test_id}, глубина {_depth_text(t, int(entry.row))} — отсутствует значение qc"
+                text = f"ТСЗ-{entry.test_id}, глубина {_depth_text(t, int(entry.row))} — отсутствует значение qc"
             elif entry.type == "missing_fs":
-                text = f"Опыт {entry.test_id}, глубина {_depth_text(t, int(entry.row))} — отсутствует значение fs"
+                text = f"ТСЗ-{entry.test_id}, глубина {_depth_text(t, int(entry.row))} — отсутствует значение fs"
             else:
-                text = f"Опыт {entry.test_id} — опыт помечен как некорректный по дополнительной диагностике"
+                text = f"ТСЗ-{entry.test_id} — точка помечена как некорректная по дополнительной диагностике"
             items.append({
                 "test_id": int(entry.test_id),
                 "row": int(entry.row),
@@ -4975,7 +5043,7 @@ class GeoCanvasEditor(tk.Tk):
 
         # ---- dialog ----
         dlg = tk.Toplevel(self)
-        dlg.title("Добавить зондирование")
+        dlg.title("Добавить ТСЗ")
         dlg.transient(self)
         dlg.grab_set()
 
@@ -5090,7 +5158,7 @@ class GeoCanvasEditor(tk.Tk):
             # запрет коллизий по tid
             existing_ids = {t.tid for t in self.tests}
             if tid in existing_ids:
-                messagebox.showwarning("Ошибка", f"Зондирование №{tid} уже существует.", parent=dlg)
+                messagebox.showwarning("Ошибка", f"ТСЗ-{tid} уже существует.", parent=dlg)
                 return
 
             d0 = _f(v_d0.get())
@@ -5207,7 +5275,7 @@ class GeoCanvasEditor(tk.Tk):
             self.after_idle(_scroll_to_new)
         except Exception:
             _scroll_to_new()
-        self.status.config(text=f"Добавлена новая зондирование {tid}. (В GEO-сохранение не попадёт — только Excel)")
+        self.status.config(text=f"Добавлена новая ТСЗ-{tid}. (В GEO-сохранение не попадёт — только Excel)")
 
         try:
             self._set_footer_from_scan()
@@ -5343,10 +5411,10 @@ class GeoCanvasEditor(tk.Tk):
 
     def _collapsed_header_width(self) -> int:
         # Компактная ширина для header-only карточки (чекбокс + title/datetime + иконки).
-        return max(170, min(220, int(self._table_col_width())))
+        return max(190, min(230, int(self._table_col_width())))
 
     def _collapsed_header_row_height(self) -> int:
-        return 44
+        return 68
 
     def _is_test_collapsed(self, ti: int) -> bool:
         if ti is None or ti < 0 or ti >= len(getattr(self, "tests", []) or []):
@@ -6036,11 +6104,34 @@ class GeoCanvasEditor(tk.Tk):
     def _experience_column_ige_display(self, ige_id: str) -> str:
         resolved = self._resolve_existing_ige_id(ige_id)
         if resolved is None:
-            return str(ige_id or "ИГЭ-1")
-        return self._ige_display_label(resolved)
+            return str(ige_id or "???-1")
+        ent = self._ensure_ige_entry(resolved)
+        base = self._ige_display_label(resolved)
+        soil_name = str(ent.get("soil_type") or "").strip()
+        if not soil_name:
+            return base
+        detail_parts: list[str] = [soil_name]
+        profile = get_ige_profile(
+            soil_name=soil_name,
+            soil_code=str(ent.get("soil_code") or "").strip(),
+            params=ent,
+        )
+        if profile.ui_profile == "sand_calculable":
+            sand_kind = str(ent.get("sand_kind") or "").strip()
+            if sand_kind:
+                detail_parts.append(sand_kind)
+        elif profile.ui_profile in {"clay_supes_calculable", "clay_calculable"}:
+            consistency = str(ent.get("consistency") or "").strip()
+            if consistency:
+                detail_parts.append(consistency)
+        elif profile.ui_profile == "fill_calculable":
+            fill_subtype = str(ent.get("fill_subtype") or "").strip()
+            if fill_subtype:
+                detail_parts.append(fill_subtype)
+        return f"{base} ({', '.join(detail_parts)})"
 
     def _experience_column_ige_choices(self) -> list[tuple[str, str]]:
-        ids = sorted(self.ige_registry.keys(), key=self._ige_id_to_num)
+        ids = sorted(self.ige_registry.keys(), key=self._ige_sort_key)
         return [(ige_id, self._experience_column_ige_display(ige_id)) for ige_id in ids]
 
     def _validate_experience_column_iges(self, column: ExperienceColumn) -> str | None:
@@ -6867,13 +6958,13 @@ class GeoCanvasEditor(tk.Tk):
         # --- Header controls (icons / checkbox) ---
         if kind == "edit":
             if self._is_test_locked(int(ti)):
-                self._set_status("Опыт заблокирован")
+                self._set_status("ТСЗ заблокирована")
                 return
             self._edit_header(ti)
             return
         if kind == "rename":
             if self._is_test_locked(int(ti)):
-                self._set_status("Опыт заблокирован")
+                self._set_status("ТСЗ заблокирована")
                 return
             self._edit_header_title(ti)
             return
@@ -6884,13 +6975,13 @@ class GeoCanvasEditor(tk.Tk):
             return
         if kind == "dup":
             if not self._header_action_buttons_enabled(int(ti)):
-                self._set_status("Кнопка недоступна для свёрнутого/заблокированного опыта")
+                self._set_status("Кнопка недоступна для свёрнутой/заблокированной ТСЗ")
                 return
             self._duplicate_test(ti)
             return
         if kind == "trash":
             if not self._header_action_buttons_enabled(int(ti)):
-                self._set_status("Кнопка недоступна для свёрнутого/заблокированного опыта")
+                self._set_status("Кнопка недоступна для свёрнутой/заблокированной ТСЗ")
                 return
             self._delete_test(ti)
             return
@@ -6912,13 +7003,13 @@ class GeoCanvasEditor(tk.Tk):
 
         if kind == "layer_plus":
             if self._is_test_locked(int(ti)):
-                self._set_status("Опыт заблокирован")
+                self._set_status("ТСЗ заблокирована")
                 return
             self._insert_layer_at_boundary(ti, row)
             return
         if kind == "layer_plus_top":
             if self._is_test_locked(int(ti)):
-                self._set_status("Опыт заблокирован")
+                self._set_status("ТСЗ заблокирована")
                 return
             if not self._can_insert_layer_from_top(int(ti)):
                 return
@@ -6926,7 +7017,7 @@ class GeoCanvasEditor(tk.Tk):
             return
         if kind == "layer_plus_bottom":
             if self._is_test_locked(int(ti)):
-                self._set_status("Опыт заблокирован")
+                self._set_status("ТСЗ заблокирована")
                 return
             if not self._can_insert_layer_from_bottom(int(ti)):
                 return
@@ -6934,54 +7025,54 @@ class GeoCanvasEditor(tk.Tk):
             return
         if kind == "layer_minus_top":
             if self._is_test_locked(int(ti)):
-                self._set_status("Опыт заблокирован")
+                self._set_status("ТСЗ заблокирована")
                 return
             self._push_undo()
             self._remove_layer_from_top(ti)
             return
         if kind == "layer_minus_bottom":
             if self._is_test_locked(int(ti)):
-                self._set_status("Опыт заблокирован")
+                self._set_status("ТСЗ заблокирована")
                 return
             self._push_undo()
             self._remove_layer_from_bottom(ti)
             return
         if kind == "layer_minus":
             if self._is_test_locked(int(ti)):
-                self._set_status("Опыт заблокирован")
+                self._set_status("ТСЗ заблокирована")
                 return
             self._push_undo()
             self._remove_layer_at_index(int(ti), int(row))
             return
         if kind == "layer_boundary":
             if self._is_test_locked(int(ti)):
-                self._set_status("Опыт заблокирован")
+                self._set_status("ТСЗ заблокирована")
                 return
             self._push_undo()
             self._layer_drag = {"ti": int(ti), "boundary": int(row), "mode": "boundary"}
             return
         if kind == "layer_column_end":
             if self._is_test_locked(int(ti)):
-                self._set_status("Опыт заблокирован")
+                self._set_status("ТСЗ заблокирована")
                 return
             self._push_undo()
             self._layer_drag = {"ti": int(ti), "boundary": int(row), "mode": "column_end"}
             return
         if kind == "layer_boundary_depth_edit":
             if self._is_test_locked(int(ti)):
-                self._set_status("Опыт заблокирован")
+                self._set_status("ТСЗ заблокирована")
                 return
             self._open_boundary_depth_editor(int(ti), int(row))
             return "break"
         if kind == "layer_column_end_depth_edit":
             if self._is_test_locked(int(ti)):
-                self._set_status("Опыт заблокирован")
+                self._set_status("ТСЗ заблокирована")
                 return
             self._open_boundary_depth_editor(int(ti), int(row))
             return "break"
         if kind == "layer_interval":
             if self._is_test_locked(int(ti)):
-                self._set_status("Опыт заблокирован")
+                self._set_status("ТСЗ заблокирована")
                 return
             # Fallback: если hit-test попал в interval рядом с чипом ИГЭ,
             # открываем picker как для label-клика.
@@ -7016,7 +7107,7 @@ class GeoCanvasEditor(tk.Tk):
             return
         if kind == "layer_label":
             if self._is_test_locked(int(ti)):
-                self._set_status("Опыт заблокирован")
+                self._set_status("ТСЗ заблокирована")
                 return
             meta = field if isinstance(field, dict) else {}
             self._ige_picker_log(f"click_resolved ti={int(ti)} source=layer_label depth={float(meta.get('depth', 0.0) if meta else 0.0):.4f}")
@@ -7024,7 +7115,7 @@ class GeoCanvasEditor(tk.Tk):
             return
         if kind == "meter_row":
             if self._is_test_locked(int(ti)):
-                self._set_status("Опыт заблокирован")
+                self._set_status("ТСЗ заблокирована")
                 return
             self._toggle_meter_expanded(int(field), push_undo=True)
             return
@@ -7034,7 +7125,7 @@ class GeoCanvasEditor(tk.Tk):
             mp = (getattr(self, "_grid_row_maps", {}) or {}).get(ti, {})
             # Depth: single click on the first depth cell opens "start depth" editor
             if self._is_test_locked(int(ti)):
-                self._set_status("Опыт заблокирован")
+                self._set_status("ТСЗ заблокирована")
                 return
 
             if field == "depth":
@@ -7059,7 +7150,7 @@ class GeoCanvasEditor(tk.Tk):
                 if not self._is_real_interval_cell(int(ti), int(row), str(field)):
                     return
                 if self._is_test_locked(int(ti)):
-                    self._set_status("Опыт заблокирован")
+                    self._set_status("ТСЗ заблокирована")
                     return
                 self._begin_edit(ti, data_row, field, display_row=row)
                 self.schedule_graph_redraw()
@@ -7196,16 +7287,16 @@ class GeoCanvasEditor(tk.Tk):
         win.overrideredirect(True)
         values = []
         value_to_ige_id: dict[str, str] = {}
-        ids = sorted(self.ige_registry.keys(), key=self._ige_id_to_num)
+        ids = sorted(self.ige_registry.keys(), key=self._ige_sort_key)
         for ige_id in ids:
             self._ensure_ige_entry(ige_id)
-            display = self._ige_display_label(ige_id)
+            display = self._experience_column_ige_display(ige_id)
             values.append(display)
             value_to_ige_id[display] = str(ige_id)
         cb = ttk.Combobox(win, state="readonly", values=values)
         current_ige = self._layer_ige_id(target)
         self._ensure_ige_entry(current_ige)
-        current_label = self._ige_display_label(current_ige)
+        current_label = self._experience_column_ige_display(current_ige)
         if current_label in values:
             cb.set(current_label)
         def _canvas_to_root(xc: float, yc: float) -> tuple[int, int]:
@@ -7331,13 +7422,13 @@ class GeoCanvasEditor(tk.Tk):
             intervals=[ColumnInterval(**column_interval_to_dict(item)) for item in column.intervals],
         )
         win = tk.Toplevel(self)
-        win.title(f"Редактор колонки опыта — СЗ-{getattr(t, 'tid', ti)}")
+        win.title(f"Редактор колонки ТСЗ — ТСЗ-{getattr(t, 'tid', ti)}")
         win.transient(self)
         win.grab_set()
         win.resizable(True, False)
         frm = ttk.Frame(win, padding=12)
         frm.pack(fill="both", expand=True)
-        ttk.Label(frm, text="Интервалы колонки опыта", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        ttk.Label(frm, text="Интервалы колонки ТСЗ", font=("Segoe UI", 10, "bold")).pack(anchor="w")
 
         end_var = tk.StringVar(value=f"{float(working_column.column_depth_end):.2f}")
         end_row = ttk.Frame(frm)
@@ -7561,7 +7652,7 @@ class GeoCanvasEditor(tk.Tk):
         if ti < 0 or ti >= len(self.tests):
             return
         if self._is_test_locked(ti):
-            self._set_status("Опыт заблокирован")
+            self._set_status("ТСЗ заблокирована")
             return
         self._close_boundary_depth_editor()
         self._editor_just_opened = True
@@ -8011,7 +8102,7 @@ class GeoCanvasEditor(tk.Tk):
             self._active_test_idx = (len(self.tests) - 1) if self.tests else None
         self._redraw()
         self.schedule_graph_redraw()
-        self.status.config(text=f"Опыт {t.tid} удалён.")
+        self.status.config(text=f"ТСЗ-{t.tid} удалена.")
 
 
     def _duplicate_test(self, ti: int):
@@ -8111,7 +8202,7 @@ class GeoCanvasEditor(tk.Tk):
             _scroll_to_new()
 
         try:
-            self.status.config(text=f"Опыт {getattr(src,'tid','?')} продублирован → {new_id} (+10 мин).")
+            self.status.config(text=f"ТСЗ-{getattr(src,'tid','?')} продублирована → ТСЗ-{new_id} (+10 мин).")
         except Exception:
             pass
 
@@ -8325,13 +8416,8 @@ class GeoCanvasEditor(tk.Tk):
                 continue
             dock.create_rectangle(x0, y0, x1, y1, fill=hdr_fill, outline=GUI_GRID)
             dt_val = getattr(t, "dt", "") or ""
-            if isinstance(dt_val, datetime.datetime):
-                dt_line = dt_val.strftime("%d.%m.%y %H:%M")
-            elif isinstance(dt_val, datetime.date):
-                dt_line = dt_val.strftime("%d.%m.%y")
-            else:
-                dt_line = str(dt_val).strip()
-                dt_line = re.sub(r"(\d{2}:\d{2}):\d{2}\b", r"\1", dt_line)
+            dt_line = self._format_tsz_header_date(dt_val)
+            elev_line = self._format_tsz_elevation(t)
             cb_s = 12
             cb_x0 = x0 + 6
             cb_y0 = y0 + 6
@@ -8341,9 +8427,13 @@ class GeoCanvasEditor(tk.Tk):
             lock_x = (x1 - 14)
             ico_y = y0 + 12
             max_title_x = lock_x - 8
-            dock.create_text(title_x, y0 + 12, anchor="w", text=f"Опыт №{t.tid}", font=("Segoe UI", 9, "bold"), fill=hdr_text, width=max(24, max_title_x - title_x))
+            dock_line1_y = y0 + 10
+            dock_line_gap = 13
+            dock.create_text(title_x, dock_line1_y, anchor="w", text=self._format_tsz_header_title(t), font=("Segoe UI", 9, "bold"), fill=hdr_text, width=max(24, max_title_x - title_x))
             dock.create_text(lock_x, ico_y, text=("🔒" if lock_on else "🔓"), font=("Segoe UI", 10), fill=hdr_icon, anchor="center")
-            dock.create_text(title_x, y0 + 30, anchor="w", text=dt_line, font=("Segoe UI", 8), fill=hdr_text)
+            dock.create_text(title_x, dock_line1_y + dock_line_gap, anchor="w", text=dt_line, font=("Segoe UI", 8), fill=hdr_text)
+            dock.create_text(title_x, dock_line1_y + dock_line_gap * 2, anchor="w", text=elev_line, font=("Segoe UI", 8), fill=hdr_text)
+            dock.create_text(title_x, dock_line1_y + dock_line_gap * 3, anchor="w", text="Н, м", font=("Segoe UI", 8), fill=hdr_text)
             dock_bottom = max(dock_bottom, y1)
 
         try:
@@ -8376,20 +8466,12 @@ class GeoCanvasEditor(tk.Tk):
             self.hcanvas.create_rectangle(x0, y0, x1, y1, fill=hdr_fill, outline=GUI_GRID)
 
             dt_val = getattr(t, "dt", "") or ""
-            # t.dt может быть строкой из GEO или уже datetime (после редактирования)
-            if isinstance(dt_val, datetime.datetime):
-                dt_line = dt_val.strftime("%d.%m.%Y %H:%M:%S")
-            elif isinstance(dt_val, datetime.date):
-                dt_line = dt_val.strftime("%d.%m.%Y 00:00:00")
-            else:
-                dt_line = str(dt_val).strip()
-
-            # display without seconds (HH:MM)
-            dt_line = re.sub(r"(\d{2}:\d{2}):\d{2}\b", r"\1", dt_line)
+            dt_line = self._format_tsz_header_date(dt_val)
+            elev_line = self._format_tsz_elevation(t)
 
             # --- export checkbox (Win11 style) ---
             top_pad = 8
-            row_center_y = y0 + top_pad + 6  # aligns checkbox and title vertically
+            row_center_y = y0 + top_pad + 5
             cb_s = 14
             cb_x0 = x0 + 6
             cb_y0 = int(row_center_y - cb_s/2)
@@ -8402,13 +8484,24 @@ class GeoCanvasEditor(tk.Tk):
                                          cb_x0 + 11, cb_y0 + 4,
                                          fill="#2563eb", width=2, capstyle="round", joinstyle="round")
 
-            # Title and datetime
+            # Left text block uses one vertical rhythm for title/date/elevation/H,m
             title_x = cb_x0 + cb_s + 8
-            self.hcanvas.create_text(title_x, row_center_y, anchor="w",
-                                     text=f"Опыт №{t.tid}", font=("Segoe UI", 9, "bold"), fill=hdr_text)
+            text_line1_y = y0 + 11
+            text_line2_y = y0 + 28
+            text_line3_y = y0 + 43
+            text_line4_y = y0 + 66
+            self.hcanvas.create_text(title_x, text_line1_y, anchor="w",
+                                     text=self._format_tsz_header_title(t), font=("Segoe UI", 9, "bold"), fill=hdr_text)
             if dt_line:
-                self.hcanvas.create_text(title_x, row_center_y + 18, anchor="w",
+                self.hcanvas.create_text(title_x, text_line2_y, anchor="w",
                                          text=dt_line, font=("Segoe UI", 9), fill=hdr_text)
+            else:
+                self.hcanvas.create_text(title_x, text_line2_y, anchor="w",
+                                         text="", font=("Segoe UI", 9), fill=hdr_text)
+            self.hcanvas.create_text(title_x, text_line3_y, anchor="w",
+                                     text=elev_line, font=("Segoe UI", 9), fill=hdr_text)
+            self.hcanvas.create_text(title_x, text_line4_y, anchor="sw",
+                                     text="Н, м", font=("Segoe UI", 9), fill=hdr_text)
 
             # header actions (Win11-like icons + hover)
             ico_y = y0 + 14
@@ -8434,7 +8527,7 @@ class GeoCanvasEditor(tk.Tk):
             self.hcanvas.create_text(trash_x, ico_y, text=ICON_DELETE, font=ico_font, fill=(hdr_icon if actions_enabled else "#b6b6b6"), anchor="center")
 
             # колонка заголовков (H/qc/fs) — в шапке и фиксирована
-            sh_y = y0 + self.hdr_h - top_pad
+            sh_y = text_line4_y
             ptype = str(getattr(self, "project_type", "") or "")
             if ptype == "type1_mech":
                 q_hdr = "Qc (лоб)"
@@ -8445,11 +8538,11 @@ class GeoCanvasEditor(tk.Tk):
             else:
                 q_hdr = "qc (лоб)"
                 f_hdr = "fs (бок)"
-            self.hcanvas.create_text(x0 + self.w_depth / 2, sh_y, text="H, м", font=("Segoe UI", 9), fill=hdr_text)
-            self.hcanvas.create_text(x0 + self.w_depth + self.w_val / 2, sh_y, text=q_hdr, font=("Segoe UI", 9), fill=hdr_text)
-            self.hcanvas.create_text(x0 + self.w_depth + self.w_val + self.w_val / 2, sh_y, text=f_hdr, font=("Segoe UI", 9), fill=hdr_text)
+            label_pad_x = 4
+            self.hcanvas.create_text(x0 + self.w_depth + label_pad_x, sh_y, text=q_hdr, font=("Segoe UI", 9), fill=hdr_text, anchor="sw")
+            self.hcanvas.create_text(x0 + self.w_depth + self.w_val + label_pad_x, sh_y, text=f_hdr, font=("Segoe UI", 9), fill=hdr_text, anchor="sw")
             if str(getattr(self, "geo_kind", "K2") or "K2").upper() == "K4" and bool(getattr(self, "show_inclinometer", True)):
-                self.hcanvas.create_text(x0 + self.w_depth + self.w_val*2 + self.w_val/2, sh_y, text="U", font=("Segoe UI", 9), fill=hdr_text)
+                self.hcanvas.create_text(x0 + self.w_depth + self.w_val * 2 + label_pad_x, sh_y, text="U", font=("Segoe UI", 9), fill=hdr_text, anchor="sw")
 
             # --- ТАБЛИЦА (canvas) ---
             mp = self._grid_row_maps.get(ti, {})
@@ -8657,7 +8750,7 @@ class GeoCanvasEditor(tk.Tk):
                     lock_x = x1 - 14
                     if title_x <= cx <= (lock_x - 8) and (y0 + 4) <= cy <= (y0 + 20):
                         return ("rename", ti, None, None)
-                    if title_x <= cx <= (lock_x - 8) and (y0 + 22) <= cy <= (y0 + 38):
+                    if title_x <= cx <= (lock_x - 8) and (y0 + 22) <= cy <= (y0 + 53):
                         return ("edit", ti, None, None)
                     return ("header", ti, None, None)
             return None
@@ -8694,7 +8787,7 @@ class GeoCanvasEditor(tk.Tk):
                     lock_x = x1 - 66
                     if title_x <= cx <= (lock_x - 8) and (row_center_y - 9) <= cy <= (row_center_y + 9):
                         return ("rename", ti, None, None)
-                    if title_x <= cx <= (lock_x - 8) and (row_center_y + 9) <= cy <= (row_center_y + 27):
+                    if title_x <= cx <= (lock_x - 8) and (row_center_y + 9) <= cy <= (row_center_y + 43):
                         return ("edit", ti, None, None)
                     return ("header", ti, None, None)
             return None
@@ -8833,7 +8926,7 @@ class GeoCanvasEditor(tk.Tk):
             self.schedule_graph_redraw()
         if kind == "meter_row":
             if self._is_test_locked(int(ti)):
-                self._set_status("Опыт заблокирован")
+                self._set_status("ТСЗ заблокирована")
                 return
             self._toggle_meter_expanded(int(field), push_undo=True)
             return
@@ -8916,7 +9009,7 @@ class GeoCanvasEditor(tk.Tk):
         if kind != "cell" or ti is None or row is None:
             return
         if self._is_test_locked(int(ti)):
-            self._set_status("Опыт заблокирован")
+            self._set_status("ТСЗ заблокирована")
             return
 
         # Не показываем меню на пустых ячейках
@@ -9182,7 +9275,7 @@ class GeoCanvasEditor(tk.Tk):
         self.schedule_graph_redraw()
 
         try:
-            self._set_status(f"Удалено строк: {r1 - r0 + 1} (опыт {ti+1})")
+            self._set_status(f"Удалено строк: {r1 - r0 + 1} (ТСЗ-{getattr(self.tests[ti], 'tid', ti + 1)})")
         except Exception:
             pass
 
@@ -9270,6 +9363,46 @@ class GeoCanvasEditor(tk.Tk):
         )
         mm_entry.pack(side="left")
 
+        current_elevation = self._current_elevation_for_test(t)
+        ttk.Label(win, text="Отм.").grid(row=2, column=0, sticky="w", padx=PADX, pady=2)
+        elev_var = tk.StringVar(
+            master=self,
+            value=("" if current_elevation is None else f"{current_elevation:.2f}".rstrip("0").rstrip(".")),
+        )
+        def _validate_elevation_key(raw: str) -> bool:
+            text = str(raw or "").strip()
+            if not text:
+                return True
+            return re.fullmatch(r"[+-]?\d*(?:[.,]\d{0,2})?", text) is not None
+
+        elev_entry = ttk.Entry(
+            win,
+            textvariable=elev_var,
+            width=12,
+            validate="key",
+            validatecommand=(win.register(_validate_elevation_key), "%P"),
+        )
+        elev_entry.grid(row=2, column=1, columnspan=2, sticky="w", padx=(0, PADX), pady=2)
+        elev_error_var = tk.StringVar(master=self, value="")
+        ttk.Label(win, textvariable=elev_error_var, foreground="#a94442").grid(
+            row=3, column=0, columnspan=3, sticky="w", padx=PADX, pady=(0, 2)
+        )
+
+        def _validate_elevation_inline(*_args):
+            raw = str(elev_var.get() or "").strip()
+            if not raw:
+                elev_error_var.set("")
+                return
+            if re.fullmatch(r"[+-]?\d+(?:[.,]\d{0,2})?", raw) is None:
+                elev_error_var.set("Не больше двух знаков после запятой.")
+                return
+            if self._parse_elevation_value(raw) is None:
+                elev_error_var.set("Допустимый диапазон: от -100 до 4000.")
+                return
+            elev_error_var.set("")
+
+        elev_var.trace_add("write", _validate_elevation_inline)
+
 
         def apply():
             try:
@@ -9289,11 +9422,24 @@ class GeoCanvasEditor(tk.Tk):
                 messagebox.showwarning("Внимание", "Время должно быть в диапазоне 00:00–23:59.", parent=win)
                 return
 
+            elev_raw = str(elev_var.get() or "").strip()
+            if elev_raw:
+                if re.fullmatch(r"[+-]?\d+(?:[.,]\d{1,2})?", elev_raw) is None:
+                    elev_error_var.set("Не больше двух знаков после запятой.")
+                    return
+                elevation = self._parse_elevation_value(elev_raw)
+                if elevation is None:
+                    elev_error_var.set("Допустимый диапазон: от -100 до 4000.")
+                    return
+            else:
+                elevation = None
+
             dt_text = f"{d.day:02d}.{d.month:02d}.{d.year:04d} {hh:02d}:{mm:02d}"
 
             self._push_undo()
             dt_obj = _try_parse_dt(dt_text)
             t.dt = dt_obj.strftime("%Y-%m-%d %H:%M:%S") if dt_obj else dt_text
+            self._set_elevation_for_test(t, elevation)
 
             self._redraw()
             win.destroy()
@@ -9312,7 +9458,7 @@ class GeoCanvasEditor(tk.Tk):
         
         # ---- Buttons (centered) ----
         btns = ttk.Frame(win)
-        btns.grid(row=2, column=0, columnspan=3, sticky="ew", padx=12, pady=(8, 12))
+        btns.grid(row=4, column=0, columnspan=3, sticky="ew", padx=12, pady=(8, 12))
         btns.columnconfigure(0, weight=1)
         btns.columnconfigure(2, weight=1)
 
@@ -9339,13 +9485,13 @@ class GeoCanvasEditor(tk.Tk):
     def _edit_header_title(self, ti: int):
         t = self.tests[ti]
         win = tk.Toplevel(self)
-        win.title("Переименовать опыт")
+        win.title("Переименовать ТСЗ")
         win.resizable(False, False)
 
         PADX = 12
         PADY = 8
 
-        ttk.Label(win, text="№ зондирования").grid(row=0, column=0, sticky="w", padx=PADX, pady=(PADY, 2))
+        ttk.Label(win, text="№ ТСЗ").grid(row=0, column=0, sticky="w", padx=PADX, pady=(PADY, 2))
         tid_var = tk.StringVar(master=self, value=str(t.tid))
         tid_entry = ttk.Entry(
             win,
@@ -9406,7 +9552,7 @@ class GeoCanvasEditor(tk.Tk):
     def _begin_edit(self, ti: int, row: int, field: str, display_row: int | None = None, *, new_tail: bool = False):
         """Edit qc/fs cell. row is data index, display_row is grid index."""
         if self._is_test_locked(int(ti)):
-            self._set_status("Опыт заблокирован")
+            self._set_status("ТСЗ заблокирована")
             return
         self._end_edit(commit=True)
         t = self.tests[ti]
@@ -9521,7 +9667,7 @@ class GeoCanvasEditor(tk.Tk):
     def _begin_edit_depth0(self, ti: int, display_row: int = 0):
         """Редактирование первой глубины (depth[0]) с автопересчётом всей колонки depth."""
         if self._is_test_locked(int(ti)):
-            self._set_status("Опыт заблокирован")
+            self._set_status("ТСЗ заблокирована")
             return
         self._end_edit(commit=True)
         t = self.tests[ti]
@@ -9889,7 +10035,7 @@ class GeoCanvasEditor(tk.Tk):
 
     def _append_row(self, ti: int):
         if self._is_test_locked(int(ti)):
-            self._set_status("Опыт заблокирован")
+            self._set_status("ТСЗ заблокирована")
             return
         if self.depth_start is None or self.step_m is None:
             return
@@ -10433,12 +10579,12 @@ class GeoCanvasEditor(tk.Tk):
     def _build_protocol_cad_results(self, *, colorize_sections: bool = False) -> list:
         tests_to_export = self._collect_protocol_tests()
         if not tests_to_export:
-            messagebox.showerror("Протокол", "Не выбрано ни одного опыта для формирования протокола.")
+            messagebox.showerror("Протокол", "Не выбрано ни одной ТСЗ для формирования протокола.")
             return []
         ok, invalid_tids = self._validate_protocol_tests(tests_to_export)
         if not ok:
             joined = ", ".join(f"№{x}" for x in invalid_tids)
-            messagebox.showerror("Протокол", f"Формирование невозможно: в опытах {joined} есть неполные строки qc/fs.")
+            messagebox.showerror("Протокол", f"Формирование невозможно: в ТСЗ {joined} есть неполные строки qc/fs.")
             return []
 
         cp = self._current_common_params()
@@ -10502,6 +10648,10 @@ class GeoCanvasEditor(tk.Tk):
             self.status.config(text=f"DXF сохранён: {final_path}")
         except Exception:
             pass
+        try:
+            messagebox.showinfo("Протокол", f"Протокол DXF создан:\n{final_path}")
+        except Exception:
+            pass
 
     def export_sounding_protocols_pdf(self):
         out_path = filedialog.asksaveasfilename(
@@ -10526,6 +10676,10 @@ class GeoCanvasEditor(tk.Tk):
             return
         try:
             self.status.config(text=f"PDF сохранён: {final_path}")
+        except Exception:
+            pass
+        try:
+            messagebox.showinfo("Протокол", f"Протокол PDF создан:\n{final_path}")
         except Exception:
             pass
 
@@ -10576,7 +10730,7 @@ class GeoCanvasEditor(tk.Tk):
             return
         detected_type = int(preview.detected_type or 0)
         if detected_type not in (1, 2, 3):
-            messagebox.showerror("Импорт Excel", "Не удалось определить тип опыта (1/2/3).")
+            messagebox.showerror("Импорт Excel", "Не удалось определить тип ТСЗ (1/2/3).")
             return
         role_set = {role for _col, role in (cfg.column_roles or {}).items() if role not in ("ignore", "depth")}
         if "depth" not in set((cfg.column_roles or {}).values()):
@@ -10611,7 +10765,7 @@ class GeoCanvasEditor(tk.Tk):
         if getattr(self, "tests", None) and current_type in (1, 2, 3) and current_type != detected_type:
             messagebox.showerror(
                 "Импорт Excel",
-                "Нельзя смешивать типы опытов в одном проекте.\n"
+                "Нельзя смешивать типы ТСЗ в одном проекте.\n"
                 "Создайте новый проект или импортируйте совместимый тип.",
             )
             return
@@ -10704,7 +10858,7 @@ class GeoCanvasEditor(tk.Tk):
         self._redraw()
         self.schedule_graph_redraw()
         self._focus_params_tab_after_successful_import("Excel")
-        messagebox.showinfo("Импорт Excel", f"Импортировано опытов: {imported_count}")
+        messagebox.showinfo("Импорт Excel", f"Импортировано ТСЗ: {imported_count}")
 
     def _ask_cpt_calc_settings(self) -> dict[str, object] | None:
         dlg = tk.Toplevel(self)
@@ -10943,7 +11097,7 @@ class GeoCanvasEditor(tk.Tk):
         selection = self._collect_export_tests()
         tests_exp = list(selection.tests)
         if not tests_exp:
-            messagebox.showwarning("Экспорт CAD", "Не выбрано ни одного опыта для экспорта.")
+            messagebox.showwarning("Экспорт CAD", "Не выбрано ни одной ТСЗ для экспорта.")
             return
         tests_to_export = list(tests_exp)
 
@@ -10967,10 +11121,10 @@ class GeoCanvasEditor(tk.Tk):
                 invalid_tids.append(int(getattr(t, "tid", 0) or 0))
         if invalid_tids:
             if len(invalid_tids) == 1:
-                messagebox.showerror("Экспорт CAD", f"Экспорт невозможен: в опыте №{invalid_tids[0]} есть незаполненные значения.")
+                messagebox.showerror("Экспорт CAD", f"Экспорт невозможен: в ТСЗ-{invalid_tids[0]} есть незаполненные значения.")
             else:
                 joined = ", ".join(f"№{x}" for x in invalid_tids)
-                messagebox.showerror("Экспорт CAD", f"Экспорт невозможен: опыты {joined} содержат пропуски.")
+                messagebox.showerror("Экспорт CAD", f"Экспорт невозможен: ТСЗ {joined} содержат пропуски.")
             return
 
         object_name = str(getattr(self, "object_name", "") or "sounding").strip().replace(" ", "_")
@@ -11013,7 +11167,7 @@ class GeoCanvasEditor(tk.Tk):
             for test in tests_to_export:
                 block_name = f"ZE_CPT_T{int(getattr(test, 'tid', 0) or 0)}_M{vertical_scale}"
                 safe_block_name = re.sub(r"[^A-Za-z0-9_\\-]", "_", block_name)
-                title_text = f"Опыт {int(getattr(test, 'tid', 0) or 0)}"
+                title_text = f"ТСЗ-{int(getattr(test, 'tid', 0) or 0)}"
                 build_result = build_cpt_cad_scene(
                     test=test,
                     calibration=calibration,
@@ -11052,7 +11206,7 @@ class GeoCanvasEditor(tk.Tk):
 
     def export_credo_zip(self):
         """Export each test into two CSV (depth;qc_MPa and depth;fs_kPa) without headers, pack into ZIP.
-        Naming: 'СЗ-<№> лоб.csv' and 'СЗ-<№> бок.csv'.
+        Naming: 'ТСЗ-<№> лоб.csv' and 'ТСЗ-<№> бок.csv'.
         """
         if not getattr(self, "tests", None):
             messagebox.showwarning("Нет данных", "Сначала нажми «Показать зондирования»")
@@ -11145,8 +11299,8 @@ class GeoCanvasEditor(tk.Tk):
                     rows_lob.append(f"{d_str};{qc_str}")
                     rows_bok.append(f"{d_str};{fs_str}")
 
-                fn_lob = tmp_dir / f"СЗ-{tid} лоб.csv"
-                fn_bok = tmp_dir / f"СЗ-{tid} бок.csv"
+                fn_lob = tmp_dir / f"ТСЗ-{tid} лоб.csv"
+                fn_bok = tmp_dir / f"ТСЗ-{tid} бок.csv"
                 fn_lob.write_text("\n".join(rows_lob) + ("\n" if rows_lob else ""), encoding="utf-8")
                 fn_bok.write_text("\n".join(rows_bok) + ("\n" if rows_bok else ""), encoding="utf-8")
                 created.extend([fn_lob, fn_bok])
@@ -12114,7 +12268,7 @@ class GeoCanvasEditor(tk.Tk):
             if not blocks_info:
                 blocks_info = [t.block for t in (getattr(self, 'tests', []) or []) if getattr(t, 'block', None)]
             if not blocks_info:
-                messagebox.showerror("Экспорт GEO", "Не найдены блоки опытов для шаблона GEO (block metadata отсутствуют).")
+                messagebox.showerror("Экспорт GEO", "Не найдены блоки ТСЗ для шаблона GEO (block metadata отсутствуют).")
                 return
             # --- GEO EXPORT DISPATCH (split K2/K4, independent) ---
             if getattr(self, "geo_kind", "K2") == "K4":
@@ -12132,7 +12286,7 @@ class GeoCanvasEditor(tk.Tk):
                     source_bytes=self.original_bytes,
                 )
             try:
-                self._set_status(f"Сохранено: {out_file} | опытов: {len(tests_list)}")
+                self._set_status(f"Сохранено: {out_file} | ТСЗ: {len(tests_list)}")
             except Exception:
                 pass
         except Exception:

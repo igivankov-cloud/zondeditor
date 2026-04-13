@@ -145,15 +145,26 @@ def _render_pattern_hatch(ax, hatch: CadHatch) -> None:
         uy = math.sin(angle_rad)
         nx = -math.sin(angle_rad)
         ny = math.cos(angle_rad)
-        offset_proj = (float(offset[0]) * nx) + (float(offset[1]) * ny)
-        if abs(offset_proj) < 1e-9:
-            k_values = range(0, 1)
-        else:
+        off_x = float(offset[0])
+        off_y = float(offset[1])
+        k_bounds: list[float] = []
+        if abs(off_x) > 1e-9:
+            xs = [x0, x1]
+            k_bounds.extend((xx - float(base_point[0])) / off_x for xx in xs)
+        if abs(off_y) > 1e-9:
+            ys = [y0, y1]
+            k_bounds.extend((yy - float(base_point[1])) / off_y for yy in ys)
+        offset_proj = (off_x * nx) + (off_y * ny)
+        if abs(offset_proj) > 1e-9:
             rect_min = min((cx * nx) + (cy * ny) for cx, cy in corners)
             rect_max = max((cx * nx) + (cy * ny) for cx, cy in corners)
             base_proj = (float(base_point[0]) * nx) + (float(base_point[1]) * ny)
-            k0 = int(math.floor((rect_min - base_proj) / offset_proj)) - 2
-            k1 = int(math.ceil((rect_max - base_proj) / offset_proj)) + 2
+            k_bounds.extend([(rect_min - base_proj) / offset_proj, (rect_max - base_proj) / offset_proj])
+        if not k_bounds:
+            k_values = range(0, 1)
+        else:
+            k0 = int(math.floor(min(k_bounds))) - 4
+            k1 = int(math.ceil(max(k_bounds))) + 4
             if k1 < k0:
                 k0, k1 = k1, k0
             k_values = range(k0, k1 + 1)

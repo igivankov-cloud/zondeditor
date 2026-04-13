@@ -46,21 +46,4 @@ def is_ige_calculable(*, soil_name: str | None = None, soil_code: str | None = N
 
 
 def build_ige_display_label(ige_id: str, *, label: str | None = None, soil_name: str | None = None, soil_code: str | None = None, params: dict[str, Any] | None = None) -> str:
-    base = str(label or "").strip() or str(ige_id or "").strip() or "ИГЭ-1"
-    profile = get_ige_profile(soil_name=soil_name, soil_code=soil_code, params=params)
-    name = str(soil_name or profile.soil_name or "").strip()
-    p = dict(params or {})
-
-    if not name:
-        return base
-
-    detail = ""
-    if profile.ui_profile == "sand_calculable":
-        detail = str(p.get("sand_kind") or "").strip()
-    elif profile.ui_profile in {"clay_supes_calculable", "clay_calculable"}:
-        detail = str(p.get("consistency") or "").strip()
-    elif profile.ui_profile == "fill_calculable":
-        detail = str(p.get("fill_subtype") or "").strip()
-
-    suffix = name if not detail else f"{name}, {detail}"
-    return f"{base} ({suffix})"
+    return str(label or "").strip() or str(ige_id or "").strip() or "ИГЭ-1"

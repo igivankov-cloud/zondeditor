@@ -98,5 +98,5 @@ def test_repeated_header_inside_data_is_skipped():
 
 
 def test_duplicate_names_are_suffixed():
-    out = make_unique_names({"СЗ-2"}, ["СЗ-1", "СЗ-2", "СЗ-2"])
-    assert out == ["СЗ-1", "СЗ-2 (2)", "СЗ-2 (3)"]
+    out = make_unique_names({"ТСЗ-2"}, ["ТСЗ-1", "ТСЗ-2", "ТСЗ-2"])
+    assert out == ["ТСЗ-1", "ТСЗ-2 (2)", "ТСЗ-2 (3)"]

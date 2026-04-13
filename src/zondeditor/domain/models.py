@@ -22,6 +22,7 @@ class TestSeries:
     dt: str
     step_m: float
     rows: list[Row] = field(default_factory=list)
+    elevation_m: float | None = None
     # optional source metadata for GEO template rebuild
     marker: str = ""
     header_pos: str = ""
@@ -67,6 +68,7 @@ class TestData:
     qc: list[str]
     fs: list[str]
     incl: Optional[list[str]] = None    # K4: U-channel/inclinometer
+    elevation_m: float | None = None
     marker: str = ""
     header_pos: str = ""                # binding to original GEO (for save-back)
     orig_id: Optional[int] = None
@@ -116,6 +118,7 @@ def testdata_to_series(test: TestData) -> TestSeries:
         dt=str(getattr(test, "dt", "") or ""),
         step_m=float(step or 0.05),
         rows=rows,
+        elevation_m=_to_float(getattr(test, "elevation_m", None), 0.0) if getattr(test, "elevation_m", None) not in (None, "") else None,
         marker=str(getattr(test, "marker", "") or ""),
         header_pos=str(getattr(test, "header_pos", "") or ""),
         orig_id=getattr(test, "orig_id", None),
@@ -139,6 +142,7 @@ def series_to_testdata(series: TestSeries) -> TestData:
         qc=qc,
         fs=fs,
         incl=[str(v) for v in incl_vals] if has_incl else None,
+        elevation_m=_to_float(getattr(series, "elevation_m", None), 0.0) if getattr(series, "elevation_m", None) not in (None, "") else None,
         marker=str(getattr(series, "marker", "") or ""),
         header_pos=str(getattr(series, "header_pos", "") or ""),
         orig_id=getattr(series, "orig_id", None),

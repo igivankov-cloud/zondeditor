@@ -124,14 +124,14 @@ def test_dxf_writer_supports_multiple_blocks(tmp_path: Path):
         calibration=K2_DEFAULT,
         options=ExportCadOptions(vertical_scale=100),
         block_name="ZE_TEST_1",
-        title_text="Опыт 1",
+        title_text="ТСЗ-1",
     )
     r2 = build_cpt_cad_scene(
         test=ZeTestData(tid=2, dt="01.01.2026", depth=["0", "1"], qc=["10", "20"], fs=["20", "30"]),
         calibration=K2_DEFAULT,
         options=ExportCadOptions(vertical_scale=100),
         block_name="ZE_TEST_2",
-        title_text="Опыт 2",
+        title_text="ТСЗ-2",
     )
     out = tmp_path / "multi.dxf"
     write_cad_scenes_to_dxf([r1.scene, r2.scene], out, x_step_mm=130.0)
@@ -157,7 +157,7 @@ def test_dxf_writer_fallback_without_ezdxf(tmp_path: Path, monkeypatch: pytest.M
         calibration=K2_DEFAULT,
         options=ExportCadOptions(vertical_scale=100),
         block_name="ZE_TEST_FALLBACK",
-        title_text="Опыт 6",
+        title_text="ТСЗ-6",
     )
     out = tmp_path / "graph_fallback.dxf"
     write_cad_scene_to_dxf(result.scene, out)

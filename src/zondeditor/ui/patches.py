@@ -50,7 +50,7 @@ def patch_geo_canvas_editor() -> None:
                 n_exp = len(tests)
             if hasattr(self, "_update_status_loaded"):
                 try:
-                    self._update_status_loaded(prefix=f"Сохранено GXL: {out_file} | опытов {n_exp}")
+                    self._update_status_loaded(prefix=f"Сохранено GXL: {out_file} | ТСЗ {n_exp}")
                 except Exception:
                     pass
 

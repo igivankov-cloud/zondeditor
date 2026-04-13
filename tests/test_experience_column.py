@@ -11,6 +11,7 @@ from src.zondeditor.domain.experience_column import (
 from src.zondeditor.domain.layers import Layer, SoilType, calc_mode_for_soil
 from src.zondeditor.domain.models import TestData as _TestData
 from src.zondeditor.ui.editor import GeoCanvasEditor
+from src.zondeditor.ui.ribbon import RibbonView
 
 
 def _make_editor_for_grid(test: _TestData, *, show_geology_column: bool) -> GeoCanvasEditor:
@@ -191,6 +192,7 @@ def test_build_grid_expanded_keeps_absolute_zero_rows_for_shifted_start():
 def test_ige_display_includes_soil_name_and_detail():
     editor = GeoCanvasEditor.__new__(GeoCanvasEditor)
     editor.ige_registry = {"ИГЭ-1": {"label": "ИГЭ-1а", "soil_type": "суглинок", "consistency": "тугопластичная"}}
+    editor._ensure_ige_entry = lambda ige_id: editor.ige_registry[str(ige_id)]
     editor._resolve_existing_ige_id = lambda value: value if value in editor.ige_registry else None
     assert editor._experience_column_ige_display("ИГЭ-1") == "ИГЭ-1а (суглинок, тугопластичная)"
 
@@ -201,12 +203,68 @@ def test_ige_choices_use_existing_registry_ids_and_details():
         "ИГЭ-2": {"label": "ИГЭ-2", "soil_type": "песок", "sand_kind": "мелкий"},
         "ИГЭ-1": {"label": "ИГЭ-1а", "soil_type": "суглинок", "consistency": "тугопластичная"},
     }
-    editor._ige_id_to_num = lambda value: int(str(value).split("-")[-1])
+    editor._ensure_ige_entry = lambda ige_id: editor.ige_registry[str(ige_id)]
+    editor._ige_sort_key = lambda value: (int(str(value).split("-")[-1]), str(value))
     editor._resolve_existing_ige_id = lambda value: value if value in editor.ige_registry else None
     assert editor._experience_column_ige_choices() == [
         ("ИГЭ-1", "ИГЭ-1а (суглинок, тугопластичная)"),
         ("ИГЭ-2", "ИГЭ-2 (песок, мелкий)"),
     ]
+
+
+def test_ige_sort_key_orders_base_label_before_letter_suffix():
+    editor = GeoCanvasEditor.__new__(GeoCanvasEditor)
+    editor.ige_registry = {
+        "ИГЭ-2": {"label": "ИГЭ-2"},
+        "ИГЭ-1А": {"label": "ИГЭ-1А"},
+        "ИГЭ-1": {"label": "ИГЭ-1"},
+    }
+    editor._ensure_ige_entry = lambda ige_id: editor.ige_registry[str(ige_id)]
+    assert sorted(editor.ige_registry.keys(), key=editor._ige_sort_key) == ["ИГЭ-1", "ИГЭ-1А", "ИГЭ-2"]
+
+
+def test_ribbon_builds_default_ige_description_from_soil_and_consistency():
+    ribbon = RibbonView.__new__(RibbonView)
+    ribbon._ige_rows_cache = {
+        "ИГЭ-2": {
+            "soil": "суглинок",
+            "consistency": "мягкопластичная",
+        }
+    }
+    assert ribbon._build_ige_description_text("ИГЭ-2") == "суглинок мягкопластичный"
+
+
+def test_ribbon_builds_full_default_description_for_sand():
+    ribbon = RibbonView.__new__(RibbonView)
+    ribbon._ige_rows_cache = {
+        "ИГЭ-3": {
+            "soil": "песок",
+            "sand_kind": "мелкий",
+            "sand_water_saturation": "водонасыщенный",
+            "density_state": "плотный",
+        }
+    }
+    assert ribbon._build_ige_description_text("ИГЭ-3") == "песок мелкий, водонасыщенный, плотный"
+
+
+def test_ribbon_builds_gendered_descriptions_for_clay_and_supes():
+    ribbon = RibbonView.__new__(RibbonView)
+    ribbon._ige_rows_cache = {
+        "ИГЭ-2": {"soil": "глина", "consistency": "текучепластичная"},
+        "ИГЭ-4": {"soil": "суглинок", "consistency": "текучепластичная"},
+        "ИГЭ-5": {"soil": "супесь", "consistency": "текучая"},
+    }
+    assert ribbon._build_ige_description_text("ИГЭ-2") == "глина текучепластичная"
+    assert ribbon._build_ige_description_text("ИГЭ-4") == "суглинок текучепластичный"
+    assert ribbon._build_ige_description_text("ИГЭ-5") == "супесь текучая"
+
+
+def test_ribbon_builds_fill_as_nasypnoy_grunt():
+    ribbon = RibbonView.__new__(RibbonView)
+    ribbon._ige_rows_cache = {
+        "ИГЭ-6": {"soil": "насыпной", "fill_subtype": "песчаный"}
+    }
+    assert ribbon._build_ige_description_text("ИГЭ-6") == "насыпной грунт песчаный"
 
 
 def test_validate_experience_column_iges_accepts_existing_registry_values():

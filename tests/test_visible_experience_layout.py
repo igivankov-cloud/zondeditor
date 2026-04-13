@@ -140,3 +140,12 @@ def test_header_actions_disabled_for_collapsed_or_locked():
     assert editor._header_action_buttons_enabled(0) is False
     assert editor._header_action_buttons_enabled(1) is False
     assert editor._header_action_buttons_enabled(2) is True
+
+
+def test_tsz_header_helpers_format_title_date_and_elevation():
+    test = SimpleNamespace(tid="4", dt="2026-01-02 13:45:00", export_on=True, elevation_m=123.4)
+    editor = _make_editor([test])
+
+    assert editor._format_tsz_header_title(test) == "ТСЗ-4"
+    assert editor._format_tsz_header_date(test.dt) == "02.01.2026"
+    assert editor._format_tsz_elevation(test) == "Отм.: 123.40"

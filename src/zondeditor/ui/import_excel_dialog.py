@@ -404,7 +404,7 @@ class ExcelImportDialog(tk.Toplevel):
         self.sheet_var = tk.StringVar()
         self.repeat_blocks_var = tk.BooleanVar(value=False)
         self.status_var = tk.StringVar(value="Выберите Excel-файл (.xls/.xlsx)")
-        self.preview_var = tk.StringVar(value="Тип опыта: —   |   Найдено опытов: 0   |   Диапазон глубин: —")
+        self.preview_var = tk.StringVar(value="Тип ТСЗ: —   |   Найдено ТСЗ: 0   |   Диапазон глубин: —")
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
@@ -611,7 +611,7 @@ class ExcelImportDialog(tk.Toplevel):
             self.grid_view.set_state(GridState(rows=[], header_row=1, data_start_row=2, data_end_row=2, ignored_rows=set(), column_roles={}))
             if reset_view:
                 self.grid_view.reset_viewport()
-            self.preview_var.set("Тип опыта: —   |   Найдено опытов: 0   |   Диапазон глубин: —")
+            self.preview_var.set("Тип ТСЗ: —   |   Найдено ТСЗ: 0   |   Диапазон глубин: —")
             self.names_label.configure(text="Имена: —")
             return
 
@@ -648,7 +648,7 @@ class ExcelImportDialog(tk.Toplevel):
             shown_cols = min(MAX_PREVIEW_COLS, max((len(r) for r in sheet.rows), default=0))
             total_cols = max((len(r) for r in sheet.rows), default=0)
             self.preview_var.set(
-                f"Тип опыта: {type_text}   |   Найдено опытов: {len(self.preview.soundings)}   |   Диапазон глубин: {self.preview.min_depth}–{self.preview.max_depth}{warn_suffix}\n"
+                f"Тип ТСЗ: {type_text}   |   Найдено ТСЗ: {len(self.preview.soundings)}   |   Диапазон глубин: {self.preview.min_depth}–{self.preview.max_depth}{warn_suffix}\n"
                 f"Показаны строки 1–{shown_rows} из {total_rows}; столбцы {shown_cols} из {total_cols}; данные: {self.data_start_row}–{self.data_end_row}"
             )
             names_text = ", ".join(self.name_overrides)

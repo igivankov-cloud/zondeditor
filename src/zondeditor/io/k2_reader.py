@@ -55,7 +55,7 @@ def parse_geo_with_blocks(
 
     if not headers:
         raise ValueError(
-            "Не найдены заголовки опытов.\n"
+            "Не найдены заголовки ТСЗ.\n"
             "Ожидался маркер: FF FF <id> 1E 0A."
         )
 
@@ -115,7 +115,7 @@ def parse_geo_with_blocks(
         })
 
     if not tests_out:
-        raise ValueError("Опытов не извлечено. Возможно другой вариант кодирования данных в GEO.")
+        raise ValueError("ТСЗ не извлечены. Возможно другой вариант кодирования данных в GEO.")
     return tests_out, meta_rows
 
 

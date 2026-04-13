@@ -11,12 +11,36 @@ from src.zondeditor.domain.hatching.registry import SOIL_TYPE_TO_HATCH_FILE, loa
 from src.zondeditor.domain.models import TestData
 from src.zondeditor.export.cad.logging import get_cad_logger
 from src.zondeditor.processing.calibration import Calibration, calc_qc_fs
+from src.zondeditor.calculations.ige_policy import get_ige_profile
 from src.zondeditor.export.cad.schema import CadBlock, CadHatch, CadLayerSpec, CadLine, CadPolyline, CadScene, TextLabel
 
 from .layout import DEFAULT_PROTOCOL_LAYOUT, ProtocolLayout
 from .models import ProtocolBuildPack, ProtocolDocument, ProtocolLayerRow
 
 _log = get_cad_logger()
+_CONSISTENCY_DESCRIPTION_MAP = {
+    "clay_supes": {
+        "твердая": "твердая",
+        "пластичная": "пластичная",
+        "текучая": "текучая",
+    },
+    "clay_general_loam": {
+        "твердая": "твердый",
+        "полутвердая": "полутвердый",
+        "тугопластичная": "тугопластичный",
+        "мягкопластичная": "мягкопластичный",
+        "текучепластичная": "текучепластичный",
+        "текучая": "текучий",
+    },
+    "clay_general_clay": {
+        "твердая": "твердая",
+        "полутвердая": "полутвердая",
+        "тугопластичная": "тугопластичная",
+        "мягкопластичная": "мягкопластичная",
+        "текучепластичная": "текучепластичная",
+        "текучая": "текучая",
+    },
+}
 
 
 PROTOCOL_LAYERS: tuple[CadLayerSpec, ...] = (
@@ -79,6 +103,94 @@ def _format_test_date(value: str) -> str:
         return raw
 
 
+def _format_abs_mark(value) -> str:
+    parsed = _parse_float(value)
+    if parsed is None:
+        return ""
+    rounded = round(parsed, 2)
+    text = f"{rounded:.2f}".rstrip("0").rstrip(".")
+    return text.replace(".", ",")
+
+
+def _layer_abs_mark_text(top_abs_mark, from_depth_m: float) -> str:
+    parsed = _parse_float(top_abs_mark)
+    if parsed is None:
+        return ""
+    try:
+        layer_mark = float(parsed) - float(from_depth_m or 0.0)
+    except Exception:
+        return _format_abs_mark(parsed)
+    return _format_abs_mark(layer_mark)
+
+
+def _resolve_consistency_description(profile_ui: str, soil_name: str, raw_consistency: str) -> str:
+    consistency = str(raw_consistency or "").strip().lower()
+    if not consistency:
+        return ""
+    soil_norm = str(soil_name or "").strip().lower()
+    if profile_ui == "clay_supes_calculable":
+        mapping = _CONSISTENCY_DESCRIPTION_MAP.get("clay_supes", {})
+        return str(mapping.get(consistency) or consistency)
+    if "глина" in soil_norm:
+        mapping = _CONSISTENCY_DESCRIPTION_MAP.get("clay_general_clay", {})
+        return str(mapping.get(consistency) or consistency)
+    mapping = _CONSISTENCY_DESCRIPTION_MAP.get("clay_general_loam", {})
+    return str(mapping.get(consistency) or consistency)
+
+
+def _capitalize_description(text: str) -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    return raw[:1].upper() + raw[1:]
+
+
+def _build_protocol_description(ent: dict[str, object], fallback_ige_name: str, fallback_ige_id: str) -> str:
+    manual = str(ent.get("notes") or ent.get("manual_notes") or ent.get("note") or "").strip()
+    if manual:
+        return _capitalize_description(manual)
+    soil_name = str(ent.get("soil_type") or "").strip()
+    if not soil_name:
+        return _capitalize_description(str(fallback_ige_name or fallback_ige_id or "").strip())
+    profile = get_ige_profile(
+        soil_name=soil_name,
+        soil_code=str(ent.get("soil_code") or "").strip(),
+        params=ent,
+    )
+    detail_parts: list[str] = []
+    if profile.ui_profile == "sand_calculable":
+        for key in ("sand_kind", "sand_water_saturation", "density_state"):
+            value = str(ent.get(key) or "").strip()
+            if value:
+                detail_parts.append(value)
+    elif profile.ui_profile in {"clay_supes_calculable", "clay_calculable"}:
+        detail = _resolve_consistency_description(profile.ui_profile, soil_name, str(ent.get("consistency") or ""))
+        if detail:
+            detail_parts.append(detail)
+    elif profile.ui_profile == "fill_calculable":
+        soil_name = "насыпной грунт"
+        fill_subtype = str(ent.get("fill_subtype") or "").strip()
+        if fill_subtype:
+            detail_parts.append(fill_subtype)
+    if not detail_parts:
+        return _capitalize_description(soil_name)
+    if profile.ui_profile == "sand_calculable":
+        first_part = detail_parts[0]
+        tail_parts = detail_parts[1:]
+        detail_text = first_part if not tail_parts else f"{first_part}, {', '.join(tail_parts)}"
+        return f"{soil_name} {detail_text}"
+    return f"{soil_name} {', '.join(detail_parts)}"
+
+
+def _protocol_marker_text(ent: dict[str, object], ige_id: str) -> str:
+    raw = str(ent.get("label") or ige_id or "").strip()
+    match = re.search(r"(\d+[A-Za-zА-Яа-я]*)$", raw)
+    if match:
+        return str(match.group(1) or "")
+    cleaned = re.sub(r"^\s*ИГЭ-", "", raw, flags=re.IGNORECASE).strip()
+    return str(cleaned or raw)
+
+
 def _infer_soil_type(*, explicit: str, description: str, ige_name: str) -> str:
     raw = normalize_soil_type(explicit)
     if raw in SOIL_TYPE_TO_HATCH_FILE:
@@ -137,20 +249,27 @@ def build_protocol_documents(*, tests: list[TestData], ige_registry: dict[str, d
         for idx, it in enumerate(list(getattr(col, "intervals", []) or []), start=1):
             ige_id = str(getattr(it, "ige_id", "") or "")
             ent = _resolve_ige_entry(reg, ige_id)
-            descr = str(ent.get("notes") or ent.get("manual_notes") or ent.get("note") or getattr(it, "ige_name", "") or ige_id)
+            from_depth_m = float(getattr(it, "from_depth", 0.0) or 0.0)
+            to_depth_m = float(getattr(it, "to_depth", 0.0) or 0.0)
+            descr = _build_protocol_description(
+                ent,
+                str(getattr(it, "ige_name", "") or ""),
+                ige_id,
+            )
             rows.append(
                 ProtocolLayerRow(
                     idx=idx,
-                    from_depth_m=float(getattr(it, "from_depth", 0.0) or 0.0),
-                    to_depth_m=float(getattr(it, "to_depth", 0.0) or 0.0),
+                    from_depth_m=from_depth_m,
+                    to_depth_m=to_depth_m,
                     ige_id=ige_id,
+                    marker_text=_protocol_marker_text(ent, ige_id),
                     description=descr,
                     soil_type=_infer_soil_type(
                         explicit=str(ent.get("soil_type") or ""),
                         description=descr,
                         ige_name=str(getattr(it, "ige_name", "") or ""),
                     ),
-                    abs_mark_text="",  # temporary: absolute elevation is not in data model yet
+                    abs_mark_text=_layer_abs_mark_text(getattr(test, "elevation_m", None), from_depth_m),
                 )
             )
             _hatch_debug(
@@ -164,8 +283,8 @@ def build_protocol_documents(*, tests: list[TestData], ige_registry: dict[str, d
         docs.append(
             ProtocolDocument(
                 test=test,
-                title=f"\u0422\u043e\u0447\u043a\u0430 \u0438\u0441\u043f\u044b\u0442\u0430\u043d\u0438\u044f: \u0422\u0421\u0417 {int(getattr(test, 'tid', 0) or 0)}",
-                date_text=f"\u0414\u0430\u0442\u0430 \u0438\u0441\u043f\u044b\u0442\u0430\u043d\u0438\u044f: {_format_test_date(str(getattr(test, 'dt', '') or ''))}",
+                title=f"\u0422\u043e\u0447\u043a\u0430 \u0441\u0442\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u043e\u0433\u043e \u0437\u043e\u043d\u0434\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f \u2116 {int(getattr(test, 'tid', 0) or 0)}",
+                date_text=f"\u0414\u0430\u0442\u0430 \u0437\u043e\u043d\u0434\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f: {_format_test_date(str(getattr(test, 'dt', '') or ''))}",
                 max_depth_m=max_depth,
                 layers=rows,
             )
@@ -423,8 +542,8 @@ def build_protocol_scene(
             a = 2.0 * math.pi * float(i) / 20.0
             circle_pts.append((circle_cx + radius * math.cos(a), circle_cy + radius * math.sin(a)))
         polys.append(CadPolyline("ZE_PROTO_CUT", circle_pts, closed=True))
-        ige_num = ''.join(ch for ch in row.ige_id if ch.isdigit()) or row.ige_id
-        texts.append(TextLabel("ZE_PROTO_TEXT", str(ige_num), circle_cx, circle_cy, 1.8, align="CENTER"))
+        marker_text = str(getattr(row, "marker_text", "") or row.ige_id or "")
+        texts.append(TextLabel("ZE_PROTO_TEXT", marker_text, circle_cx, circle_cy, 1.8, align="CENTER"))
 
         desc_lines = _split_text_lines(row.description, line_limit=45)
         for i, txt in enumerate(desc_lines):
