@@ -204,7 +204,6 @@ class RibbonView(ttk.Frame):
         exports.pack_propagate(False)
         self._add_btn(exports, "export_geo", "GEO", "Экспорт GEO только через Сохранить как", width=file_btn_width)
         self._add_btn(exports, "export_gxl", "GXL", "Экспорт GXL только через Сохранить как", width=file_btn_width)
-        self._add_btn(exports, "export_dxf", "DXF", "Экспорт графиков в CAD (DXF)", width=file_btn_width)
 
     def _build_params_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
@@ -531,6 +530,7 @@ class RibbonView(ttk.Frame):
 
         controls = ttk.LabelFrame(host, text="Выпуск", padding=4)
         controls.pack(side="left", anchor="nw", padx=(0, 4))
+        self._add_btn(controls, "export_dxf", "Создать графики зондирования", "Сформировать графики зондирования в CAD (DXF)", width=24)
         self._add_btn(controls, "protocol_export_dxf", "Экспорт протокола в DXF", "Сформировать и сразу сохранить протоколы в DXF", width=24)
         self._add_btn(controls, "protocol_export_pdf", "Экспорт протокола в PDF", "Сформировать и сразу сохранить протоколы в PDF", width=24)
 
@@ -542,6 +542,7 @@ class RibbonView(ttk.Frame):
 
         controls = ttk.LabelFrame(host, text="Выпуск", padding=4)
         controls.pack(side="left", anchor="nw", padx=(0, 4))
+        self._add_btn(controls, "export_dxf", "Создать графики зондирования", "Сформировать графики зондирования в CAD (DXF)", width=24)
         self._add_btn(controls, "protocol_export_dxf", "Экспорт протокола в DXF", "Сформировать и сразу сохранить протоколы в DXF", width=24)
         self._add_btn(controls, "protocol_export_pdf", "Экспорт протокола в PDF", "Сформировать и сразу сохранить протоколы в PDF", width=24)
 
