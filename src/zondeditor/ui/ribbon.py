@@ -5,6 +5,7 @@ from __future__ import annotations
 # - _apply_compact_ribbon_height: L109–L126 — вычисление высоты верхней ленты по фактической высоте вкладки «ИГЭ».
 # - _build_layers_tab/_sync_ige_canvas: L289–L303, L332–L345 — область ИГЭ без вертикального скролла и с высотой по содержимому.
 # - _build_calc_tab: L455–L507 — компоновка вкладки «Расчёт» в 3 колонки и чекбокс «Аллювиальные пески».
+# - _build_calc_tab — вкладка расчёта по lookup-таблицам и переключатели особых режимов, включая справочный расчёт при n < 6.
 # - _set_combo_placeholder/_build_dynamic_ige_fields/_build_ige_column: L517–L627 — логика карточек ИГЭ (без чекбокса аллювиальности).
 # === FILE MAP END ===
 
@@ -42,6 +43,9 @@ class RibbonView(ttk.Frame):
             "текучая": "текучая",
         },
     }
+    _CLAY_SUPES_CONSISTENCY_VALUES = ("твердая", "пластичная", "текучая")
+    _CLAY_FEMALE_CONSISTENCY_VALUES = ("твердая", "полутвердая", "тугопластичная", "мягкопластичная", "текучепластичная", "текучая")
+    _CLAY_MALE_CONSISTENCY_VALUES = ("твердый", "полутвердый", "тугопластичный", "мягкопластичный", "текучепластичный", "текучий")
 
     def __init__(self, master, *, commands: dict[str, callable], icon_font=None):
         super().__init__(master)
@@ -120,7 +124,7 @@ class RibbonView(ttk.Frame):
         self._build_view_tab()
         self._build_layers_tab()
         self._build_calc_tab()
-        self._build_protocol_tab()
+        self._build_protocol_tab_v2()
         self.after_idle(self._apply_compact_ribbon_height)
 
     def _add_qat_btn(self, parent, key: str, text: str, tip: str):
@@ -508,25 +512,16 @@ class RibbonView(ttk.Frame):
         col2.columnconfigure(0, weight=1)
         col3.columnconfigure(0, weight=1)
 
-        ttk.Label(col1, text="Расчёт по результатам зондирования:").grid(row=0, column=0, sticky="w")
-        ttk.Label(
-            col1,
-            text="СП 446.1325800.2019 (с Изм. № 1), приложение Ж",
-            foreground="#1f2b3a",
-        ).grid(row=1, column=0, sticky="w")
-
+        ttk.Label(col1, text="Расчёт по результатам статического зондирования:").grid(row=0, column=0, sticky="w")
+        ttk.Label(col1, text="СП 446.1325800.2019 (с Изм. № 1), приложение Ж", foreground="#1f2b3a").grid(row=1, column=0, sticky="w")
         ttk.Label(col1, text="Переход от нормативных к расчётным значениям:").grid(row=2, column=0, sticky="w", pady=(6, 0))
-        ttk.Label(
-            col1,
-            text="СП 22.13330.2016 (с Изм. № 1–5), п. 5.3.17",
-            foreground="#1f2b3a",
-        ).grid(row=3, column=0, sticky="w")
+        ttk.Label(col1, text="СП 22.13330.2016 (с Изм. № 1–5), п. 5.3.17", foreground="#1f2b3a").grid(row=3, column=0, sticky="w")
 
-        ttk.Checkbutton(col2, text="Рассчитывать нормативные значения при n < 6 (см. ГОСТ 20522-2012, п. 4.10)", variable=self.calc_allow_normative_lt6_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_normative_lt6", bool(self.calc_allow_normative_lt6_var.get()))).grid(row=0, column=0, sticky="w")
-        ttk.Checkbutton(col2, text="Рассчитать супесь по редакции СП 446.1325800.2019 до Изм. № 1", variable=self.calc_legacy_sandy_loam_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("use_legacy_sandy_loam_sp446", bool(self.calc_legacy_sandy_loam_var.get()))).grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(col2, text="Разрешить справочный расчет при n < 6", variable=self.calc_allow_normative_lt6_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_normative_lt6", bool(self.calc_allow_normative_lt6_var.get()))).grid(row=0, column=0, sticky="w")
+        ttk.Checkbutton(col2, text="Рассчитать супеси по редакции СП 446.1325800.2019 до Изм. № 1", variable=self.calc_legacy_sandy_loam_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("use_legacy_sandy_loam_sp446", bool(self.calc_legacy_sandy_loam_var.get()))).grid(row=1, column=0, sticky="w", pady=(10, 0))
 
         ttk.Checkbutton(col3, text="Разрешить предварительный расчёт насыпного по материалу", variable=self.calc_fill_preliminary_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("allow_fill_preliminary", bool(self.calc_fill_preliminary_var.get()))).grid(row=0, column=0, sticky="w")
-        ttk.Checkbutton(col3, text="Учитывать аллювиальные пески", variable=self.calc_alluvial_sands_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("alluvial_sands", bool(self.calc_alluvial_sands_var.get()))).grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(col3, text="Учитывать аллювиальные и флювиогляциальные отложения", variable=self.calc_alluvial_sands_var, command=lambda: self.commands.get("calc_option_changed", lambda *_: None)("alluvial_sands", bool(self.calc_alluvial_sands_var.get()))).grid(row=1, column=0, sticky="w", pady=(10, 0))
 
     def _build_protocol_tab(self):
         tab = ttk.Frame(self.tabs, padding=4)
@@ -538,6 +533,23 @@ class RibbonView(ttk.Frame):
         controls.pack(side="left", anchor="nw", padx=(0, 4))
         self._add_btn(controls, "protocol_export_dxf", "Экспорт протокола в DXF", "Сформировать и сразу сохранить протоколы в DXF", width=24)
         self._add_btn(controls, "protocol_export_pdf", "Экспорт протокола в PDF", "Сформировать и сразу сохранить протоколы в PDF", width=24)
+
+    def _build_protocol_tab_v2(self):
+        tab = ttk.Frame(self.tabs, padding=4)
+        self.tabs.add(tab, text="Протокол")
+        host = ttk.Frame(tab)
+        host.pack(side="top", anchor="w")
+
+        controls = ttk.LabelFrame(host, text="Выпуск", padding=4)
+        controls.pack(side="left", anchor="nw", padx=(0, 4))
+        self._add_btn(controls, "protocol_export_dxf", "Экспорт протокола в DXF", "Сформировать и сразу сохранить протоколы в DXF", width=24)
+        self._add_btn(controls, "protocol_export_pdf", "Экспорт протокола в PDF", "Сформировать и сразу сохранить протоколы в PDF", width=24)
+
+        calc_controls = ttk.LabelFrame(host, text="Расчёт", padding=4)
+        calc_controls.pack(side="left", anchor="nw", padx=(0, 4))
+        self._add_btn(calc_controls, "calc_protocol_word", "Подробный протокол Word", "Сохранить подробный протокол расчёта в Word", width=24)
+        self._add_btn(calc_controls, "calc_summary_word", "Итоговая таблица Word", "Сохранить итоговую таблицу расчёта в Word", width=24)
+        self._add_btn(calc_controls, "calc_summary_pdf", "Итоговая таблица PDF", "Сохранить итоговую таблицу расчёта в PDF", width=24)
 
     def set_protocol_export_enabled(self, enabled: bool):
         state = "normal" if bool(enabled) else "disabled"
@@ -781,6 +793,60 @@ class RibbonView(ttk.Frame):
         mapping = self._IGE_CONSISTENCY_DESCRIPTION_MAP.get("clay_general_loam", {})
         return str(mapping.get(consistency) or consistency)
 
+    def _soil_display_value(self, soil_name: str) -> str:
+        value = str(soil_name or "").strip()
+        if value.lower() == "насыпной":
+            return "насыпной грунт"
+        return value
+
+    def _soil_storage_value(self, soil_name: str) -> str:
+        value = str(soil_name or "").strip()
+        if value.lower() == "насыпной грунт":
+            return "насыпной"
+        return value
+
+    def _soil_display_values(self, soil_values: list[str]) -> list[str]:
+        return [self._soil_display_value(value) for value in list(soil_values or [])]
+
+    def _consistency_values_for_row(self, profile_ui: str, soil_name: str) -> tuple[str, ...]:
+        soil_norm = str(soil_name or "").strip().lower()
+        if profile_ui == "clay_supes":
+            return self._CLAY_SUPES_CONSISTENCY_VALUES
+        if "глина" in soil_norm:
+            return self._CLAY_FEMALE_CONSISTENCY_VALUES
+        return self._CLAY_MALE_CONSISTENCY_VALUES
+
+    def _consistency_display_value(self, profile_ui: str, soil_name: str, raw_value: str) -> str:
+        if profile_ui not in {"clay_supes", "clay_general"}:
+            return str(raw_value or "")
+        return self._resolve_ige_consistency_description(profile_ui, soil_name, raw_value)
+
+    def _consistency_storage_value(self, profile_ui: str, soil_name: str, raw_value: str) -> str:
+        value = str(raw_value or "").strip().lower()
+        if not value:
+            return ""
+        if profile_ui == "clay_supes":
+            return value
+        if "глина" in str(soil_name or "").strip().lower():
+            mapping = {
+                "твердый": "твердая",
+                "полутвердый": "полутвердая",
+                "тугопластичный": "тугопластичная",
+                "мягкопластичный": "мягкопластичная",
+                "текучепластичный": "текучепластичная",
+                "текучий": "текучая",
+            }
+            return mapping.get(value, value)
+        mapping = {
+            "твердая": "твердый",
+            "полутвердая": "полутвердый",
+            "тугопластичная": "тугопластичный",
+            "мягкопластичная": "мягкопластичный",
+            "текучепластичная": "текучепластичный",
+            "текучая": "текучий",
+        }
+        return mapping.get(value, value)
+
     def _build_dynamic_ige_fields(self, parent, ige_id: str, row: dict):
         soil = str(row.get("soil", "") or "").lower()
         if not soil.strip():
@@ -816,21 +882,21 @@ class RibbonView(ttk.Frame):
             return
 
         if profile == "clay_supes":
-            cons = tk.StringVar(value=str(row.get("consistency", "") or ""))
-            cb_cons = ttk.Combobox(parent, state="readonly", width=18, values=["твердая", "пластичная", "текучая"], textvariable=cons)
+            cons = tk.StringVar(value=self._consistency_display_value(profile, soil, str(row.get("consistency", "") or "")))
+            cb_cons = ttk.Combobox(parent, state="readonly", width=18, values=list(self._consistency_values_for_row(profile, soil)), textvariable=cons)
             cb_cons.grid(row=0, column=0, sticky="ew")
             self._set_combo_placeholder(cb_cons, cons, "пластичная")
-            cb_cons.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=cons: self._change_ige_field(ig, "consistency", vv.get()), add="+")
+            cb_cons.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=cons, ss=soil, pp=profile: self._change_ige_field(ig, "consistency", self._consistency_storage_value(pp, ss, vv.get())), add="+")
             return
 
         if profile == "simplified":
             return
 
-        cons = tk.StringVar(value=str(row.get("consistency", "") or ""))
-        cb_cons = ttk.Combobox(parent, state="readonly", width=18, values=["твердая", "полутвердая", "тугопластичная", "мягкопластичная", "текучепластичная", "текучая"], textvariable=cons)
+        cons = tk.StringVar(value=self._consistency_display_value(profile, soil, str(row.get("consistency", "") or "")))
+        cb_cons = ttk.Combobox(parent, state="readonly", width=18, values=list(self._consistency_values_for_row(profile, soil)), textvariable=cons)
         cb_cons.grid(row=0, column=0, sticky="ew")
-        self._set_combo_placeholder(cb_cons, cons, "тугопластичная")
-        cb_cons.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=cons: self._change_ige_field(ig, "consistency", vv.get()), add="+")
+        self._set_combo_placeholder(cb_cons, cons, self._consistency_display_value(profile, soil, "тугопластичная"))
+        cb_cons.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, vv=cons, ss=soil, pp=profile: self._change_ige_field(ig, "consistency", self._consistency_storage_value(pp, ss, vv.get())), add="+")
 
     def _build_ige_column(self, parent, row: dict, soil_values: list[str], can_delete: bool, *, before=None):
         ige_id = str(row.get("ige_id", "") or "")
@@ -862,11 +928,11 @@ class RibbonView(ttk.Frame):
         body = ttk.Frame(card)
         body.pack(fill="both", expand=True, pady=(1, 0))
         body.columnconfigure(0, weight=1)
-        soil_var = tk.StringVar(value=str(row.get("soil", "") or ""))
-        cb_soil = ttk.Combobox(body, state="readonly", width=18, values=list(soil_values or []), textvariable=soil_var)
+        soil_var = tk.StringVar(value=self._soil_display_value(str(row.get("soil", "") or "")))
+        cb_soil = ttk.Combobox(body, state="readonly", width=18, values=self._soil_display_values(soil_values), textvariable=soil_var)
         cb_soil.grid(row=0, column=0, sticky="ew")
         self._set_combo_placeholder(cb_soil, soil_var, None)
-        cb_soil.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, sv=soil_var: self.commands.get("edit_ige", lambda *_: None)(ig, sv.get(), ""), add="+")
+        cb_soil.bind("<<ComboboxSelected>>", lambda _e, ig=ige_id, sv=soil_var: self.commands.get("edit_ige", lambda *_: None)(ig, self._soil_storage_value(sv.get()), ""), add="+")
 
         dyn = ttk.Frame(body)
         dyn.grid(row=1, column=0, sticky="ew", pady=(1, 0))

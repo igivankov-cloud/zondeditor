@@ -8,6 +8,8 @@
 # - _rename_ige_from_ribbon: L1846–L1881 — переименование ИГЭ с проверкой уникальности и обновлением ссылок в слоях.
 # - _format_tsz_header_title/_format_tsz_header_date/_format_tsz_elevation — единое отображение ТСЗ в шапке и смежных UI-текстах.
 # - _current_elevation_for_test/_set_elevation_for_test/_edit_header — единый источник истины для высотной отметки в модели, шапке и протоколе.
+# - _rebuild_calc_samples/_run_calc_pipeline/_sync_calc_table/_sync_calc_preview: L1752–L1885 — расчёт по СП 446, исключение отключённых зондировок, передача режима справочного расчёта и скрытие подробного протокола с вкладки «Расчёт».
+# - _build_calc_workspace/_export_static_calc_protocol_word/_export_static_calc_summary_word/_export_static_calc_summary_pdf: L2625–L2691 и L1864–L1937 — вкладка «Расчёт» показывает только итоговую таблицу; экспорт подробного/итогового расчётного протокола вынесен на вкладку «Протокол».
 # - _focus_params_tab_after_successful_import: L3910–L3926 — единый хук переключения на вкладку «Параметры» после успешного импорта.
 # - open_excel_import_dialog: L9871–L9989 — импорт Excel (БЕТА): выбор файла, импорт, авто-подстановка шага и добавление опытов.
 # - hatching integration: _draw_layer_hatch/_draw_layers_overlay_for_test — применение встроенной библиотеки hatch-паттернов.
@@ -129,8 +131,12 @@ from src.zondeditor.domain.cpt_params_ru import (
 )
 from src.zondeditor.calculations.models import CalculationTabState
 from src.zondeditor.calculations.normative_profiles import load_normative_profiles
-from src.zondeditor.calculations.sample_builder import build_ige_samples
-from src.zondeditor.calculations.protocol_builder import build_protocol
+from src.zondeditor.calculations.lookup_loader import LookupFileError
+from src.zondeditor.calculations.protocol_builder import build_static_calc_detailed_preview, build_static_calc_preview
+from src.zondeditor.calculations.preview_model import EXPORT_SUMMARY_HEADERS
+from src.zondeditor.calculations.static_calc_engine import StaticCalcOptions, run_static_sounding_calculation
+from src.zondeditor.calculations.export_word import export_detailed_protocol_word, export_summary_table_word
+from src.zondeditor.calculations.export_pdf import export_summary_table_pdf
 
 _rebuild_geo_from_template = build_k2_geo_from_template
 
@@ -335,7 +341,9 @@ class GeoCanvasEditor(tk.Tk):
         self.calc_tab_state = CalculationTabState()
         self.calc_rows = []
         self.calc_samples = []
+        self.calc_result = None
         self.calc_protocol = None
+        self.calc_detailed_protocol = None
         self.normative_profiles = load_normative_profiles()
 
         try:
@@ -829,6 +837,11 @@ class GeoCanvasEditor(tk.Tk):
         _base_cts = CalculationTabState().__dict__
         _safe_cts = {k: v for k, v in cts.items() if k in _base_cts}
         self.calc_tab_state = CalculationTabState(**{**_base_cts, **_safe_cts})
+        self.calc_rows = []
+        self.calc_samples = []
+        self.calc_result = None
+        self.calc_protocol = None
+        self.calc_detailed_protocol = None
         self._ensure_default_iges()
 
         for d in snap.get("tests", []):
@@ -1763,123 +1776,177 @@ class GeoCanvasEditor(tk.Tk):
                 ent["alluvial"] = normalized
             self._sync_layers_panel()
 
+
+
     def _rebuild_calc_samples(self):
-        samples = build_ige_samples(
+        options = StaticCalcOptions(
+            use_legacy_sandy_loam_sp446=bool(self.calc_tab_state.use_legacy_sandy_loam_sp446),
+            allow_fill_preliminary=bool(self.calc_tab_state.allow_fill_preliminary),
+            allow_reference_on_insufficient_stats=bool(self.calc_tab_state.allow_normative_lt6),
+            alluvial_sands=bool(getattr(self, "cpt_calc_settings", {}).get("alluvial_sands", True)),
+        )
+        result = run_static_sounding_calculation(
             tests=list(self.tests or []),
             ige_registry=self.ige_registry,
-            profile_id="DEFAULT_CURRENT",
-            allow_fill_by_material=bool(self.calc_tab_state.allow_fill_preliminary),
-            use_legacy_sandy_loam_sp446=bool(self.calc_tab_state.use_legacy_sandy_loam_sp446),
-            allow_normative_lt6=bool(self.calc_tab_state.allow_normative_lt6),
+            project_name=str(getattr(self, "object_name", "") or getattr(self, "project_name", "") or ""),
+            options=options,
         )
-        self.calc_samples = samples
-        rows = []
-        for smp in samples:
-            rows.append({
-                "ige_id": smp.ige_id,
-                "soil_type": str((self.ige_registry.get(smp.ige_id, {}) or {}).get("soil_type", "")),
-                "fill_subtype": str((self.ige_registry.get(smp.ige_id, {}) or {}).get("fill_subtype", "")),
-                "method": smp.method,
-                "status": smp.status,
-                "warning": "; ".join(smp.warnings),
-                "intervals": [],
-                "n_points": smp.stats.n_points,
-                "qc_avg": smp.stats.qc_avg_mpa,
-                "qc_min": smp.stats.qc_min_mpa,
-                "qc_max": smp.stats.qc_max_mpa,
-                "V_qc": smp.stats.v_qc,
-                "avg_depth": smp.stats.avg_depth_m,
-                "fs_avg": smp.stats.fs_avg_kpa,
-                "E": smp.result.E_MPa,
-                "phi": smp.result.phi_deg,
-                "c": smp.result.c_kPa,
-            })
-        self.calc_rows = rows
+        self.calc_result = result
+        self.calc_samples = list(result.rows)
+        self.calc_rows = [row.export_summary_values() for row in result.rows]
+        self.calc_protocol = build_static_calc_preview(result)
+        self.calc_detailed_protocol = build_static_calc_detailed_preview(result)
         try:
             self.calc_tab_state.last_run_at = _dt.datetime.now().replace(microsecond=0).isoformat()
             self.calc_tab_state.last_trace = [
                 {
-                    "ige_id": smp.ige_id,
-                    "method": smp.method,
-                    "status": smp.status,
-                    "used_soundings": list(smp.used_sounding_ids or []),
-                    "depth_interval": smp.depth_interval,
-                    "n_points": smp.stats.n_points,
-                    "excluded_count": smp.excluded_count,
-                    "warnings": list(smp.warnings or []),
-                    "errors": list(smp.errors or []),
-                    "missing_fields": list(smp.missing_fields or []),
+                    "ige_id": row.ige_id,
+                    "status": row.status_text,
+                    "n_points": row.n_points,
+                    "qc_avg": row.qc_avg_mpa,
+                    "v_qc": row.v_qc,
+                    "warnings": list(row.warning_lines or ()),
+                    "note_marks": list(row.note_marks or ()),
+                    "lookup_label": row.lookup_label,
                 }
-                for smp in list(samples or [])
+                for row in list(result.rows or ())
             ]
         except Exception:
             pass
         self._sync_calc_table()
+        self._sync_calc_preview()
 
     def _run_calc_pipeline(self):
-        self._rebuild_calc_samples()
-        self._set_status(f"Расчёт: подготовлено ИГЭ {len(self.calc_rows or [])}")
+        try:
+            self._rebuild_calc_samples()
+        except LookupFileError as exc:
+            messagebox.showerror("Расчёт", str(exc))
+            self._set_status("Расчёт не выполнен: не найден lookup-файл")
+            return
+        except Exception as exc:
+            messagebox.showerror("Расчёт", f"Не удалось выполнить расчёт:\n{exc}")
+            self._set_status("Расчёт не выполнен")
+            return
+        self._set_status(f"Расчёт: подготовлено строк {len(getattr(self, 'calc_rows', []) or [])}")
 
     def _sync_calc_table(self):
         trees = self._calc_trees()
         if not trees:
             return
-        rows_to_insert = []
-        for row in list(self.calc_rows or []):
-            intervals = row.get("intervals") or []
-            interval_txt = ""
-            if intervals:
-                a = min(float(x[1]) for x in intervals)
-                b = max(float(x[2]) for x in intervals)
-                interval_txt = f"{a:.2f}-{b:.2f}"
-            rows_to_insert.append((
-                row.get("ige_id", ""),
-                row.get("soil_type", ""),
-                row.get("fill_subtype", ""),
-                row.get("method", ""),
-                row.get("status", ""),
-                row.get("n_points", 0),
-                "" if row.get("qc_avg") is None else f"{float(row['qc_avg']):.3f}",
-                "" if row.get("V_qc") is None else f"{float(row['V_qc']):.3f}",
-                interval_txt,
-                "" if row.get("E") is None else row.get("E"),
-                "" if row.get("phi") is None else row.get("phi"),
-                "" if row.get("c") is None else row.get("c"),
-                row.get("warning", ""),
-            ))
+        result = getattr(self, "calc_result", None)
+        # Форматирование значений и привязка звёздочек выполняются в summary_values(),
+        # чтобы UI не смешивал расчётные данные с правилами отображения.
+        rows_to_insert = [row.export_summary_values() for row in getattr(result, "rows", ())] if result is not None else []
         for tree in trees:
             for iid in tree.get_children():
                 tree.delete(iid)
             for values in rows_to_insert:
                 tree.insert("", "end", values=values)
+        main_tree = getattr(self, "calc_tree_main", None)
+        yscroll = getattr(self, "calc_tree_yscroll", None)
+        if main_tree is not None and yscroll is not None:
+            if len(rows_to_insert) > 10:
+                yscroll.grid(row=0, column=1, sticky="ns")
+                main_tree.configure(height=10)
+            else:
+                yscroll.grid_remove()
+                main_tree.configure(height=max(3, len(rows_to_insert) or 3))
+        legend_label = getattr(self, "calc_note_legend_label", None)
+        if legend_label is not None:
+            legend_rows = tuple(getattr(getattr(self, "calc_protocol", None), "note_lines", ()) or ())
+            legend_label.configure(text="\n".join(legend_rows))
+        title_label = getattr(self, "calc_protocol_title_label", None)
+        if title_label is not None:
+            title_label.configure(text=str(getattr(getattr(self, "calc_protocol", None), "title", "") or ""))
+        meta_label = getattr(self, "calc_protocol_meta_label", None)
+        if meta_label is not None:
+            protocol = getattr(self, "calc_protocol", None)
+            meta_label.configure(text="\n".join(tuple(getattr(protocol, "intro_lines", ()) or ())))
+
+    def _sync_calc_preview(self):
+        return
 
     def _show_calc_sample_dialog(self):
-        if not (self.calc_samples or {}):
-            self._rebuild_calc_samples()
+        if getattr(self, "calc_result", None) is None:
+            self._run_calc_pipeline()
+        result = getattr(self, "calc_result", None)
         lines = []
-        for smp in list(self.calc_samples or []):
-            lines.append(f"{smp.ige_id}: n={len(smp.points)}, qc={','.join(f'{p.qc_mpa:.2f}' for p in smp.points[:12])}")
+        for row in getattr(result, "rows", ()) or ():
+            qcs = [f"{float(val):.2f}" for _, vals in row.qc_by_sounding for val in vals[:12]]
+            lines.append(f"{row.ige_id}: n={row.n_points}, qc={', '.join(qcs)}")
         messagebox.showinfo("Выборки ИГЭ", "\n".join(lines) if lines else "Нет выборок")
 
     def _show_calc_excluded_dialog(self):
-        if not (self.calc_samples or {}):
-            self._rebuild_calc_samples()
-        lines = []
-        for smp in list(self.calc_samples or []):
-            if smp.excluded_count:
-                reasons = ", ".join(list(smp.exclusions or []))
-                lines.append(f"{smp.ige_id}: исключено {smp.excluded_count}" + (f" ({reasons})" if reasons else ""))
-        messagebox.showinfo("Исключённые точки", "\n".join(lines) if lines else "Нет исключённых точек")
+        if getattr(self, "calc_result", None) is None:
+            self._run_calc_pipeline()
+        result = getattr(self, "calc_result", None)
+        warnings = list(getattr(result, "global_warnings", ()) or ())
+        messagebox.showinfo("Предупреждения расчёта", "\n".join(warnings) if warnings else "Предупреждений нет")
 
     def _make_calc_protocol(self):
-        if not (self.calc_rows or []):
-            self._rebuild_calc_samples()
-        self.calc_protocol = build_protocol(
-            project_name=str(getattr(self, "object_name", "") or ""),
-            profile_id="DEFAULT_CURRENT",
-            samples=list(self.calc_samples or []),
-        )
+        if getattr(self, "calc_result", None) is None:
+            self._run_calc_pipeline()
+        result = getattr(self, "calc_result", None)
+        if result is None:
+            return
+        self.calc_protocol = build_static_calc_preview(result)
+        self.calc_detailed_protocol = build_static_calc_detailed_preview(result)
+        self._sync_calc_preview()
         self._set_status("Протокол расчёта сформирован")
+
+    def _ensure_calc_result_for_export(self) -> bool:
+        if getattr(self, "calc_result", None) is not None and getattr(self, "calc_protocol", None) is not None and getattr(self, "calc_detailed_protocol", None) is not None:
+            return True
+        self._run_calc_pipeline()
+        return bool(getattr(self, "calc_result", None) is not None and getattr(self, "calc_protocol", None) is not None and getattr(self, "calc_detailed_protocol", None) is not None)
+
+    def _export_static_calc_protocol_word(self):
+        if not self._ensure_calc_result_for_export():
+            return
+        out = filedialog.asksaveasfilename(
+            title="Сохранить подробный протокол расчёта",
+            defaultextension=".docx",
+            filetypes=[("Word", "*.docx")],
+        )
+        if not out:
+            return
+        try:
+            export_detailed_protocol_word(out_path=Path(out), preview=self.calc_detailed_protocol)
+            messagebox.showinfo("Расчёт", f"Подробный протокол сохранён:\n{out}")
+        except Exception as exc:
+            messagebox.showerror("Расчёт", f"Не удалось сохранить подробный протокол:\n{exc}")
+
+    def _export_static_calc_summary_word(self):
+        if not self._ensure_calc_result_for_export():
+            return
+        out = filedialog.asksaveasfilename(
+            title="Сохранить итоговую таблицу расчёта",
+            defaultextension=".docx",
+            filetypes=[("Word", "*.docx")],
+        )
+        if not out:
+            return
+        try:
+            export_summary_table_word(out_path=Path(out), preview=self.calc_protocol)
+            messagebox.showinfo("Расчёт", f"Итоговая таблица сохранена:\n{out}")
+        except Exception as exc:
+            messagebox.showerror("Расчёт", f"Не удалось сохранить итоговую таблицу Word:\n{exc}")
+
+    def _export_static_calc_summary_pdf(self):
+        if not self._ensure_calc_result_for_export():
+            return
+        out = filedialog.asksaveasfilename(
+            title="Сохранить итоговую таблицу расчёта PDF",
+            defaultextension=".pdf",
+            filetypes=[("PDF", "*.pdf")],
+        )
+        if not out:
+            return
+        try:
+            export_summary_table_pdf(out_path=Path(out), preview=self.calc_protocol)
+            messagebox.showinfo("Расчёт", f"Итоговая таблица PDF сохранена:\n{out}")
+        except Exception as exc:
+            messagebox.showerror("Расчёт", f"Не удалось сохранить итоговую таблицу PDF:\n{exc}")
 
     def redraw_all(self):
         self._sync_layers_panel()
@@ -2302,6 +2369,9 @@ class GeoCanvasEditor(tk.Tk):
                 "calc_show_sample": self._show_calc_sample_dialog,
                 "calc_show_excluded": self._show_calc_excluded_dialog,
                 "calc_make_protocol": self._make_calc_protocol,
+                "calc_protocol_word": self._export_static_calc_protocol_word,
+                "calc_summary_word": self._export_static_calc_summary_word,
+                "calc_summary_pdf": self._export_static_calc_summary_pdf,
                 "ribbon_tab_changed": self._on_ribbon_tab_changed,
             }
             self.ribbon_view = RibbonView(self, commands=commands, icon_font=_pick_icon_font(11))
@@ -2574,31 +2644,52 @@ class GeoCanvasEditor(tk.Tk):
         top = ttk.Frame(parent, padding=(12, 8, 12, 4))
         top.pack(side="top", fill="x")
         ttk.Button(top, text="Рассчитать", command=self._run_calc_pipeline).pack(side="left", padx=(0, 6))
-        ttk.Button(top, text="Пересобрать выборки", command=self._rebuild_calc_samples).pack(side="left", padx=6)
-        ttk.Button(top, text="Показать выборку ИГЭ", command=self._show_calc_sample_dialog).pack(side="left", padx=6)
-        ttk.Button(top, text="Показать исключённые точки", command=self._show_calc_excluded_dialog).pack(side="left", padx=6)
+        summary_host = ttk.Frame(parent, padding=(12, 0, 12, 8))
+        summary_host.pack(side="top", fill="both", expand=True)
+        summary_host.columnconfigure(0, weight=1)
 
-        table_host = ttk.Frame(parent, padding=(12, 0, 12, 8))
-        table_host.pack(side="top", fill="both", expand=True)
-        cols = ("ige", "soil", "subtype", "method", "status", "n", "qc_avg", "V", "interval", "E", "phi", "c", "warning")
-        self.calc_tree_main = ttk.Treeview(table_host, columns=cols, show="headings")
-        heads = {
-            "ige": "ИГЭ", "soil": "тип", "subtype": "subtype", "method": "метод", "status": "статус", "n": "n",
-            "qc_avg": "qc_avg", "V": "V", "interval": "интервал", "E": "E", "phi": "φ", "c": "c", "warning": "предупреждение"
-        }
-        for c in cols:
-            self.calc_tree_main.heading(c, text=heads[c])
-            self.calc_tree_main.column(c, width=90, anchor="center", stretch=False)
-        self.calc_tree_main.column("warning", width=240, anchor="w", stretch=False)
-
-        xscroll = ttk.Scrollbar(table_host, orient="horizontal", command=self.calc_tree_main.xview)
-        yscroll = ttk.Scrollbar(table_host, orient="vertical", command=self.calc_tree_main.yview)
-        self.calc_tree_main.configure(xscrollcommand=xscroll.set, yscrollcommand=yscroll.set)
-        self.calc_tree_main.grid(row=0, column=0, sticky="nsew")
-        yscroll.grid(row=0, column=1, sticky="ns")
-        xscroll.grid(row=1, column=0, sticky="ew")
+        table_host = ttk.Frame(summary_host)
+        table_host.grid(row=0, column=0, sticky="nsew")
         table_host.columnconfigure(0, weight=1)
         table_host.rowconfigure(0, weight=1)
+
+        cols = ("ige", "soil", "qc_avg", "phi_n", "c_n", "phi_i", "c_i", "phi_ii", "c_ii", "e_n")
+        self.calc_tree_main = ttk.Treeview(table_host, columns=cols, show="headings")
+        widths = {
+            "ige": 64,
+            "soil": 420,
+            "qc_avg": 92,
+            "phi_n": 82,
+            "c_n": 82,
+            "phi_i": 82,
+            "c_i": 82,
+            "phi_ii": 82,
+            "c_ii": 82,
+            "e_n": 82,
+        }
+        labels = {
+            "ige": EXPORT_SUMMARY_HEADERS[0],
+            "soil": EXPORT_SUMMARY_HEADERS[1],
+            "qc_avg": EXPORT_SUMMARY_HEADERS[2],
+            "phi_n": EXPORT_SUMMARY_HEADERS[3],
+            "c_n": EXPORT_SUMMARY_HEADERS[4],
+            "phi_i": EXPORT_SUMMARY_HEADERS[5],
+            "c_i": EXPORT_SUMMARY_HEADERS[6],
+            "phi_ii": EXPORT_SUMMARY_HEADERS[7],
+            "c_ii": EXPORT_SUMMARY_HEADERS[8],
+            "e_n": EXPORT_SUMMARY_HEADERS[9],
+        }
+        for col in cols:
+            self.calc_tree_main.heading(col, text=labels[col])
+            self.calc_tree_main.column(col, width=widths[col], anchor="center", stretch=True)
+        self.calc_tree_main.column("soil", anchor="w")
+        self.calc_tree_main.configure(height=8)
+        self.calc_tree_main.grid(row=0, column=0, sticky="nsew")
+        self.calc_tree_yscroll = ttk.Scrollbar(table_host, orient="vertical", command=self.calc_tree_main.yview)
+        self.calc_tree_main.configure(yscrollcommand=self.calc_tree_yscroll.set)
+
+        self.calc_note_legend_label = ttk.Label(summary_host, text="", justify="left", foreground="#4c5968", wraplength=1320)
+        self.calc_note_legend_label.grid(row=1, column=0, sticky="w", pady=(8, 0))
 
     def _calc_trees(self):
         trees = []
@@ -6104,7 +6195,7 @@ class GeoCanvasEditor(tk.Tk):
     def _experience_column_ige_display(self, ige_id: str) -> str:
         resolved = self._resolve_existing_ige_id(ige_id)
         if resolved is None:
-            return str(ige_id or "???-1")
+            return str(ige_id or "ИГЭ-1")
         ent = self._ensure_ige_entry(resolved)
         base = self._ige_display_label(resolved)
         soil_name = str(ent.get("soil_type") or "").strip()
@@ -11767,6 +11858,11 @@ class GeoCanvasEditor(tk.Tk):
         _raw_cts = dict((project.settings.extras or {}).get("calc_tab_state") or {})
         _safe_cts = {k: v for k, v in _raw_cts.items() if k in _base_cts}
         self.calc_tab_state = CalculationTabState(**{**_base_cts, **_safe_cts})
+        self.calc_rows = []
+        self.calc_samples = []
+        self.calc_result = None
+        self.calc_protocol = None
+        self.calc_detailed_protocol = None
         self._dirty = False
         self._apply_visual_mode_for_project_type()
         if getattr(self, "ribbon_view", None):

@@ -58,7 +58,7 @@ def resolve_applicability(*, profile_id: str, soil_code: str, subtype: str | Non
     if scode == "fill":
         sub = str(subtype or "").strip().lower()
         if "10%" in sub or "строит" in sub:
-            return ApplicabilityRule(profile_id=pid, soil_code=scode, method="LAB_ONLY", status="NOT_APPLICABLE", manual_confirmation_required=False, warning="Насыпной с >10% строительного материала не входит в auto-CPT")
+            return ApplicabilityRule(profile_id=pid, soil_code=scode, method="LAB_ONLY", status="NOT_APPLICABLE", manual_confirmation_required=False, warning="Насыпной грунт с содержанием строительного материала более 10% не допускается к расчету по auto-CPT")
         if sub in {"песчаный", "глинистый"} and allow_fill_by_material:
-            return ApplicabilityRule(profile_id=pid, soil_code=scode, method=("SP446_CPT_SAND" if sub == "песчаный" else "SP446_CPT_CLAY"), status="PRELIMINARY", manual_confirmation_required=False, warning="Насыпной допущен вручную по материалу")
+            return ApplicabilityRule(profile_id=pid, soil_code=scode, method=("SP446_CPT_SAND" if sub == "песчаный" else "SP446_CPT_CLAY"), status="PRELIMINARY", manual_confirmation_required=False, warning="Насыпной грунт допущен к предварительному расчету по материалу")
     return base

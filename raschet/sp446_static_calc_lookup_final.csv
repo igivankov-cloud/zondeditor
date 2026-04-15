@@ -1,0 +1,206 @@
+﻿rule_id;edition_mode;method;appendix_table;soil_group;soil_kind_ru;genetic_group;state_or_consistency;water_saturation;depth_from_m;depth_to_m;qc_from_mpa;qc_to_mpa;output_param;output_value;calc_mode;requires_checkbox;result_status;note_code;priority
+CTRL-STATIC-QC-ONLY;current;static;Ж.1-Ж.4;control;все;все;все;все;;;;;input_indicator;Использовать только qc (статическое зондирование);exact;;main;PDF_USES_QC_ONLY;1
+CTRL-SUPES-CURRENT-BLOCK;current;static;Ж.4;clay;супесь;все;все;все;;;;;action;Не рассчитывать по действующей редакции СП 446;exact;;blocked;SUPES_NO_CURRENT_TABLE;2
+CTRL-SUPES-LEGACY-ALLOW;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;все;все;;;;;action;Разрешить расчет супеси по редакции до Изм.1;exact;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;3
+CTRL-FILL-DEFAULT-BLOCK;current;static;Ж;fill;насыпной грунт;все;все;все;;;;;action;Не выполнять нормативный автоподбор по приложению Ж;exact;;blocked;FILL_NO_DIRECT_NORM;4
+CTRL-FILL-PRELIM-BY-MATERIAL;preliminary_fill_by_material;static;Ж;fill;насыпной грунт;все;все;все;;;;;action;Разрешить только предварительный расчет по материалу заполнителя;exact;allow_preliminary_fill_by_material;preliminary;FILL_PRELIM_NOTE;5
+SP446-J1-01;current;static;Ж.1;sand;крупные и средней крупности;все;все;любая;;;15;;density_class;плотные;range_lookup;;main;;11
+SP446-J1-02;current;static;Ж.1;sand;крупные и средней крупности;все;все;любая;;;5;15;density_class;средней плотности;range_lookup;;main;;12
+SP446-J1-03;current;static;Ж.1;sand;крупные и средней крупности;все;все;любая;;;;5;density_class;рыхлые;range_lookup;;main;;13
+SP446-J1-04;current;static;Ж.1;sand;мелкие;все;все;любая;;;12;;density_class;плотные;range_lookup;;main;;14
+SP446-J1-05;current;static;Ж.1;sand;мелкие;все;все;любая;;;4;12;density_class;средней плотности;range_lookup;;main;;15
+SP446-J1-06;current;static;Ж.1;sand;мелкие;все;все;любая;;;;4;density_class;рыхлые;range_lookup;;main;;16
+SP446-J1-07;current;static;Ж.1;sand;пылеватые;все;все;малой и средней степени водонасыщения;;;10;;density_class;плотные;range_lookup;;main;;17
+SP446-J1-08;current;static;Ж.1;sand;пылеватые;все;все;малой и средней степени водонасыщения;;;3;10;density_class;средней плотности;range_lookup;;main;;18
+SP446-J1-09;current;static;Ж.1;sand;пылеватые;все;все;малой и средней степени водонасыщения;;;;3;density_class;рыхлые;range_lookup;;main;;19
+SP446-J1-10;current;static;Ж.1;sand;пылеватые;все;все;водонасыщенные;;;7;;density_class;плотные;range_lookup;;main;;20
+SP446-J1-11;current;static;Ж.1;sand;пылеватые;все;все;водонасыщенные;;;2;7;density_class;средней плотности;range_lookup;;main;;21
+SP446-J1-12;current;static;Ж.1;sand;пылеватые;все;все;водонасыщенные;;;;2;density_class;рыхлые;range_lookup;;main;;22
+SP446-J2-NONAL-2;current;static;Ж.2;sand;все пески;кроме аллювиальных и флювиогляциальных;все;все;;;2;2;E_MPa;6;point_linear_interpolate;;main;;42
+SP446-J2-AL-2;current;static;Ж.2;sand;все пески;аллювиальные и флювиогляциальные;все;все;;;2;2;E_MPa;17;point_linear_interpolate;;main;;72
+SP446-J2-NONAL-4;current;static;Ж.2;sand;все пески;кроме аллювиальных и флювиогляциальных;все;все;;;4;4;E_MPa;12;point_linear_interpolate;;main;;44
+SP446-J2-AL-4;current;static;Ж.2;sand;все пески;аллювиальные и флювиогляциальные;все;все;;;4;4;E_MPa;20;point_linear_interpolate;;main;;74
+SP446-J2-NONAL-6;current;static;Ж.2;sand;все пески;кроме аллювиальных и флювиогляциальных;все;все;;;6;6;E_MPa;18;point_linear_interpolate;;main;;46
+SP446-J2-AL-6;current;static;Ж.2;sand;все пески;аллювиальные и флювиогляциальные;все;все;;;6;6;E_MPa;22;point_linear_interpolate;;main;;76
+SP446-J2-NONAL-8;current;static;Ж.2;sand;все пески;кроме аллювиальных и флювиогляциальных;все;все;;;8;8;E_MPa;24;point_linear_interpolate;;main;;48
+SP446-J2-AL-8;current;static;Ж.2;sand;все пески;аллювиальные и флювиогляциальные;все;все;;;8;8;E_MPa;25;point_linear_interpolate;;main;;78
+SP446-J2-NONAL-10;current;static;Ж.2;sand;все пески;кроме аллювиальных и флювиогляциальных;все;все;;;10;10;E_MPa;30;point_linear_interpolate;;main;;50
+SP446-J2-AL-10;current;static;Ж.2;sand;все пески;аллювиальные и флювиогляциальные;все;все;;;10;10;E_MPa;28;point_linear_interpolate;;main;;80
+SP446-J2-NONAL-12;current;static;Ж.2;sand;все пески;кроме аллювиальных и флювиогляциальных;все;все;;;12;12;E_MPa;36;point_linear_interpolate;;main;;52
+SP446-J2-AL-12;current;static;Ж.2;sand;все пески;аллювиальные и флювиогляциальные;все;все;;;12;12;E_MPa;30;point_linear_interpolate;;main;;82
+SP446-J2-NONAL-14;current;static;Ж.2;sand;все пески;кроме аллювиальных и флювиогляциальных;все;все;;;14;14;E_MPa;42;point_linear_interpolate;;main;;54
+SP446-J2-AL-14;current;static;Ж.2;sand;все пески;аллювиальные и флювиогляциальные;все;все;;;14;14;E_MPa;33;point_linear_interpolate;;main;;84
+SP446-J2-NONAL-16;current;static;Ж.2;sand;все пески;кроме аллювиальных и флювиогляциальных;все;все;;;16;16;E_MPa;48;point_linear_interpolate;;main;;56
+SP446-J2-AL-16;current;static;Ж.2;sand;все пески;аллювиальные и флювиогляциальные;все;все;;;16;16;E_MPa;36;point_linear_interpolate;;main;;86
+SP446-J2-NONAL-18;current;static;Ж.2;sand;все пески;кроме аллювиальных и флювиогляциальных;все;все;;;18;18;E_MPa;54;point_linear_interpolate;;main;;58
+SP446-J2-AL-18;current;static;Ж.2;sand;все пески;аллювиальные и флювиогляциальные;все;все;;;18;18;E_MPa;38;point_linear_interpolate;;main;;88
+SP446-J2-NONAL-20;current;static;Ж.2;sand;все пески;кроме аллювиальных и флювиогляциальных;все;все;;;20;20;E_MPa;60;point_linear_interpolate;;main;;60
+SP446-J2-AL-20;current;static;Ж.2;sand;все пески;аллювиальные и флювиогляциальные;все;все;;;20;20;E_MPa;41;point_linear_interpolate;;main;;90
+SP446-J3-DLT2-1_5;current;static;Ж.3;sand;все пески;все;все;все;0;2;1.5;1.5;phi_deg;28;point_linear_interpolate;;main;;115
+SP446-J3-D2TO5-1_5;current;static;Ж.3;sand;все пески;все;все;все;2;5;1.5;1.5;phi_deg;;depth_interpolate_between_lt2_and_ge5;;main;SAND_PHI_DEPTH_INTERP;135
+SP446-J3-DGE5-1_5;current;static;Ж.3;sand;все пески;все;все;все;5;999;1.5;1.5;phi_deg;26;point_linear_interpolate;;main;;155
+SP446-J3-DLT2-3;current;static;Ж.3;sand;все пески;все;все;все;0;2;3;3;phi_deg;30;point_linear_interpolate;;main;;130
+SP446-J3-D2TO5-3;current;static;Ж.3;sand;все пески;все;все;все;2;5;3;3;phi_deg;;depth_interpolate_between_lt2_and_ge5;;main;SAND_PHI_DEPTH_INTERP;150
+SP446-J3-DGE5-3;current;static;Ж.3;sand;все пески;все;все;все;5;999;3;3;phi_deg;28;point_linear_interpolate;;main;;170
+SP446-J3-DLT2-5;current;static;Ж.3;sand;все пески;все;все;все;0;2;5;5;phi_deg;32;point_linear_interpolate;;main;;150
+SP446-J3-D2TO5-5;current;static;Ж.3;sand;все пески;все;все;все;2;5;5;5;phi_deg;;depth_interpolate_between_lt2_and_ge5;;main;SAND_PHI_DEPTH_INTERP;170
+SP446-J3-DGE5-5;current;static;Ж.3;sand;все пески;все;все;все;5;999;5;5;phi_deg;30;point_linear_interpolate;;main;;190
+SP446-J3-DLT2-8;current;static;Ж.3;sand;все пески;все;все;все;0;2;8;8;phi_deg;34;point_linear_interpolate;;main;;180
+SP446-J3-D2TO5-8;current;static;Ж.3;sand;все пески;все;все;все;2;5;8;8;phi_deg;;depth_interpolate_between_lt2_and_ge5;;main;SAND_PHI_DEPTH_INTERP;200
+SP446-J3-DGE5-8;current;static;Ж.3;sand;все пески;все;все;все;5;999;8;8;phi_deg;32;point_linear_interpolate;;main;;220
+SP446-J3-DLT2-12;current;static;Ж.3;sand;все пески;все;все;все;0;2;12;12;phi_deg;36;point_linear_interpolate;;main;;220
+SP446-J3-D2TO5-12;current;static;Ж.3;sand;все пески;все;все;все;2;5;12;12;phi_deg;;depth_interpolate_between_lt2_and_ge5;;main;SAND_PHI_DEPTH_INTERP;240
+SP446-J3-DGE5-12;current;static;Ж.3;sand;все пески;все;все;все;5;999;12;12;phi_deg;34;point_linear_interpolate;;main;;260
+SP446-J3-DLT2-18;current;static;Ж.3;sand;все пески;все;все;все;0;2;18;18;phi_deg;38;point_linear_interpolate;;main;;280
+SP446-J3-D2TO5-18;current;static;Ж.3;sand;все пески;все;все;все;2;5;18;18;phi_deg;;depth_interpolate_between_lt2_and_ge5;;main;SAND_PHI_DEPTH_INTERP;300
+SP446-J3-DGE5-18;current;static;Ж.3;sand;все пески;все;все;все;5;999;18;18;phi_deg;36;point_linear_interpolate;;main;;320
+SP446-J3-DLT2-26;current;static;Ж.3;sand;все пески;все;все;все;0;2;26;26;phi_deg;40;point_linear_interpolate;;main;;360
+SP446-J3-D2TO5-26;current;static;Ж.3;sand;все пески;все;все;все;2;5;26;26;phi_deg;;depth_interpolate_between_lt2_and_ge5;;main;SAND_PHI_DEPTH_INTERP;380
+SP446-J3-DGE5-26;current;static;Ж.3;sand;все пески;все;все;все;5;999;26;26;phi_deg;38;point_linear_interpolate;;main;;400
+SP446-J4-CUR-суг-тве-1-E_MPa;current;static;Ж.4;clay;суглинок;все;твердый;все;;;1;1;E_MPa;7;point_linear_interpolate;;main;;201
+SP446-J4-CUR-суг-тве-1-phi_deg;current;static;Ж.4;clay;суглинок;все;твердый;все;;;1;1;phi_deg;17;point_linear_interpolate;;main;;201
+SP446-J4-CUR-суг-тве-1-c_kPa;current;static;Ж.4;clay;суглинок;все;твердый;все;;;1;1;c_kPa;15;point_linear_interpolate;;main;;201
+SP446-J4-CUR-суг-тве-2-E_MPa;current;static;Ж.4;clay;суглинок;все;твердый;все;;;2;2;E_MPa;11;point_linear_interpolate;;main;;202
+SP446-J4-CUR-суг-тве-2-phi_deg;current;static;Ж.4;clay;суглинок;все;твердый;все;;;2;2;phi_deg;21;point_linear_interpolate;;main;;202
+SP446-J4-CUR-суг-тве-2-c_kPa;current;static;Ж.4;clay;суглинок;все;твердый;все;;;2;2;c_kPa;18;point_linear_interpolate;;main;;202
+SP446-J4-CUR-суг-тве-3-E_MPa;current;static;Ж.4;clay;суглинок;все;твердый;все;;;3;3;E_MPa;15;point_linear_interpolate;;main;;203
+SP446-J4-CUR-суг-тве-3-phi_deg;current;static;Ж.4;clay;суглинок;все;твердый;все;;;3;3;phi_deg;23;point_linear_interpolate;;main;;203
+SP446-J4-CUR-суг-тве-3-c_kPa;current;static;Ж.4;clay;суглинок;все;твердый;все;;;3;3;c_kPa;21;point_linear_interpolate;;main;;203
+SP446-J4-CUR-суг-тве-4-E_MPa;current;static;Ж.4;clay;суглинок;все;твердый;все;;;4;4;E_MPa;18;point_linear_interpolate;;main;;204
+SP446-J4-CUR-суг-тве-4-phi_deg;current;static;Ж.4;clay;суглинок;все;твердый;все;;;4;4;phi_deg;25;point_linear_interpolate;;main;;204
+SP446-J4-CUR-суг-тве-4-c_kPa;current;static;Ж.4;clay;суглинок;все;твердый;все;;;4;4;c_kPa;23;point_linear_interpolate;;main;;204
+SP446-J4-CUR-суг-тве-5-E_MPa;current;static;Ж.4;clay;суглинок;все;твердый;все;;;5;5;E_MPa;22;point_linear_interpolate;;main;;205
+SP446-J4-CUR-суг-тве-5-phi_deg;current;static;Ж.4;clay;суглинок;все;твердый;все;;;5;5;phi_deg;26;point_linear_interpolate;;main;;205
+SP446-J4-CUR-суг-тве-5-c_kPa;current;static;Ж.4;clay;суглинок;все;твердый;все;;;5;5;c_kPa;25;point_linear_interpolate;;main;;205
+SP446-J4-CUR-суг-тве-6-E_MPa;current;static;Ж.4;clay;суглинок;все;твердый;все;;;6;6;E_MPa;26;point_linear_interpolate;;main;;206
+SP446-J4-CUR-суг-тве-6-phi_deg;current;static;Ж.4;clay;суглинок;все;твердый;все;;;6;6;phi_deg;27;point_linear_interpolate;;main;;206
+SP446-J4-CUR-суг-тве-6-c_kPa;current;static;Ж.4;clay;суглинок;все;твердый;все;;;6;6;c_kPa;28;point_linear_interpolate;;main;;206
+SP446-J4-CUR-суг-тве-7-E_MPa;current;static;Ж.4;clay;суглинок;все;твердый;все;;;7;7;E_MPa;30;point_linear_interpolate;;main;;207
+SP446-J4-CUR-суг-тве-7-phi_deg;current;static;Ж.4;clay;суглинок;все;твердый;все;;;7;7;phi_deg;28;point_linear_interpolate;;main;;207
+SP446-J4-CUR-суг-тве-7-c_kPa;current;static;Ж.4;clay;суглинок;все;твердый;все;;;7;7;c_kPa;30;point_linear_interpolate;;main;;207
+SP446-J4-CUR-суг-пол-1-E_MPa;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;1;1;E_MPa;4;point_linear_interpolate;;main;;201
+SP446-J4-CUR-суг-пол-1-phi_deg;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;1;1;phi_deg;14;point_linear_interpolate;;main;;201
+SP446-J4-CUR-суг-пол-1-c_kPa;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;1;1;c_kPa;12;point_linear_interpolate;;main;;201
+SP446-J4-CUR-суг-пол-2-E_MPa;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;2;2;E_MPa;7;point_linear_interpolate;;main;;202
+SP446-J4-CUR-суг-пол-2-phi_deg;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;2;2;phi_deg;17;point_linear_interpolate;;main;;202
+SP446-J4-CUR-суг-пол-2-c_kPa;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;2;2;c_kPa;15;point_linear_interpolate;;main;;202
+SP446-J4-CUR-суг-пол-3-E_MPa;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;3;3;E_MPa;10;point_linear_interpolate;;main;;203
+SP446-J4-CUR-суг-пол-3-phi_deg;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;3;3;phi_deg;19;point_linear_interpolate;;main;;203
+SP446-J4-CUR-суг-пол-3-c_kPa;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;3;3;c_kPa;18;point_linear_interpolate;;main;;203
+SP446-J4-CUR-суг-пол-4-E_MPa;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;4;4;E_MPa;13;point_linear_interpolate;;main;;204
+SP446-J4-CUR-суг-пол-4-phi_deg;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;4;4;phi_deg;21;point_linear_interpolate;;main;;204
+SP446-J4-CUR-суг-пол-4-c_kPa;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;4;4;c_kPa;20;point_linear_interpolate;;main;;204
+SP446-J4-CUR-суг-пол-5-E_MPa;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;5;5;E_MPa;16;point_linear_interpolate;;main;;205
+SP446-J4-CUR-суг-пол-5-phi_deg;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;5;5;phi_deg;22;point_linear_interpolate;;main;;205
+SP446-J4-CUR-суг-пол-5-c_kPa;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;5;5;c_kPa;22;point_linear_interpolate;;main;;205
+SP446-J4-CUR-суг-пол-6-E_MPa;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;6;6;E_MPa;19;point_linear_interpolate;;main;;206
+SP446-J4-CUR-суг-пол-6-phi_deg;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;6;6;phi_deg;23;point_linear_interpolate;;main;;206
+SP446-J4-CUR-суг-пол-6-c_kPa;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;6;6;c_kPa;24;point_linear_interpolate;;main;;206
+SP446-J4-CUR-суг-пол-7-E_MPa;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;7;7;E_MPa;22;point_linear_interpolate;;main;;207
+SP446-J4-CUR-суг-пол-7-phi_deg;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;7;7;phi_deg;24;point_linear_interpolate;;main;;207
+SP446-J4-CUR-суг-пол-7-c_kPa;current;static;Ж.4;clay;суглинок;все;полутвердый;все;;;7;7;c_kPa;26;point_linear_interpolate;;main;;207
+SP446-J4-CUR-суг-туг-1-E_MPa;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;1;1;E_MPa;3;point_linear_interpolate;;main;;201
+SP446-J4-CUR-суг-туг-1-phi_deg;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;1;1;phi_deg;12;point_linear_interpolate;;main;;201
+SP446-J4-CUR-суг-туг-1-c_kPa;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;1;1;c_kPa;10;point_linear_interpolate;;main;;201
+SP446-J4-CUR-суг-туг-2-E_MPa;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;2;2;E_MPa;5;point_linear_interpolate;;main;;202
+SP446-J4-CUR-суг-туг-2-phi_deg;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;2;2;phi_deg;14;point_linear_interpolate;;main;;202
+SP446-J4-CUR-суг-туг-2-c_kPa;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;2;2;c_kPa;12;point_linear_interpolate;;main;;202
+SP446-J4-CUR-суг-туг-3-E_MPa;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;3;3;E_MPa;8;point_linear_interpolate;;main;;203
+SP446-J4-CUR-суг-туг-3-phi_deg;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;3;3;phi_deg;16;point_linear_interpolate;;main;;203
+SP446-J4-CUR-суг-туг-3-c_kPa;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;3;3;c_kPa;14;point_linear_interpolate;;main;;203
+SP446-J4-CUR-суг-туг-4-E_MPa;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;4;4;E_MPa;10;point_linear_interpolate;;main;;204
+SP446-J4-CUR-суг-туг-4-phi_deg;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;4;4;phi_deg;18;point_linear_interpolate;;main;;204
+SP446-J4-CUR-суг-туг-4-c_kPa;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;4;4;c_kPa;16;point_linear_interpolate;;main;;204
+SP446-J4-CUR-суг-туг-5-E_MPa;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;5;5;E_MPa;12;point_linear_interpolate;;main;;205
+SP446-J4-CUR-суг-туг-5-phi_deg;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;5;5;phi_deg;19;point_linear_interpolate;;main;;205
+SP446-J4-CUR-суг-туг-5-c_kPa;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;5;5;c_kPa;18;point_linear_interpolate;;main;;205
+SP446-J4-CUR-суг-туг-6-E_MPa;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;6;6;E_MPa;15;point_linear_interpolate;;main;;206
+SP446-J4-CUR-суг-туг-6-phi_deg;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;6;6;phi_deg;20;point_linear_interpolate;;main;;206
+SP446-J4-CUR-суг-туг-6-c_kPa;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;6;6;c_kPa;20;point_linear_interpolate;;main;;206
+SP446-J4-CUR-суг-туг-7-E_MPa;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;7;7;E_MPa;18;point_linear_interpolate;;main;;207
+SP446-J4-CUR-суг-туг-7-phi_deg;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;7;7;phi_deg;21;point_linear_interpolate;;main;;207
+SP446-J4-CUR-суг-туг-7-c_kPa;current;static;Ж.4;clay;суглинок;все;тугопластичный;все;;;7;7;c_kPa;22;point_linear_interpolate;;main;;207
+SP446-J4-CUR-гли-тве-1-E_MPa;current;static;Ж.4;clay;глина;все;твердая;все;;;1;1;E_MPa;7;point_linear_interpolate;;main;;201
+SP446-J4-CUR-гли-тве-1-phi_deg;current;static;Ж.4;clay;глина;все;твердая;все;;;1;1;phi_deg;19;point_linear_interpolate;;main;;201
+SP446-J4-CUR-гли-тве-1-c_kPa;current;static;Ж.4;clay;глина;все;твердая;все;;;1;1;c_kPa;25;point_linear_interpolate;;main;;201
+SP446-J4-CUR-гли-тве-2-E_MPa;current;static;Ж.4;clay;глина;все;твердая;все;;;2;2;E_MPa;12;point_linear_interpolate;;main;;202
+SP446-J4-CUR-гли-тве-2-phi_deg;current;static;Ж.4;clay;глина;все;твердая;все;;;2;2;phi_deg;22;point_linear_interpolate;;main;;202
+SP446-J4-CUR-гли-тве-2-c_kPa;current;static;Ж.4;clay;глина;все;твердая;все;;;2;2;c_kPa;31;point_linear_interpolate;;main;;202
+SP446-J4-CUR-гли-тве-3-E_MPa;current;static;Ж.4;clay;глина;все;твердая;все;;;3;3;E_MPa;16;point_linear_interpolate;;main;;203
+SP446-J4-CUR-гли-тве-3-phi_deg;current;static;Ж.4;clay;глина;все;твердая;все;;;3;3;phi_deg;24;point_linear_interpolate;;main;;203
+SP446-J4-CUR-гли-тве-3-c_kPa;current;static;Ж.4;clay;глина;все;твердая;все;;;3;3;c_kPa;36;point_linear_interpolate;;main;;203
+SP446-J4-CUR-гли-тве-4-E_MPa;current;static;Ж.4;clay;глина;все;твердая;все;;;4;4;E_MPa;20;point_linear_interpolate;;main;;204
+SP446-J4-CUR-гли-тве-4-phi_deg;current;static;Ж.4;clay;глина;все;твердая;все;;;4;4;phi_deg;26;point_linear_interpolate;;main;;204
+SP446-J4-CUR-гли-тве-4-c_kPa;current;static;Ж.4;clay;глина;все;твердая;все;;;4;4;c_kPa;41;point_linear_interpolate;;main;;204
+SP446-J4-CUR-гли-тве-5-E_MPa;current;static;Ж.4;clay;глина;все;твердая;все;;;5;5;E_MPa;25;point_linear_interpolate;;main;;205
+SP446-J4-CUR-гли-тве-5-phi_deg;current;static;Ж.4;clay;глина;все;твердая;все;;;5;5;phi_deg;27;point_linear_interpolate;;main;;205
+SP446-J4-CUR-гли-тве-5-c_kPa;current;static;Ж.4;clay;глина;все;твердая;все;;;5;5;c_kPa;46;point_linear_interpolate;;main;;205
+SP446-J4-CUR-гли-тве-6-E_MPa;current;static;Ж.4;clay;глина;все;твердая;все;;;6;6;E_MPa;29;point_linear_interpolate;;main;;206
+SP446-J4-CUR-гли-тве-6-phi_deg;current;static;Ж.4;clay;глина;все;твердая;все;;;6;6;phi_deg;28;point_linear_interpolate;;main;;206
+SP446-J4-CUR-гли-тве-6-c_kPa;current;static;Ж.4;clay;глина;все;твердая;все;;;6;6;c_kPa;51;point_linear_interpolate;;main;;206
+SP446-J4-CUR-гли-тве-7-E_MPa;current;static;Ж.4;clay;глина;все;твердая;все;;;7;7;E_MPa;34;point_linear_interpolate;;main;;207
+SP446-J4-CUR-гли-тве-7-phi_deg;current;static;Ж.4;clay;глина;все;твердая;все;;;7;7;phi_deg;29;point_linear_interpolate;;main;;207
+SP446-J4-CUR-гли-тве-7-c_kPa;current;static;Ж.4;clay;глина;все;твердая;все;;;7;7;c_kPa;56;point_linear_interpolate;;main;;207
+SP446-J4-CUR-гли-пол-1-E_MPa;current;static;Ж.4;clay;глина;все;полутвердая;все;;;1;1;E_MPa;5;point_linear_interpolate;;main;;201
+SP446-J4-CUR-гли-пол-1-phi_deg;current;static;Ж.4;clay;глина;все;полутвердая;все;;;1;1;phi_deg;17;point_linear_interpolate;;main;;201
+SP446-J4-CUR-гли-пол-1-c_kPa;current;static;Ж.4;clay;глина;все;полутвердая;все;;;1;1;c_kPa;18;point_linear_interpolate;;main;;201
+SP446-J4-CUR-гли-пол-2-E_MPa;current;static;Ж.4;clay;глина;все;полутвердая;все;;;2;2;E_MPa;9;point_linear_interpolate;;main;;202
+SP446-J4-CUR-гли-пол-2-phi_deg;current;static;Ж.4;clay;глина;все;полутвердая;все;;;2;2;phi_deg;19;point_linear_interpolate;;main;;202
+SP446-J4-CUR-гли-пол-2-c_kPa;current;static;Ж.4;clay;глина;все;полутвердая;все;;;2;2;c_kPa;23;point_linear_interpolate;;main;;202
+SP446-J4-CUR-гли-пол-3-E_MPa;current;static;Ж.4;clay;глина;все;полутвердая;все;;;3;3;E_MPa;13;point_linear_interpolate;;main;;203
+SP446-J4-CUR-гли-пол-3-phi_deg;current;static;Ж.4;clay;глина;все;полутвердая;все;;;3;3;phi_deg;21;point_linear_interpolate;;main;;203
+SP446-J4-CUR-гли-пол-3-c_kPa;current;static;Ж.4;clay;глина;все;полутвердая;все;;;3;3;c_kPa;28;point_linear_interpolate;;main;;203
+SP446-J4-CUR-гли-пол-4-E_MPa;current;static;Ж.4;clay;глина;все;полутвердая;все;;;4;4;E_MPa;16;point_linear_interpolate;;main;;204
+SP446-J4-CUR-гли-пол-4-phi_deg;current;static;Ж.4;clay;глина;все;полутвердая;все;;;4;4;phi_deg;22;point_linear_interpolate;;main;;204
+SP446-J4-CUR-гли-пол-4-c_kPa;current;static;Ж.4;clay;глина;все;полутвердая;все;;;4;4;c_kPa;33;point_linear_interpolate;;main;;204
+SP446-J4-CUR-гли-пол-5-E_MPa;current;static;Ж.4;clay;глина;все;полутвердая;все;;;5;5;E_MPa;20;point_linear_interpolate;;main;;205
+SP446-J4-CUR-гли-пол-5-phi_deg;current;static;Ж.4;clay;глина;все;полутвердая;все;;;5;5;phi_deg;23;point_linear_interpolate;;main;;205
+SP446-J4-CUR-гли-пол-5-c_kPa;current;static;Ж.4;clay;глина;все;полутвердая;все;;;5;5;c_kPa;38;point_linear_interpolate;;main;;205
+SP446-J4-CUR-гли-пол-6-E_MPa;current;static;Ж.4;clay;глина;все;полутвердая;все;;;6;6;E_MPa;23;point_linear_interpolate;;main;;206
+SP446-J4-CUR-гли-пол-6-phi_deg;current;static;Ж.4;clay;глина;все;полутвердая;все;;;6;6;phi_deg;24;point_linear_interpolate;;main;;206
+SP446-J4-CUR-гли-пол-6-c_kPa;current;static;Ж.4;clay;глина;все;полутвердая;все;;;6;6;c_kPa;43;point_linear_interpolate;;main;;206
+SP446-J4-CUR-гли-пол-7-E_MPa;current;static;Ж.4;clay;глина;все;полутвердая;все;;;7;7;E_MPa;27;point_linear_interpolate;;main;;207
+SP446-J4-CUR-гли-пол-7-phi_deg;current;static;Ж.4;clay;глина;все;полутвердая;все;;;7;7;phi_deg;25;point_linear_interpolate;;main;;207
+SP446-J4-CUR-гли-пол-7-c_kPa;current;static;Ж.4;clay;глина;все;полутвердая;все;;;7;7;c_kPa;48;point_linear_interpolate;;main;;207
+SP446-J4-CUR-гли-туг-1-E_MPa;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;1;1;E_MPa;3;point_linear_interpolate;;main;;201
+SP446-J4-CUR-гли-туг-1-phi_deg;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;1;1;phi_deg;14;point_linear_interpolate;;main;;201
+SP446-J4-CUR-гли-туг-1-c_kPa;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;1;1;c_kPa;12;point_linear_interpolate;;main;;201
+SP446-J4-CUR-гли-туг-2-E_MPa;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;2;2;E_MPa;5;point_linear_interpolate;;main;;202
+SP446-J4-CUR-гли-туг-2-phi_deg;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;2;2;phi_deg;16;point_linear_interpolate;;main;;202
+SP446-J4-CUR-гли-туг-2-c_kPa;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;2;2;c_kPa;16;point_linear_interpolate;;main;;202
+SP446-J4-CUR-гли-туг-3-E_MPa;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;3;3;E_MPa;8;point_linear_interpolate;;main;;203
+SP446-J4-CUR-гли-туг-3-phi_deg;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;3;3;phi_deg;18;point_linear_interpolate;;main;;203
+SP446-J4-CUR-гли-туг-3-c_kPa;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;3;3;c_kPa;21;point_linear_interpolate;;main;;203
+SP446-J4-CUR-гли-туг-4-E_MPa;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;4;4;E_MPa;11;point_linear_interpolate;;main;;204
+SP446-J4-CUR-гли-туг-4-phi_deg;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;4;4;phi_deg;19;point_linear_interpolate;;main;;204
+SP446-J4-CUR-гли-туг-4-c_kPa;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;4;4;c_kPa;25;point_linear_interpolate;;main;;204
+SP446-J4-CUR-гли-туг-5-E_MPa;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;5;5;E_MPa;14;point_linear_interpolate;;main;;205
+SP446-J4-CUR-гли-туг-5-phi_deg;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;5;5;phi_deg;20;point_linear_interpolate;;main;;205
+SP446-J4-CUR-гли-туг-5-c_kPa;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;5;5;c_kPa;30;point_linear_interpolate;;main;;205
+SP446-J4-CUR-гли-туг-6-E_MPa;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;6;6;E_MPa;17;point_linear_interpolate;;main;;206
+SP446-J4-CUR-гли-туг-6-phi_deg;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;6;6;phi_deg;21;point_linear_interpolate;;main;;206
+SP446-J4-CUR-гли-туг-6-c_kPa;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;6;6;c_kPa;34;point_linear_interpolate;;main;;206
+SP446-J4-CUR-гли-туг-7-E_MPa;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;7;7;E_MPa;20;point_linear_interpolate;;main;;207
+SP446-J4-CUR-гли-туг-7-phi_deg;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;7;7;phi_deg;22;point_linear_interpolate;;main;;207
+SP446-J4-CUR-гли-туг-7-c_kPa;current;static;Ж.4;clay;глина;все;тугопластичная;все;;;7;7;c_kPa;39;point_linear_interpolate;;main;;207
+SP446-J4-LEG-SUP-1-E_MPa;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;1;1;E_MPa;7;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;301
+SP446-J4-LEG-SUP-1-phi_deg;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;1;1;phi_deg;19;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;301
+SP446-J4-LEG-SUP-1-c_kPa;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;1;1;c_kPa;10;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;301
+SP446-J4-LEG-SUP-2-E_MPa;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;2;2;E_MPa;12;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;302
+SP446-J4-LEG-SUP-2-phi_deg;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;2;2;phi_deg;22;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;302
+SP446-J4-LEG-SUP-2-c_kPa;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;2;2;c_kPa;12;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;302
+SP446-J4-LEG-SUP-3-E_MPa;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;3;3;E_MPa;16;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;303
+SP446-J4-LEG-SUP-3-phi_deg;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;3;3;phi_deg;25;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;303
+SP446-J4-LEG-SUP-3-c_kPa;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;3;3;c_kPa;15;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;303
+SP446-J4-LEG-SUP-4-E_MPa;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;4;4;E_MPa;20;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;304
+SP446-J4-LEG-SUP-4-phi_deg;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;4;4;phi_deg;27;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;304
+SP446-J4-LEG-SUP-4-c_kPa;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;4;4;c_kPa;17;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;304
+SP446-J4-LEG-SUP-5-E_MPa;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;5;5;E_MPa;25;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;305
+SP446-J4-LEG-SUP-5-phi_deg;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;5;5;phi_deg;29;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;305
+SP446-J4-LEG-SUP-5-c_kPa;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;5;5;c_kPa;20;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;305
+SP446-J4-LEG-SUP-6-E_MPa;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;6;6;E_MPa;30;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;306
+SP446-J4-LEG-SUP-6-phi_deg;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;6;6;phi_deg;30;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;306
+SP446-J4-LEG-SUP-6-c_kPa;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;6;6;c_kPa;22;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;306
+SP446-J4-LEG-SUP-7-E_MPa;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;7;7;E_MPa;35;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;307
+SP446-J4-LEG-SUP-7-phi_deg;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;7;7;phi_deg;31;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;307
+SP446-J4-LEG-SUP-7-c_kPa;legacy_supes_pre_izm1;static;Ж.4;clay;супесь;все;пластичная/твердая по выделенному ИГЭ;все;;;7;7;c_kPa;24;point_linear_interpolate;use_legacy_supes_pre_izm1;reference;SUPES_LEGACY_NOTE;307

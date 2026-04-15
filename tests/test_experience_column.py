@@ -267,6 +267,18 @@ def test_ribbon_builds_fill_as_nasypnoy_grunt():
     assert ribbon._build_ige_description_text("ИГЭ-6") == "насыпной грунт песчаный"
 
 
+def test_ribbon_converts_fill_display_value_for_combobox():
+    ribbon = RibbonView.__new__(RibbonView)
+    assert ribbon._soil_display_value("насыпной") == "насыпной грунт"
+    assert ribbon._soil_storage_value("насыпной грунт") == "насыпной"
+
+
+def test_ribbon_uses_gendered_consistency_values_for_loam_card():
+    ribbon = RibbonView.__new__(RibbonView)
+    assert ribbon._consistency_display_value("clay_general", "суглинок", "тугопластичная") == "тугопластичный"
+    assert ribbon._consistency_storage_value("clay_general", "суглинок", "тугопластичный") == "тугопластичный"
+
+
 def test_validate_experience_column_iges_accepts_existing_registry_values():
     editor = GeoCanvasEditor.__new__(GeoCanvasEditor)
     editor.ige_registry = {"ИГЭ-1": {}, "ИГЭ-2": {}}

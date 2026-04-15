@@ -88,3 +88,14 @@ Workflow: `.github/workflows/ci.yml`
 ## Дополнительная документация
 - `docs/DEV_NOTES.md`
 - `docs/CHANGELOG.md`
+
+## Расчёт СП 446
+- Вкладка `Расчёт` работает только для расчёта по результатам статического зондирования.
+- Lookup-таблицы читаются из внешнего CSV: `raschet/sp446_static_calc_lookup_final.csv`.
+- Нормативная логика и экспорт вынесены в отдельные модули:
+  - `src/zondeditor/calculations/lookup_loader.py`
+  - `src/zondeditor/calculations/static_calc_engine.py`
+  - `src/zondeditor/calculations/protocol_builder.py`
+  - `src/zondeditor/calculations/export_word.py`
+  - `src/zondeditor/calculations/export_pdf.py`
+  - `src/zondeditor/calculations/preview_model.py`
